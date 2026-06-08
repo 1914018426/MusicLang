@@ -94,6 +94,7 @@ pub enum Stmt {
     Meter(MeterDecl),
     Key(KeyDecl),
     Note(NoteStmt),
+    Play(PlayStmt),
     Drum(DrumStmt),
     Rest(RestStmt),
     Glissando(GlissandoStmt),
@@ -230,6 +231,14 @@ pub struct NoteStmt {
     pub duration: String,
     pub pitch_expr: Expr,
     pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayStmt {
+    pub expr: Expr,
     pub line: usize,
     pub column: usize,
     pub span: Span,
@@ -1066,6 +1075,9 @@ impl Parser {
         if self.check_ident("note") {
             return self.parse_note().map(Stmt::Note);
         }
+        if self.check_ident("play") {
+            return self.parse_play().map(Stmt::Play);
+        }
         if self.check_ident("drum") {
             return self.parse_drum().map(Stmt::Drum);
         }
@@ -1321,6 +1333,17 @@ impl Parser {
             duration: expr_to_source(&duration_expr),
             pitch_expr,
             duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_play(&mut self) -> Option<PlayStmt> {
+        let start = self.expect_ident_text("play")?;
+        let expr = self.parse_expr_until_stmt_end()?;
+        Some(PlayStmt {
+            expr,
             line: start.span.line,
             column: start.span.column,
             span: start.span,
@@ -2182,6 +2205,7 @@ impl Parser {
             self.peek().text.as_str(),
             "voice"
                 | "note"
+                | "play"
                 | "drum"
                 | "rest"
                 | "glissando"
@@ -3496,6 +3520,28 @@ score demo {
             panic!("expected call");
         };
         assert_eq!(call.args.len(), 2);
+    }
+
+    #[test]
+    fn parses_play_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    play [(C4, 1/8), (E4, 1/8)]
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Play(play) = &voice.statements[0] else {
+            panic!("expected play");
+        };
+        assert!(matches!(play.expr.kind, ExprKind::List(_)));
     }
 
     #[test]

@@ -9,7 +9,7 @@ use musiclang_core::{
 use musiclang_parser::{
     parse_source, ArpeggioStmt, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt,
     DrumStmt, DynamicStmt, Expr, ExprKind, FunctionDecl, GlissandoStmt, ModulateStmt, NoteStmt,
-    OstinatoStmt, OverrideStmt, PedalStmt, Program, ProgressionStmt, RestStmt, RomanStmt,
+    OstinatoStmt, OverrideStmt, PedalStmt, PlayStmt, Program, ProgressionStmt, RestStmt, RomanStmt,
     ScaleStmt, ScoreMeta, SequenceStmt, Stmt, StrumStmt, StyleDecl, TransposeStmt, TremoloStmt,
     TupletStmt, VoiceDecl, WithStyleStmt,
 };
@@ -332,6 +332,9 @@ impl Compiler {
                             );
                         }
                     }
+                }
+                Stmt::Play(play) => {
+                    self.check_function_arity_in_expr(&play.expr, play.line, play.column)
                 }
                 Stmt::Voice(voice) => self.check_function_arity_in_statements(&voice.statements),
                 Stmt::Ostinato(ostinato) => {
@@ -723,6 +726,9 @@ impl Compiler {
                 Stmt::Note(note) => {
                     self.check_expression_name(&note.pitch_expr, note.line, note.column, scopes);
                     self.check_expression_name(&note.duration_expr, note.line, note.column, scopes);
+                }
+                Stmt::Play(play) => {
+                    self.check_expression_name(&play.expr, play.line, play.column, scopes);
                 }
                 Stmt::Drum(drum) => {
                     self.check_expression_name(&drum.duration_expr, drum.line, drum.column, scopes);
@@ -1142,6 +1148,7 @@ impl Compiler {
                 }
             }
             Stmt::Note(note) => self.compile_note(note, track),
+            Stmt::Play(play) => self.compile_play(play, track),
             Stmt::Drum(drum) => self.compile_drum(drum, track),
             Stmt::Rest(rest) => self.compile_rest(rest, track),
             Stmt::Glissando(glissando) => self.compile_glissando(glissando, track),
@@ -1323,6 +1330,87 @@ impl Compiler {
             Some(note.span),
         );
         track.push_note(Note::new(pitch, duration), Some(note.span));
+    }
+
+    fn compile_play(&mut self, play: &PlayStmt, track: &mut TrackBuilder) {
+        if let Some(value) = self.eval_expr(&play.expr, play.line, play.column) {
+            self.compile_play_value(value, play.line, play.column, play.span, track);
+        }
+    }
+
+    fn compile_play_value(
+        &mut self,
+        value: Value,
+        line: usize,
+        column: usize,
+        span: Span,
+        track: &mut TrackBuilder,
+    ) {
+        match value {
+            Value::List(values) => {
+                for value in values {
+                    self.compile_play_value(value, line, column, span, track);
+                }
+            }
+            Value::Tuple(values) => {
+                if let [Value::Pitch(pitch), Value::Duration(duration)] = values.as_slice() {
+                    self.push_play_note(*pitch, *duration, line, column, span, track);
+                } else {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_TYPE_MISMATCH",
+                            "expected play tuple `(pitch, duration)`",
+                            line,
+                            column,
+                        )
+                        .with_span(span),
+                    );
+                }
+            }
+            Value::Dict(values) => {
+                let pitch = values.get("p").or_else(|| values.get("pitch"));
+                let duration = values.get("d").or_else(|| values.get("dur"));
+                if let (Some(Value::Pitch(pitch)), Some(Value::Duration(duration))) =
+                    (pitch, duration)
+                {
+                    self.push_play_note(*pitch, *duration, line, column, span, track);
+                } else {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_TYPE_MISMATCH",
+                            "expected play dict `{p: pitch, d: duration}`",
+                            line,
+                            column,
+                        )
+                        .with_span(span),
+                    );
+                }
+            }
+            _ => self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_TYPE_MISMATCH",
+                    "expected playable phrase value",
+                    line,
+                    column,
+                )
+                .with_span(span),
+            ),
+        }
+    }
+
+    fn push_play_note(
+        &mut self,
+        pitch: Pitch,
+        duration: Duration,
+        line: usize,
+        column: usize,
+        span: Span,
+        track: &mut TrackBuilder,
+    ) {
+        self.check_pitch_style(pitch, line, column, Some(span));
+        self.check_rhythm_vocab(duration, line, column, Some(span));
+        self.check_instrument_range(track.program, pitch, line, column, Some(span));
+        track.push_note(Note::new(pitch, duration), Some(span));
     }
 
     fn compile_drum(&mut self, drum: &DrumStmt, track: &mut TrackBuilder) {
@@ -6224,6 +6312,26 @@ score demo {
         assert_eq!(events[1].pitch.to_string(), "E4");
         assert_eq!(events[2].pitch.to_string(), "G4");
         assert_eq!(events[3].pitch.to_string(), "B4");
+    }
+
+    #[test]
+    fn play_expands_phrase_values() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [(root, 1/8), (root |> transpose(M3), 1/8), {p:root |> transpose(P5), d:1/4}]
+score demo {
+  voice lead {
+    play riff(C4)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 3);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "E4");
+        assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "G4");
     }
 
     #[test]
