@@ -338,7 +338,38 @@ fn completion_items(
     documents: &HashMap<String, String>,
     params: &CompletionParams,
 ) -> CompletionResponse {
-    let keywords = [
+    let uri = &params.text_document_position.text_document.uri;
+    let Some(source) = documents.get(&uri.to_string()) else {
+        let mut items = general_completion_items();
+        items.extend(style_rule_completion_items());
+        items.extend(builtin_style_completion_items());
+        return CompletionResponse::Array(items);
+    };
+
+    let position = params.text_document_position.position;
+    let line_prefix = line_prefix(source, position);
+    if is_call_context(&line_prefix) {
+        return CompletionResponse::Array(local_function_completion_items(source));
+    }
+    if is_score_style_context(&line_prefix) {
+        return CompletionResponse::Array(style_completion_items(source));
+    }
+    if let Some(domain) = style_value_context(&line_prefix) {
+        return CompletionResponse::Array(theory_entry_completion_items(domain));
+    }
+    if is_style_key_context(source, position, &line_prefix) {
+        return CompletionResponse::Array(style_rule_completion_items());
+    }
+
+    let mut items = general_completion_items();
+    items.extend(style_completion_items(source));
+    items.extend(local_function_completion_items(source));
+    items.extend(local_variable_completion_items(source));
+    CompletionResponse::Array(items)
+}
+
+fn general_completion_items() -> Vec<CompletionItem> {
+    [
         "style",
         "score",
         "voice",
@@ -356,68 +387,219 @@ fn completion_items(
         "override",
         "allow",
         "reason",
+    ]
+    .into_iter()
+    .map(keyword_item)
+    .collect()
+}
+
+fn style_rule_completion_items() -> Vec<CompletionItem> {
+    [
         "scale",
+        "mode",
         "chord_vocab",
+        "chord_quality_vocab",
+        "meter",
+        "meter_catalog",
         "tempo_range",
         "instrument_range",
+        "dynamic_vocab",
+        "articulation_vocab",
+        "ornament_vocab",
+        "non_chord_tone_vocab",
+        "harmonic_function_vocab",
+        "set_class_vocab",
+        "tuning_system_vocab",
+        "world_tradition_vocab",
+        "historical_era_vocab",
+        "rhythm_vocab",
+        "rhythm_concept",
+        "form",
+        "texture",
+        "cadence",
         "parallel_fifths",
         "voice_crossing",
-    ];
-    let mut items = keywords
-        .into_iter()
-        .map(|label| CompletionItem {
-            label: label.to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            insert_text: Some(label.to_string()),
+        "max_melodic_leap",
+        "contrapuntal_motion",
+        "harmonic_progression",
+    ]
+    .into_iter()
+    .map(keyword_item)
+    .collect()
+}
+
+fn style_completion_items(source: &str) -> Vec<CompletionItem> {
+    let mut items = builtin_style_completion_items();
+    items.extend(
+        local_style_names(source)
+            .into_iter()
+            .map(|label| CompletionItem {
+                label,
+                kind: Some(CompletionItemKind::CLASS),
+                detail: Some("MusicLang style".to_string()),
+                ..CompletionItem::default()
+            }),
+    );
+    items
+}
+
+fn builtin_style_completion_items() -> Vec<CompletionItem> {
+    BUILT_IN_STYLES
+        .iter()
+        .map(|style| CompletionItem {
+            label: style.id.to_string(),
+            kind: Some(CompletionItemKind::CLASS),
+            detail: Some(style.name.to_string()),
+            documentation: Some(lsp_types::Documentation::String(
+                style.description.to_string(),
+            )),
             ..CompletionItem::default()
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
 
-    items.extend(BUILT_IN_STYLES.iter().map(|style| CompletionItem {
-        label: style.id.to_string(),
-        kind: Some(CompletionItemKind::CLASS),
-        detail: Some(style.name.to_string()),
-        documentation: Some(lsp_types::Documentation::String(
-            style.description.to_string(),
-        )),
+fn local_function_completion_items(source: &str) -> Vec<CompletionItem> {
+    local_function_names(source)
+        .into_iter()
+        .map(|label| CompletionItem {
+            label,
+            kind: Some(CompletionItemKind::FUNCTION),
+            detail: Some("MusicLang function".to_string()),
+            ..CompletionItem::default()
+        })
+        .collect()
+}
+
+fn local_variable_completion_items(source: &str) -> Vec<CompletionItem> {
+    local_variable_names(source)
+        .into_iter()
+        .map(|label| CompletionItem {
+            label,
+            kind: Some(CompletionItemKind::VARIABLE),
+            detail: Some("MusicLang value".to_string()),
+            ..CompletionItem::default()
+        })
+        .collect()
+}
+
+fn theory_entry_completion_items(domain: musiclang_core::TheoryDomain) -> Vec<CompletionItem> {
+    let catalog = musiclang_core::theory_catalog();
+    catalog
+        .entries(domain)
+        .iter()
+        .map(|entry| CompletionItem {
+            label: entry.id.to_string(),
+            kind: Some(CompletionItemKind::VALUE),
+            detail: Some(entry.name.to_string()),
+            documentation: Some(lsp_types::Documentation::String(
+                entry.description.to_string(),
+            )),
+            ..CompletionItem::default()
+        })
+        .collect()
+}
+
+fn keyword_item(label: &str) -> CompletionItem {
+    CompletionItem {
+        label: label.to_string(),
+        kind: Some(CompletionItemKind::KEYWORD),
+        insert_text: Some(label.to_string()),
         ..CompletionItem::default()
-    }));
-
-    let uri = &params.text_document_position.text_document.uri;
-    if let Some(source) = documents.get(&uri.to_string()) {
-        items.extend(
-            local_style_names(source)
-                .into_iter()
-                .map(|label| CompletionItem {
-                    label,
-                    kind: Some(CompletionItemKind::CLASS),
-                    detail: Some("MusicLang style".to_string()),
-                    ..CompletionItem::default()
-                }),
-        );
-        items.extend(
-            local_function_names(source)
-                .into_iter()
-                .map(|label| CompletionItem {
-                    label,
-                    kind: Some(CompletionItemKind::FUNCTION),
-                    detail: Some("MusicLang function".to_string()),
-                    ..CompletionItem::default()
-                }),
-        );
-        items.extend(
-            local_variable_names(source)
-                .into_iter()
-                .map(|label| CompletionItem {
-                    label,
-                    kind: Some(CompletionItemKind::VARIABLE),
-                    detail: Some("MusicLang value".to_string()),
-                    ..CompletionItem::default()
-                }),
-        );
     }
+}
 
-    CompletionResponse::Array(items)
+fn line_prefix(source: &str, position: Position) -> String {
+    let Some(line) = source.lines().nth(position.line as usize) else {
+        return String::new();
+    };
+    let byte_index = utf16_character_to_byte_index(line, position.character);
+    line[..byte_index].to_string()
+}
+
+fn utf16_character_to_byte_index(line: &str, character: u32) -> usize {
+    let mut units = 0u32;
+    for (index, ch) in line.char_indices() {
+        if units >= character {
+            return index;
+        }
+        units += ch.len_utf16() as u32;
+    }
+    line.len()
+}
+
+fn is_call_context(line_prefix: &str) -> bool {
+    let words = line_prefix.split_whitespace().collect::<Vec<_>>();
+    words.last() == Some(&"call") || words.iter().rev().nth(1) == Some(&"call")
+}
+
+fn is_score_style_context(line_prefix: &str) -> bool {
+    let words = line_prefix.split_whitespace().collect::<Vec<_>>();
+    words.first() == Some(&"score")
+        && words.iter().any(|word| *word == "style")
+        && !line_prefix.contains('{')
+}
+
+fn is_style_key_context(source: &str, position: Position, line_prefix: &str) -> bool {
+    let trimmed = line_prefix.trim_start();
+    !trimmed.contains(':')
+        && !trimmed.contains('{')
+        && current_block_kind(source, position) == Some("style")
+}
+
+fn current_block_kind(source: &str, position: Position) -> Option<&'static str> {
+    let mut stack = Vec::new();
+    for (line_index, line) in source.lines().enumerate() {
+        if line_index > position.line as usize {
+            break;
+        }
+        let prefix = if line_index == position.line as usize {
+            let byte_index = utf16_character_to_byte_index(line, position.character);
+            &line[..byte_index]
+        } else {
+            line
+        };
+        if prefix.contains('}') {
+            stack.pop();
+        }
+        if prefix.contains('{') {
+            let first = prefix.split_whitespace().next().unwrap_or_default();
+            stack.push(match first {
+                "style" => "style",
+                "score" => "score",
+                "voice" => "voice",
+                _ => "block",
+            });
+        }
+    }
+    stack.last().copied()
+}
+
+fn style_value_context(line_prefix: &str) -> Option<musiclang_core::TheoryDomain> {
+    let key = line_prefix.split_once(':')?.0.trim();
+    style_key_domain(key)
+}
+
+fn style_key_domain(key: &str) -> Option<musiclang_core::TheoryDomain> {
+    match key {
+        "scale" => Some(musiclang_core::TheoryDomain::Scales),
+        "mode" => Some(musiclang_core::TheoryDomain::Modes),
+        "chord_vocab" | "chord_quality_vocab" => Some(musiclang_core::TheoryDomain::ChordQualities),
+        "meter" | "meter_catalog" => Some(musiclang_core::TheoryDomain::Meters),
+        "dynamic_vocab" => Some(musiclang_core::TheoryDomain::Dynamics),
+        "articulation_vocab" | "ornament_vocab" => Some(musiclang_core::TheoryDomain::Ornaments),
+        "non_chord_tone_vocab" => Some(musiclang_core::TheoryDomain::NonChordTones),
+        "harmonic_function_vocab" => Some(musiclang_core::TheoryDomain::HarmonicFunctions),
+        "set_class_vocab" => Some(musiclang_core::TheoryDomain::SetClasses),
+        "tuning_system_vocab" => Some(musiclang_core::TheoryDomain::TuningSystems),
+        "world_tradition_vocab" => Some(musiclang_core::TheoryDomain::WorldTraditions),
+        "historical_era_vocab" => Some(musiclang_core::TheoryDomain::StyleEras),
+        "rhythm_vocab" | "rhythm_concept" => Some(musiclang_core::TheoryDomain::Rhythms),
+        "form" => Some(musiclang_core::TheoryDomain::Forms),
+        "texture" => Some(musiclang_core::TheoryDomain::Textures),
+        "cadence" => Some(musiclang_core::TheoryDomain::Cadences),
+        "contrapuntal_motion" => Some(musiclang_core::TheoryDomain::ContrapuntalMotions),
+        _ => None,
+    }
 }
 
 fn local_style_names(source: &str) -> Vec<String> {
@@ -562,14 +744,14 @@ mod tests {
         let mut documents = HashMap::new();
         documents.insert(
             uri.to_string(),
-            "fn motif {\n  note C4, 1/4\n}\nscore demo {\n  voice lead {\n    let d = duration 1/4\n    call motif\n  }\n}".to_string(),
+            "fn motif {\n  note C4, 1/4\n}\nscore demo {\n  voice lead {\n    let d = duration 1/4\n    note C4, \n  }\n}".to_string(),
         );
         let CompletionResponse::Array(items) = completion_items(
             &documents,
             &CompletionParams {
                 text_document_position: lsp_types::TextDocumentPositionParams {
                     text_document: lsp_types::TextDocumentIdentifier { uri },
-                    position: Position::new(6, 10),
+                    position: Position::new(6, 13),
                 },
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
@@ -585,6 +767,116 @@ mod tests {
         assert!(items
             .iter()
             .any(|item| item.label == "d" && item.kind == Some(CompletionItemKind::VARIABLE)));
+    }
+
+    #[test]
+    fn completion_suggests_functions_after_call() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
+        let mut documents = HashMap::new();
+        documents.insert(
+            uri.to_string(),
+            "fn motif {\n  note C4, 1/4\n}\nscore demo {\n  voice lead {\n    call \n  }\n}"
+                .to_string(),
+        );
+        let CompletionResponse::Array(items) = completion_items(
+            &documents,
+            &CompletionParams {
+                text_document_position: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: Position::new(5, 9),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            },
+        ) else {
+            panic!("expected completion array");
+        };
+
+        assert!(items
+            .iter()
+            .any(|item| item.label == "motif" && item.kind == Some(CompletionItemKind::FUNCTION)));
+        assert!(!items.iter().any(|item| item.label == "score"));
+    }
+
+    #[test]
+    fn completion_suggests_styles_after_score_style() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
+        let mut documents = HashMap::new();
+        documents.insert(
+            uri.to_string(),
+            "style Chamber {\n  scale: C D E\n}\nscore demo style ".to_string(),
+        );
+        let CompletionResponse::Array(items) = completion_items(
+            &documents,
+            &CompletionParams {
+                text_document_position: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: Position::new(3, 17),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            },
+        ) else {
+            panic!("expected completion array");
+        };
+
+        assert!(items.iter().any(|item| item.label == "Chamber"));
+        assert!(items.iter().any(|item| item.label == "Classical"));
+        assert!(!items.iter().any(|item| item.label == "note"));
+    }
+
+    #[test]
+    fn completion_suggests_style_keys_in_style_block() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
+        let mut documents = HashMap::new();
+        documents.insert(uri.to_string(), "style Strict {\n  ".to_string());
+        let CompletionResponse::Array(items) = completion_items(
+            &documents,
+            &CompletionParams {
+                text_document_position: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: Position::new(1, 2),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            },
+        ) else {
+            panic!("expected completion array");
+        };
+
+        assert!(items.iter().any(|item| item.label == "scale"));
+        assert!(items.iter().any(|item| item.label == "cadence"));
+        assert!(!items.iter().any(|item| item.label == "score"));
+    }
+
+    #[test]
+    fn completion_suggests_theory_entries_for_style_values() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
+        let mut documents = HashMap::new();
+        documents.insert(uri.to_string(), "style Strict {\n  cadence: ".to_string());
+        let CompletionResponse::Array(items) = completion_items(
+            &documents,
+            &CompletionParams {
+                text_document_position: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: Position::new(1, 11),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            },
+        ) else {
+            panic!("expected completion array");
+        };
+
+        assert!(items.iter().any(|item| item.label == "authentic"));
+        assert!(items
+            .iter()
+            .any(|item| item.detail.as_deref() == Some("authentic cadence")));
+        assert!(!items.iter().any(|item| item.label == "score"));
     }
 
     #[test]
