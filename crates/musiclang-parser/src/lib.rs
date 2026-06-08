@@ -22,6 +22,9 @@ pub struct StyleDecl {
 pub struct StyleEntry {
     pub key: String,
     pub value: String,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -596,7 +599,8 @@ impl Parser {
         let mut entries = Vec::new();
         if self.consume(TokenKind::LBrace).is_some() {
             while !self.check(TokenKind::RBrace) && !self.check(TokenKind::Eof) {
-                let key = self.expect_name()?;
+                let key_token = self.expect_name_token()?;
+                let key = key_token.text.clone();
                 self.expect(TokenKind::Colon, "expected `:` in style entry")?;
                 let mut value = Vec::new();
                 while !self.check(TokenKind::RBrace)
@@ -616,6 +620,9 @@ impl Parser {
                     entries.push(StyleEntry {
                         key,
                         value: value.join(" "),
+                        line: key_token.span.line,
+                        column: key_token.span.column,
+                        span: key_token.span,
                     });
                 }
             }
@@ -1192,13 +1199,17 @@ impl Parser {
     }
 
     fn expect_name(&mut self) -> Option<String> {
+        self.expect_name_token().map(|token| token.text)
+    }
+
+    fn expect_name_token(&mut self) -> Option<Token> {
         let token = self.peek().clone();
         if matches!(
             token.kind,
             TokenKind::Ident | TokenKind::Pitch | TokenKind::Interval
         ) {
             self.advance();
-            Some(token.text)
+            Some(token)
         } else {
             self.push_token_diagnostic("ML_PARSE_NAME", "expected name", &token);
             None
@@ -1572,6 +1583,12 @@ score demo style Sparse {
         assert_eq!(program.styles.len(), 2);
         assert_eq!(program.style.unwrap().name, "Classical");
         assert_eq!(program.score.style.as_deref(), Some("Sparse"));
+        let entry = &program.styles[1].entries[0];
+        let expected_start = source.find("scale").unwrap();
+        assert_eq!(entry.line, entry.span.line);
+        assert_eq!(entry.column, entry.span.column);
+        assert_eq!(entry.span.start, expected_start);
+        assert_eq!(entry.span.end, expected_start + "scale".len());
     }
 
     #[test]

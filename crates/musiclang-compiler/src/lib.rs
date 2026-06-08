@@ -1891,10 +1891,10 @@ fn style_from_program_inner(
                         Diagnostic::error(
                             "ML_STYLE_UNKNOWN_KEY",
                             format!("unknown style key `{}`", entry.key),
-                            style.line,
-                            style.column,
+                            entry.line,
+                            entry.column,
                         )
-                        .with_span(style.span)
+                        .with_span(entry.span)
                         .with_style(style.name.clone()),
                     );
                 }
@@ -1917,10 +1917,10 @@ fn validate_vocab_entries(
                 Diagnostic::error(
                     "ML_STYLE_UNKNOWN_THEORY_ENTRY",
                     format!("unknown theory entry `{entry_id}` in domain `{domain}`"),
-                    style.line,
-                    style.column,
+                    entry.line,
+                    entry.column,
                 )
-                .with_span(style.span)
+                .with_span(entry.span)
                 .with_rule(entry.key.clone())
                 .with_style(style.name.clone()),
             );
@@ -1946,10 +1946,10 @@ fn validate_builtin_theory_references(
                 Diagnostic::error(
                     "ML_STYLE_UNKNOWN_THEORY_ENTRY",
                     format!("unknown theory entry `{entry_id}` in domain `{domain}`"),
-                    style.line,
-                    style.column,
+                    entry.line,
+                    entry.column,
                 )
-                .with_span(style.span)
+                .with_span(entry.span)
                 .with_rule(entry.key.clone())
                 .with_style(style.name.clone()),
             );
@@ -1985,10 +1985,10 @@ fn validate_custom_theory_references(
                         "unknown theory entry `{entry_id}` in custom domain `{}`",
                         entry.key
                     ),
-                    style.line,
-                    style.column,
+                    entry.line,
+                    entry.column,
                 )
-                .with_span(style.span)
+                .with_span(entry.span)
                 .with_rule(entry.key.clone())
                 .with_style(style.name.clone()),
             );
@@ -2888,8 +2888,7 @@ score demo {
 
     #[test]
     fn invalid_theory_reference_fails() {
-        let diagnostics = compile_source(
-            r#"
+        let source = r#"
 style TheoryRich {
   harmonic_functions: imaginary_function
 }
@@ -2898,12 +2897,15 @@ score demo {
     note C4, 1/4
   }
 }
-"#,
-        )
-        .unwrap_err();
+"#;
+        let diagnostics = compile_source(source).unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_UNKNOWN_THEORY_ENTRY");
         assert_eq!(diagnostics[0].rule.as_deref(), Some("harmonic_functions"));
+        let span = diagnostics[0].span.unwrap();
+        let expected_start = source.find("harmonic_functions").unwrap();
+        assert_eq!(span.start, expected_start);
+        assert_eq!(span.end, expected_start + "harmonic_functions".len());
     }
 
     #[test]
@@ -2938,8 +2940,7 @@ score demo {{
 
     #[test]
     fn unknown_style_key_fails() {
-        let diagnostics = compile_source(
-            r#"
+        let source = r#"
 style TheoryRich {
   imaginary_domain: anything
 }
@@ -2948,11 +2949,14 @@ score demo {
     note C4, 1/4
   }
 }
-"#,
-        )
-        .unwrap_err();
+"#;
+        let diagnostics = compile_source(source).unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_UNKNOWN_KEY");
+        let span = diagnostics[0].span.unwrap();
+        let expected_start = source.find("imaginary_domain").unwrap();
+        assert_eq!(span.start, expected_start);
+        assert_eq!(span.end, expected_start + "imaginary_domain".len());
     }
 
     #[test]
