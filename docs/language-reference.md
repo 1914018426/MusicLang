@@ -120,6 +120,7 @@ music build --strict
 music check input.music
 music check input.music --strict
 music analyze input.music --strict
+music compile input.music -o output.mid --strict
 music export input.music --format midi -o output.mid
 music export input.music --format musicxml -o output.musicxml
 music export input.music --format wav -o output.wav
@@ -135,7 +136,7 @@ music theory --find maqam
 music repl
 ```
 
-`check --strict`, `build --strict`, and `export --strict` reject any compiler diagnostic before accepting or writing output. `analyze --strict` applies the same zero-diagnostic requirement and also enforces listening-quality repetition thresholds.
+`check --strict`, `compile --strict`, `build --strict`, and `export --strict` reject any compiler diagnostic before accepting or writing output. `analyze --strict` applies the same zero-diagnostic requirement and also enforces listening-quality repetition thresholds.
 
 ## Diagnostics
 

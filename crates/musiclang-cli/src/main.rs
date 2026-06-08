@@ -32,6 +32,9 @@ enum Command {
 
         #[arg(short, long)]
         output: Option<String>,
+
+        #[arg(long)]
+        strict: bool,
     },
     Check {
         input: String,
@@ -95,7 +98,11 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::New { name } => new_project(&name),
         Command::Build { manifest, strict } => build_project(manifest.as_deref(), strict),
-        Command::Compile { input, output } => compile_file(&input, output.as_deref()),
+        Command::Compile {
+            input,
+            output,
+            strict,
+        } => compile_file(&input, output.as_deref(), strict),
         Command::Check { input, strict } => check_file(&input, strict),
         Command::Export {
             input,
@@ -194,10 +201,10 @@ fn parse_manifest(source: &str) -> ProjectManifest {
     manifest
 }
 
-fn compile_file(input: &str, output: Option<&str>) -> Result<(), String> {
+fn compile_file(input: &str, output: Option<&str>, strict: bool) -> Result<(), String> {
     let source =
         fs::read_to_string(input).map_err(|error| format!("failed to read {input}: {error}"))?;
-    let ir = musiclang_compiler::compile_source(&source).map_err(format_diagnostics)?;
+    let ir = compile_for_output(&source, strict)?;
     let bytes = musiclang_midi::render_midi(&ir)
         .map_err(|error| format!("failed to render MIDI: {error}"))?;
     let output = output.unwrap_or("output.mid");
@@ -214,6 +221,19 @@ fn compile_file(input: &str, output: Option<&str>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn compile_for_output(source: &str, strict: bool) -> Result<musiclang_core::ScoreIr, String> {
+    if strict {
+        let compilation = musiclang_compiler::compile_source_with_diagnostics(source)
+            .map_err(format_diagnostics)?;
+        if !compilation.diagnostics.is_empty() {
+            return Err(format_diagnostics(compilation.diagnostics));
+        }
+        Ok(compilation.ir)
+    } else {
+        musiclang_compiler::compile_source(source).map_err(format_diagnostics)
+    }
 }
 
 fn export_file(
@@ -238,16 +258,7 @@ fn export_file_to(
 ) -> Result<(), String> {
     let source = fs::read_to_string(input)
         .map_err(|error| format!("failed to read {}: {error}", input.display()))?;
-    let ir = if strict {
-        let compilation = musiclang_compiler::compile_source_with_diagnostics(&source)
-            .map_err(format_diagnostics)?;
-        if !compilation.diagnostics.is_empty() {
-            return Err(format_diagnostics(compilation.diagnostics));
-        }
-        compilation.ir
-    } else {
-        musiclang_compiler::compile_source(&source).map_err(format_diagnostics)?
-    };
+    let ir = compile_for_output(&source, strict)?;
     let (output, bytes) = match format {
         "midi" | "mid" => (
             output.unwrap_or(Path::new("output.mid")).to_path_buf(),

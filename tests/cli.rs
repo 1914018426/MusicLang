@@ -238,6 +238,45 @@ fn music_diagnose_json_machine_readable() {
 }
 
 #[test]
+fn music_compile_strict_rejects_warning_only_diagnostics() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/compile-strict-warning.music");
+    let output_path = format!("{workspace}/target/compile-strict-warning.mid");
+    let _ = fs::remove_file(&output_path);
+    fs::write(
+        &input_path,
+        r#"
+style WarningScale {
+  scale: C major
+  severity_scale: warning
+}
+
+score warning_only style WarningScale {
+  key C major
+  voice lead {
+    note C4, 1/4
+    note F#4, 1/4
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let compile_output = run_music(&["compile", &input_path, "-o", &output_path]);
+    assert!(compile_output.status.success());
+    assert!(fs::read(&output_path).unwrap().starts_with(b"MThd"));
+    fs::remove_file(&output_path).unwrap();
+
+    let strict_output = run_music(&["compile", &input_path, "-o", &output_path, "--strict"]);
+
+    assert!(!strict_output.status.success());
+    assert!(!std::path::Path::new(&output_path).exists());
+    let stderr = String::from_utf8_lossy(&strict_output.stderr);
+    assert!(stderr.contains("ML_STYLE_SCALE"));
+    assert!(stderr.contains("warning"));
+}
+
+#[test]
 fn music_export_strict_rejects_warning_only_diagnostics() {
     let workspace = env!("CARGO_MANIFEST_DIR");
     let input_path = format!("{workspace}/target/export-strict-warning.music");

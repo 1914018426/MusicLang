@@ -56,6 +56,7 @@ A MusicLang project contains `music.toml`, `src/main.music`, and build outputs u
 music check examples/minimal.music
 music check examples/demo_jazz_complete.music --strict
 music analyze examples/demo_jazz_complete.music --strict
+music compile examples/demo_jazz_complete.music -o /tmp/musiclang-jazz.mid --strict
 music export examples/minimal.music --format midi -o /tmp/musiclang-minimal.mid
 music export examples/minimal.music --format musicxml -o /tmp/musiclang-minimal.musicxml
 music export examples/minimal.music --format wav -o /tmp/musiclang-minimal.wav

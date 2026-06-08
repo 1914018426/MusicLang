@@ -98,7 +98,7 @@ style MicrotonalPractice {
 }
 ```
 
-Styles can configure rule severity with `severity_<rule>: error`, `severity_<rule>: warning`, or `severity_<rule>: off`. `error` is the default and blocks compilation; `warning` records a diagnostic without blocking non-strict output; `off` disables that rule. Strict quality gates (`check --strict`, `analyze --strict`, `build --strict`, and `export --strict`) reject every diagnostic, including warnings.
+Styles can configure rule severity with `severity_<rule>: error`, `severity_<rule>: warning`, or `severity_<rule>: off`. `error` is the default and blocks compilation; `warning` records a diagnostic without blocking non-strict output; `off` disables that rule. Strict quality gates (`check --strict`, `analyze --strict`, `compile --strict`, `build --strict`, and `export --strict`) reject every diagnostic, including warnings.
 
 Styles can declare custom rule IDs with `rule_<id>: description`. These rule IDs participate in override validation, so local exceptions can be audited without extending the compiler's built-in rule enum.
 
