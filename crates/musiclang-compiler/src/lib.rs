@@ -3849,6 +3849,14 @@ impl Compiler {
                 );
                 None
             }),
+            ("len", [Value::List(values)]) => Some(Value::Int(values.len() as i32)),
+            ("len", [Value::Tuple(values)]) => Some(Value::Int(values.len() as i32)),
+            ("at", [Value::List(values), Value::Int(index)]) => {
+                self.eval_indexed_value(values, *index, line, column, span)
+            }
+            ("at", [Value::Tuple(values), Value::Int(index)]) => {
+                self.eval_indexed_value(values, *index, line, column, span)
+            }
             _ => {
                 self.diagnostics.push(
                     Diagnostic::error(
@@ -3862,6 +3870,40 @@ impl Compiler {
                 None
             }
         }
+    }
+
+    fn eval_indexed_value(
+        &mut self,
+        values: &[Value],
+        index: i32,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        if index < 0 {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_TYPE_MISMATCH",
+                    "collection index out of range",
+                    line,
+                    column,
+                )
+                .with_span(span),
+            );
+            return None;
+        }
+        values.get(index as usize).cloned().or_else(|| {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_TYPE_MISMATCH",
+                    "collection index out of range",
+                    line,
+                    column,
+                )
+                .with_span(span),
+            );
+            None
+        })
     }
 
     fn eval_binary(
@@ -7045,6 +7087,46 @@ score demo {
 
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "ML_EVAL_UNSUPPORTED_OP" && diagnostic.message == "division by zero"
+        }));
+    }
+
+    #[test]
+    fn collection_builtins_index_phrase_material() {
+        let ir = compile_source(
+            r#"
+fn motif(root) = [{p:root, d:1/8}, {p:root |> transpose(M3), d:1/8}, {p:root |> transpose(P5), d:1/4}]
+fn choose(events) = [at(events, 0), at(events, len(events) - 1)]
+score demo {
+  voice lead {
+    play choose(motif(C4))
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 2);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "G4");
+        assert_eq!(ir.tracks[0].events[1].duration_ticks, 480);
+    }
+
+    #[test]
+    fn collection_index_out_of_range_reports_diagnostic() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(events) = at(events, 3)
+score demo {
+  voice lead {
+    let x = bad([(C4, 1/8)])
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "collection index out of range"
         }));
     }
 
