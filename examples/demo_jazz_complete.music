@@ -1,4 +1,249 @@
-score jazz_complete style Jazz {
+fn tenor_head_a {
+  note G4, 1/4
+  note Bb4, 1/8
+  note C5, 1/8
+  note D5, 1/4
+  note C5, 1/4
+  note Bb4, 1/4
+  note G4, 1/8
+  note E4, 1/8
+  note F4, 1/4
+  note G4, 1/4
+  note A4, 1/4
+  note C5, 1/8
+  note Eb5, 1/8
+  note D5, 1/4
+  note C5, 1/4
+  note Bb4, 1/4
+  note G4, 1/8
+  note F4, 1/8
+  note A4, 1/2
+}
+
+fn tenor_head_b {
+  note C5, 1/4
+  note D5, 1/8
+  note Eb5, 1/8
+  note E5, 1/4
+  note G5, 1/4
+  note F5, 1/4
+  note E5, 1/8
+  note D5, 1/8
+  note C5, 1/4
+  note Bb4, 1/4
+  note A4, 1/4
+  note C5, 1/8
+  note D5, 1/8
+  note E5, 1/4
+  note G5, 1/4
+  note F5, 1/2
+}
+
+fn tenor_solo_cycle {
+  arpeggio C4 dominant7, 1/8
+  note D5, 1/8
+  note Eb5, 1/8
+  note E5, 1/8
+  note G5, 1/4
+  note F5, 1/4
+  arpeggio F4 dominant7, 1/8
+  note E5, 1/8
+  note C5, 1/8
+  note A4, 1/8
+  note G4, 1/2
+  arpeggio C4 dominant7 inv 1, 1/8
+  note Bb4, 1/8
+  note C5, 1/8
+  note D5, 1/8
+  note E5, 1/2
+  arpeggio G4 dominant7, 1/8
+  glissando D5 to G4 steps 5, 1/16
+  note C5, 1/2
+}
+
+fn tenor_solo_answer {
+  arpeggio F4 dominant7, 1/8
+  note G5, 1/8
+  note F5, 1/8
+  note Eb5, 1/8
+  note C5, 1/2
+  arpeggio F4 minor7, 1/8
+  note D5, 1/8
+  note C5, 1/8
+  note Ab4, 1/8
+  note G4, 1/2
+  arpeggio C4 dominant7, 1/8
+  note E5, 1/8
+  note G5, 1/8
+  note Bb5, 1/8
+  note C6, 1/2
+  arpeggio G4 dominant7, 1/8
+  note F5, 1/8
+  note D5, 1/8
+  note B4, 1/8
+  note C5, 1/2
+}
+
+fn tenor_shout {
+  sequence 2 by M2 {
+    note G4, 1/8
+    note Bb4, 1/8
+    note C5, 1/8
+    note Eb5, 1/8
+  }
+  note F5, 1/2
+  note D5, 1/2
+  note C5, 1/4
+  note Bb4, 1/4
+  note G4, 1/4
+  note E4, 1/4
+  note C5, 1/1
+}
+
+fn tenor_tag {
+  note F4, 1/4
+  note G4, 1/4
+  note Bb4, 1/4
+  note C5, 1/4
+  note E5, 1/2
+  note D5, 1/2
+  note C5, 1/1
+}
+
+fn piano_comp_a {
+  strum C3 dominant7, 1/2 by 1/32
+  rest 1/2
+  strum F3 dominant7, 1/2 by 1/32
+  rest 1/2
+  chord C3 dominant7, 1/2
+  chord A3 minor7, 1/2
+  chord D3 minor7, 1/2
+  chord G3 dominant7, 1/2
+}
+
+fn piano_comp_b {
+  chord F3 dominant7, 1/2
+  chord F3 minor7, 1/2
+  chord C3 dominant7, 1/2
+  chord A3 minor7, 1/2
+  chord D3 minor7, 1/2
+  chord G3 dominant7, 1/2
+  chord C3 major7, 1/1
+}
+
+fn piano_comp_bridge {
+  chord C3 dominant7, 1/2
+  chord E3 minor7, 1/2
+  chord F3 dominant7, 1/2
+  chord F3 minor7, 1/2
+  chord C3 dominant7, 1/2
+  chord A3 minor7, 1/2
+  chord D3 minor7, 1/2
+  chord G3 dominant7, 1/2
+}
+
+fn piano_comp_shout {
+  chord C3 dominant7, 1/2
+  chord Eb3 dominant7, 1/2
+  chord F3 dominant7, 1/2
+  chord Gb3 dominant7, 1/2
+  chord G3 dominant7, 1/2
+  chord C3 dominant7, 1/2
+  chord F3 dominant7, 1/2
+  chord G3 dominant7, 1/2
+  chord C3 major7, 1/1
+}
+
+fn piano_tag {
+  chord F3 dominant7, 1/2
+  chord G3 dominant7, 1/2
+  chord C3 major7, 1/1
+}
+
+fn bass_walk_a {
+  note C2, 1/4
+  note E2, 1/4
+  note G2, 1/4
+  note Bb2, 1/4
+  note F2, 1/4
+  note A2, 1/4
+  note C3, 1/4
+  note Eb3, 1/4
+  note C2, 1/4
+  note E2, 1/4
+  note G2, 1/4
+  note A2, 1/4
+  note D2, 1/4
+  note F2, 1/4
+  note G2, 1/4
+  note B2, 1/4
+}
+
+fn bass_walk_b {
+  note F2, 1/4
+  note A2, 1/4
+  note C3, 1/4
+  note Eb3, 1/4
+  note F2, 1/4
+  note Ab2, 1/4
+  note C3, 1/4
+  note D3, 1/4
+  note C2, 1/4
+  note E2, 1/4
+  note G2, 1/4
+  note Bb2, 1/4
+  note A2, 1/4
+  note C3, 1/4
+  note D3, 1/4
+  note E3, 1/4
+}
+
+fn bass_walk_bridge {
+  note C2, 1/4
+  note G2, 1/4
+  note Bb2, 1/4
+  note B2, 1/4
+  note F2, 1/4
+  note C3, 1/4
+  note Eb3, 1/4
+  note E3, 1/4
+  note C2, 1/4
+  note E2, 1/4
+  note A2, 1/4
+  note C3, 1/4
+  note D2, 1/4
+  note F2, 1/4
+  note G2, 1/4
+  note B2, 1/4
+}
+
+fn bass_walk_shout {
+  note C2, 1/4
+  note Eb2, 1/4
+  note F2, 1/4
+  note Gb2, 1/4
+  note G2, 1/4
+  note B2, 1/4
+  note D3, 1/4
+  note F3, 1/4
+  note F2, 1/4
+  note A2, 1/4
+  note C3, 1/4
+  note E3, 1/4
+  note G2, 1/4
+  note B2, 1/4
+  note D3, 1/4
+  note F3, 1/4
+  note C2, 1/1
+}
+
+fn bass_tag {
+  note F2, 1/2
+  note G2, 1/2
+  note C2, 1/1
+}
+
+score mature_jazz_listening style Jazz {
   title "Blue Terminal Trio"
   composer "MusicLang"
   tempo 112
@@ -11,111 +256,19 @@ score jazz_complete style Jazz {
     volume 104
     pan 72
     dynamic mf
-    section Head_A {
-      note G4, 1/4
-      note Bb4, 1/8
-      note C5, 1/8
-      note D5, 1/4
-      note C5, 1/4
-      note Bb4, 1/4
-      note G4, 1/8
-      note E4, 1/8
-      note F4, 1/4
-      note G4, 1/4
-      note A4, 1/4
-      note C5, 1/8
-      note Eb5, 1/8
-      note D5, 1/4
-      note C5, 1/4
-      note Bb4, 1/4
-      note G4, 1/8
-      note F4, 1/8
-      note A4, 1/2
+    section Head {
+      call tenor_head_a
+      call tenor_head_b
     }
-    section Head_B {
-      note C5, 1/4
-      note D5, 1/8
-      note Eb5, 1/8
-      note E5, 1/4
-      note G5, 1/4
-      note F5, 1/4
-      note E5, 1/8
-      note D5, 1/8
-      note C5, 1/4
-      note Bb4, 1/4
-      note A4, 1/4
-      note C5, 1/8
-      note D5, 1/8
-      note E5, 1/4
-      note G5, 1/4
-      note F5, 1/2
-    }
-    section Solo_A {
-      arpeggio C4 dominant7, 1/8
-      note D5, 1/8
-      note Eb5, 1/8
-      note E5, 1/8
-      note G5, 1/4
-      note F5, 1/4
-      arpeggio F4 dominant7, 1/8
-      note E5, 1/8
-      note C5, 1/8
-      note A4, 1/8
-      note G4, 1/2
-      arpeggio C4 dominant7 inv 1, 1/8
-      note Bb4, 1/8
-      note C5, 1/8
-      note D5, 1/8
-      note E5, 1/2
-      arpeggio G4 dominant7, 1/8
-      glissando D5 to G4 steps 5, 1/16
-      note C5, 1/2
-    }
-    section Solo_B {
-      arpeggio F4 dominant7, 1/8
-      note G5, 1/8
-      note F5, 1/8
-      note Eb5, 1/8
-      note C5, 1/2
-      arpeggio F4 minor7, 1/8
-      note D5, 1/8
-      note C5, 1/8
-      note Ab4, 1/8
-      note G4, 1/2
-      arpeggio C4 dominant7, 1/8
-      note E5, 1/8
-      note G5, 1/8
-      note Bb5, 1/8
-      note C6, 1/2
-      arpeggio G4 dominant7, 1/8
-      note F5, 1/8
-      note D5, 1/8
-      note B4, 1/8
-      note C5, 1/2
+    section Solo {
+      call tenor_solo_cycle
+      call tenor_solo_answer
     }
     section Shout {
-      note G4, 1/8
-      note Bb4, 1/8
-      note C5, 1/8
-      note Eb5, 1/8
-      note F5, 1/4
-      note G5, 1/4
-      note F5, 1/2
-      note D5, 1/2
-      note C5, 1/4
-      note Bb4, 1/4
-      note G4, 1/4
-      note E4, 1/4
-      note C5, 1/1
+      call tenor_shout
     }
     section Tag {
-      note F4, 1/4
-      note G4, 1/4
-      note Bb4, 1/4
-      note C5, 1/4
-      note E5, 1/2
-      note D5, 1/2
-      note C5, 1/1
+      call tenor_tag
     }
   }
 
@@ -124,59 +277,19 @@ score jazz_complete style Jazz {
     channel 2
     volume 76
     pan 56
-    section Comp_A {
-      chord C3 dominant7, 1/2
-      rest 1/2
-      chord F3 dominant7, 1/2
-      rest 1/2
-      chord C3 dominant7, 1/2
-      chord A3 minor7, 1/2
-      chord D3 minor7, 1/2
-      chord G3 dominant7, 1/2
+    section Head {
+      call piano_comp_a
+      call piano_comp_b
     }
-    section Comp_B {
-      chord F3 dominant7, 1/2
-      chord F3 minor7, 1/2
-      chord C3 dominant7, 1/2
-      chord A3 minor7, 1/2
-      chord D3 minor7, 1/2
-      chord G3 dominant7, 1/2
-      chord C3 major7, 1/1
+    section Solo {
+      call piano_comp_bridge
+      call piano_comp_b
     }
-    section Comp_C {
-      chord C3 dominant7, 1/2
-      chord E3 minor7, 1/2
-      chord F3 dominant7, 1/2
-      chord F3 minor7, 1/2
-      chord C3 dominant7, 1/2
-      chord A3 minor7, 1/2
-      chord D3 minor7, 1/2
-      chord G3 dominant7, 1/2
-    }
-    section Comp_D {
-      chord F3 dominant7, 1/2
-      chord Bb3 dominant7, 1/2
-      chord C3 dominant7, 1/2
-      chord A3 minor7, 1/2
-      chord D3 minor7, 1/2
-      chord G3 dominant7, 1/2
-      chord C3 major7, 1/1
-    }
-    section Comp_E {
-      chord C3 dominant7, 1/2
-      chord Eb3 dominant7, 1/2
-      chord F3 dominant7, 1/2
-      chord Gb3 dominant7, 1/2
-      chord G3 dominant7, 1/2
-      chord C3 dominant7, 1/2
-      chord F3 dominant7, 1/2
-      chord G3 dominant7, 1/2
-      chord C3 major7, 1/1
+    section Shout {
+      call piano_comp_shout
     }
     section Tag {
-      chord F3 dominant7, 1/2
-      chord G3 dominant7, 1/2
-      chord C3 major7, 1/1
+      call piano_tag
     }
   }
 
@@ -185,99 +298,19 @@ score jazz_complete style Jazz {
     channel 1
     volume 100
     pan 42
-    section Walk_A {
-      note C2, 1/4
-      note E2, 1/4
-      note G2, 1/4
-      note Bb2, 1/4
-      note F2, 1/4
-      note A2, 1/4
-      note C3, 1/4
-      note Eb3, 1/4
-      note C2, 1/4
-      note E2, 1/4
-      note G2, 1/4
-      note A2, 1/4
-      note D2, 1/4
-      note F2, 1/4
-      note G2, 1/4
-      note B2, 1/4
+    section Head {
+      call bass_walk_a
+      call bass_walk_b
     }
-    section Walk_B {
-      note F2, 1/4
-      note A2, 1/4
-      note C3, 1/4
-      note Eb3, 1/4
-      note F2, 1/4
-      note Ab2, 1/4
-      note C3, 1/4
-      note D3, 1/4
-      note C2, 1/4
-      note E2, 1/4
-      note G2, 1/4
-      note Bb2, 1/4
-      note A2, 1/4
-      note C3, 1/4
-      note D3, 1/4
-      note E3, 1/4
+    section Solo {
+      call bass_walk_bridge
+      call bass_walk_b
     }
-    section Walk_C {
-      note C2, 1/4
-      note G2, 1/4
-      note Bb2, 1/4
-      note B2, 1/4
-      note F2, 1/4
-      note C3, 1/4
-      note Eb3, 1/4
-      note E3, 1/4
-      note C2, 1/4
-      note E2, 1/4
-      note A2, 1/4
-      note C3, 1/4
-      note D2, 1/4
-      note F2, 1/4
-      note G2, 1/4
-      note B2, 1/4
-    }
-    section Walk_D {
-      note F2, 1/4
-      note A2, 1/4
-      note Bb2, 1/4
-      note B2, 1/4
-      note C2, 1/4
-      note E2, 1/4
-      note G2, 1/4
-      note A2, 1/4
-      note D2, 1/4
-      note F2, 1/4
-      note G2, 1/4
-      note B2, 1/4
-      note C2, 1/2
-      note G1, 1/2
-    }
-    section Walk_E {
-      note C2, 1/4
-      note Eb2, 1/4
-      note F2, 1/4
-      note Gb2, 1/4
-      note G2, 1/4
-      note B2, 1/4
-      note D3, 1/4
-      note F3, 1/4
-      note F2, 1/4
-      note A2, 1/4
-      note C3, 1/4
-      note E3, 1/4
-      note G2, 1/4
-      note B2, 1/4
-      note D3, 1/4
-      note F3, 1/4
-      note C2, 1/1
+    section Shout {
+      call bass_walk_shout
     }
     section Tag {
-      note F2, 1/2
-      note G2, 1/2
-      note C2, 1/1
+      call bass_tag
     }
   }
 }
