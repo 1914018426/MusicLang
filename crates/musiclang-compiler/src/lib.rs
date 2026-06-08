@@ -111,6 +111,7 @@ impl Compiler {
         let (title, composer, tempo_bpm, meter, key) = lower::score_metadata(&self.program);
         self.check_score_key_metadata();
         self.check_function_calls();
+        self.check_style_references();
         self.score_key = key;
         self.check_score_style(tempo_bpm, meter);
         let statements = self.program.score.statements.clone();
@@ -325,6 +326,95 @@ impl Compiler {
                 _ => {}
             }
         }
+    }
+
+    fn check_style_references(&mut self) {
+        let score_statements = self.program.score.statements.clone();
+        self.check_style_references_in_statements(&score_statements);
+        let functions = self.program.functions.clone();
+        for function in functions {
+            self.check_style_references_in_statements(&function.statements);
+        }
+    }
+
+    fn check_style_references_in_statements(&mut self, statements: &[Stmt]) {
+        for statement in statements {
+            match statement {
+                Stmt::WithStyle(with_style) => {
+                    self.check_style_reference(
+                        &with_style.style,
+                        with_style.line,
+                        with_style.column,
+                        Some(with_style.span),
+                    );
+                    self.check_style_references_in_statements(&with_style.statements);
+                }
+                Stmt::Voice(voice) => self.check_style_references_in_statements(&voice.statements),
+                Stmt::Ostinato(ostinato) => {
+                    self.check_style_references_in_statements(&ostinato.statements)
+                }
+                Stmt::Sequence(sequence) => {
+                    self.check_style_references_in_statements(&sequence.statements)
+                }
+                Stmt::Tuplet(tuplet) => {
+                    self.check_style_references_in_statements(&tuplet.statements)
+                }
+                Stmt::Transpose(transpose) => {
+                    self.check_style_references_in_statements(&transpose.statements)
+                }
+                Stmt::Section(section) => {
+                    self.check_style_references_in_statements(&section.statements)
+                }
+                Stmt::Ornament(ornament) => {
+                    self.check_style_references_in_statements(&ornament.statements)
+                }
+                Stmt::NonChordTone(non_chord_tone) => {
+                    self.check_style_references_in_statements(&non_chord_tone.statements)
+                }
+                Stmt::TuningSystem(tuning_system) => {
+                    self.check_style_references_in_statements(&tuning_system.statements)
+                }
+                Stmt::WorldTradition(world_tradition) => {
+                    self.check_style_references_in_statements(&world_tradition.statements)
+                }
+                Stmt::HistoricalEra(historical_era) => {
+                    self.check_style_references_in_statements(&historical_era.statements)
+                }
+                Stmt::HarmonicFunction(harmonic_function) => {
+                    self.check_style_references_in_statements(&harmonic_function.statements)
+                }
+                Stmt::For(for_stmt) => {
+                    self.check_style_references_in_statements(&for_stmt.statements)
+                }
+                Stmt::If(if_stmt) => self.check_style_references_in_statements(&if_stmt.statements),
+                Stmt::Override(override_stmt) => {
+                    self.check_style_references_in_statements(&override_stmt.statements)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn check_style_reference(
+        &mut self,
+        name: &str,
+        line: usize,
+        column: usize,
+        span: Option<Span>,
+    ) {
+        if self.program.styles.iter().any(|style| style.name == name) {
+            return;
+        }
+        let mut diagnostic = Diagnostic::error(
+            "ML_STYLE_UNKNOWN_NAME",
+            format!("unknown style `{name}`"),
+            line,
+            column,
+        );
+        if let Some(span) = span {
+            diagnostic = diagnostic.with_span(span);
+        }
+        self.diagnostics.push(diagnostic);
     }
 
     fn compile_voice(&mut self, voice: &VoiceDecl, track: &mut TrackBuilder) {
@@ -2686,16 +2776,7 @@ impl Compiler {
         span: Option<Span>,
     ) -> Option<StyleContext> {
         let Some(style) = self.program.styles.iter().find(|style| style.name == name) else {
-            let mut diagnostic = Diagnostic::error(
-                "ML_STYLE_UNKNOWN_NAME",
-                format!("unknown style `{name}`"),
-                line,
-                column,
-            );
-            if let Some(span) = span {
-                diagnostic = diagnostic.with_span(span);
-            }
-            self.diagnostics.push(diagnostic);
+            let _ = (line, column, span);
             return None;
         };
         let (style, diagnostics) = style_from_program(&self.program, style);
@@ -7375,6 +7456,54 @@ score demo style Missing {
         .unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_UNKNOWN_NAME");
+    }
+
+    #[test]
+    fn unused_function_unknown_local_style_fails() {
+        let diagnostics = compile_source(
+            r#"
+style Classical
+fn hidden {
+  with style Missing {
+    note C4, 1/4
+  }
+}
+score demo style Classical {
+  voice lead {
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_STYLE_UNKNOWN_NAME"));
+    }
+
+    #[test]
+    fn unexecuted_branch_unknown_local_style_fails() {
+        let diagnostics = compile_source(
+            r#"
+style Classical
+score demo style Classical {
+  voice lead {
+    if false == true {
+      with style Missing {
+        note C4, 1/4
+      }
+    }
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_STYLE_UNKNOWN_NAME"));
     }
 
     #[test]
