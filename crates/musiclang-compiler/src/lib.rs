@@ -6879,7 +6879,7 @@ score demo {
         let ir = compile_source(
             r#"
 fn riff(root) = [{p:root, d:1/8, keep:true}, {p:root |> transpose(M3), d:1/8, keep:false}, {p:root |> transpose(P5), d:1/4, keep:true}]
-fn keep(event) = (event.keep) == true
+fn keep(event) = event.keep == true
 score demo {
   voice lead {
     play riff(C4) |> filter(keep)
@@ -6902,7 +6902,7 @@ score demo {
             r#"
 fn riff(root) = [{p:root, d:1/8}, {p:root |> transpose(M3), d:1/8}, {p:root |> transpose(P5), d:1/4}]
 fn mark(i, event) = {p:event.p, d:event.d, middle:i == 1}
-fn keep(event) = (event.middle) == true
+fn keep(event) = event.middle == true
 score demo {
   voice lead {
     play riff(C4) |> mapi(mark) |> filter(keep)
@@ -6948,7 +6948,7 @@ fn lt(i, event) = {p:event.p, d:event.d, keep:i < 3}
 fn le(i, event) = {p:event.p, d:event.d, keep:i <= 2}
 fn gt(i, event) = {p:event.p, d:event.d, keep:i > 0}
 fn ge(i, event) = {p:event.p, d:event.d, keep:i >= 1}
-fn keep(event) = (event.keep) == true
+fn keep(event) = event.keep == true
 score demo {
   voice lead {
     play riff(C4) |> mapi(ne) |> filter(keep)

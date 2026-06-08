@@ -2448,6 +2448,46 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
             span,
         ));
     }
+    if let Some((index, op)) = find_top_level_binary_operator(
+        tokens,
+        &[
+            (TokenKind::EqEq, BinaryOp::Eq),
+            (TokenKind::NotEq, BinaryOp::NotEq),
+            (TokenKind::LtEq, BinaryOp::LtEq),
+            (TokenKind::GtEq, BinaryOp::GtEq),
+            (TokenKind::Lt, BinaryOp::Lt),
+            (TokenKind::Gt, BinaryOp::Gt),
+        ],
+    ) {
+        return Some(Expr::new(
+            ExprKind::Binary {
+                op,
+                left: Box::new(parse_expr_tokens(&tokens[..index])?),
+                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
+            },
+            span,
+        ));
+    }
+    if let Some(index) = find_top_level_operator(tokens, TokenKind::Plus) {
+        return Some(Expr::new(
+            ExprKind::Binary {
+                op: BinaryOp::Add,
+                left: Box::new(parse_expr_tokens(&tokens[..index])?),
+                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
+            },
+            span,
+        ));
+    }
+    if let Some(index) = find_top_level_operator(tokens, TokenKind::Minus) {
+        return Some(Expr::new(
+            ExprKind::Binary {
+                op: BinaryOp::Sub,
+                left: Box::new(parse_expr_tokens(&tokens[..index])?),
+                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
+            },
+            span,
+        ));
+    }
     if let Some(index) = find_last_top_level_operator(tokens, TokenKind::Dot) {
         let target = Box::new(parse_expr_tokens(&tokens[..index])?);
         let suffix = &tokens[index + 1..];
@@ -2525,46 +2565,6 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
                 .map(|values| Expr::new(ExprKind::Tuple(values), span));
         }
         return parse_expr_tokens(inner);
-    }
-    if let Some((index, op)) = find_top_level_binary_operator(
-        tokens,
-        &[
-            (TokenKind::EqEq, BinaryOp::Eq),
-            (TokenKind::NotEq, BinaryOp::NotEq),
-            (TokenKind::LtEq, BinaryOp::LtEq),
-            (TokenKind::GtEq, BinaryOp::GtEq),
-            (TokenKind::Lt, BinaryOp::Lt),
-            (TokenKind::Gt, BinaryOp::Gt),
-        ],
-    ) {
-        return Some(Expr::new(
-            ExprKind::Binary {
-                op,
-                left: Box::new(parse_expr_tokens(&tokens[..index])?),
-                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
-            },
-            span,
-        ));
-    }
-    if let Some(index) = find_top_level_operator(tokens, TokenKind::Plus) {
-        return Some(Expr::new(
-            ExprKind::Binary {
-                op: BinaryOp::Add,
-                left: Box::new(parse_expr_tokens(&tokens[..index])?),
-                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
-            },
-            span,
-        ));
-    }
-    if let Some(index) = find_top_level_operator(tokens, TokenKind::Minus) {
-        return Some(Expr::new(
-            ExprKind::Binary {
-                op: BinaryOp::Sub,
-                left: Box::new(parse_expr_tokens(&tokens[..index])?),
-                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
-            },
-            span,
-        ));
     }
     if tokens.len() == 2 && tokens[0].text == "duration" {
         return Some(token_to_expr(&tokens[1]));
@@ -3728,6 +3728,30 @@ score demo {
                 BinaryOp::GtEq
             ]
         );
+    }
+
+    #[test]
+    fn parses_access_inside_comparison_expression() {
+        let program = parse_source(
+            r#"
+fn keep(event) = event.keep == true
+score demo {
+  voice lead {
+    note C4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let Some(ExprKind::Binary { left, right, .. }) =
+            program.functions[0].body_expr().map(|expr| &expr.kind)
+        else {
+            panic!("expected binary expression");
+        };
+
+        assert!(matches!(left.kind, ExprKind::Access { .. }));
+        assert!(matches!(right.kind, ExprKind::Bool(true)));
     }
 
     #[test]
