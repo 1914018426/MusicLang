@@ -28,6 +28,7 @@ style Chamber extends Classical {
   non_chord_tone: passing_tone neighbor_tone
   tuning_system: equal_temperament_12 just_intonation
   world_tradition: maqam hindustani_raga
+  historical_era: baroque classical jazz
   max_melodic_leap: P5
   contrapuntal_motion: contrary oblique similar
   cadence: authentic
@@ -56,6 +57,7 @@ style Chamber extends Classical {
 - `non_chord_tone`: `non_chord_tone` annotation blocks must use configured entries from the `non_chord_tones` theory catalog.
 - `tuning_system`: `tuning_system` annotation blocks must use configured entries from the `tuning_systems` theory catalog.
 - `world_tradition`: `world_tradition` annotation blocks must use configured entries from the `world_traditions` theory catalog.
+- `historical_era`: `historical_era` annotation blocks must use configured entries from the `style_eras` theory catalog.
 - `max_melodic_leap`: consecutive notes in a voice must not exceed the configured interval.
 - `contrapuntal_motion`: simultaneous voice pairs must move only through allowed motion types (`parallel`, `similar`, `contrary`, `oblique`).
 - `instrument_range`: notes in a voice with `program` must fit the configured MIDI program range.
@@ -155,6 +157,7 @@ Overrides suppress style rules only. They do not bypass parser, type, name-resol
 - `ML_STYLE_NON_CHORD_TONE`
 - `ML_STYLE_TUNING_SYSTEM`
 - `ML_STYLE_WORLD_TRADITION`
+- `ML_STYLE_HISTORICAL_ERA`
 - `ML_STYLE_MAX_MELODIC_LEAP`
 - `ML_STYLE_CONTRAPUNTAL_MOTION`
 - `ML_STYLE_INSTRUMENT_RANGE`

@@ -63,6 +63,7 @@ pub enum Stmt {
     NonChordTone(NonChordToneStmt),
     TuningSystem(TuningSystemStmt),
     WorldTradition(WorldTraditionStmt),
+    HistoricalEra(HistoricalEraStmt),
     For(ForStmt),
     If(IfStmt),
     Let(LetStmt),
@@ -210,6 +211,15 @@ pub struct TuningSystemStmt {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorldTraditionStmt {
+    pub kind: String,
+    pub statements: Vec<Stmt>,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoricalEraStmt {
     pub kind: String,
     pub statements: Vec<Stmt>,
     pub line: usize,
@@ -669,6 +679,9 @@ impl Parser {
         if self.check_ident("world_tradition") {
             return self.parse_world_tradition().map(Stmt::WorldTradition);
         }
+        if self.check_ident("historical_era") {
+            return self.parse_historical_era().map(Stmt::HistoricalEra);
+        }
         if self.check_ident("for") {
             return self.parse_for().map(Stmt::For);
         }
@@ -898,6 +911,19 @@ impl Parser {
         })
     }
 
+    fn parse_historical_era(&mut self) -> Option<HistoricalEraStmt> {
+        let start = self.expect_ident_text("historical_era")?;
+        let kind = self.expect_name()?;
+        let statements = self.parse_required_block()?;
+        Some(HistoricalEraStmt {
+            kind,
+            statements,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
     fn parse_for(&mut self) -> Option<ForStmt> {
         let start = self.expect_ident_text("for")?;
         let variable = self.expect_name()?;
@@ -1073,6 +1099,7 @@ impl Parser {
                 | "non_chord_tone"
                 | "tuning_system"
                 | "world_tradition"
+                | "historical_era"
                 | "for"
                 | "if"
                 | "let"
@@ -1653,6 +1680,29 @@ score demo {
 
         assert_eq!(world_tradition.kind, "maqam");
         assert_eq!(world_tradition.statements.len(), 1);
+    }
+
+    #[test]
+    fn parses_historical_era_statement() {
+        let source = r#"
+score demo {
+  voice lead {
+    historical_era baroque {
+      note D4, 1/8
+    }
+  }
+}
+"#;
+        let program = parse_source(source).unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::HistoricalEra(historical_era) = &voice.statements[0] else {
+            panic!("expected historical era");
+        };
+
+        assert_eq!(historical_era.kind, "baroque");
+        assert_eq!(historical_era.statements.len(), 1);
     }
 
     #[test]

@@ -159,6 +159,7 @@ mod stylecheck {
                 | "non_chord_tone"
                 | "tuning_system"
                 | "world_tradition"
+                | "historical_era"
                 | "max_melodic_leap"
                 | "contrapuntal_motion"
                 | "cadence"
@@ -323,6 +324,14 @@ impl Compiler {
                     world_tradition.column,
                 );
                 self.compile_statements(&world_tradition.statements, track);
+            }
+            Stmt::HistoricalEra(historical_era) => {
+                self.check_historical_era(
+                    &historical_era.kind,
+                    historical_era.line,
+                    historical_era.column,
+                );
+                self.compile_statements(&historical_era.statements, track);
             }
             Stmt::For(for_stmt) => {
                 for value in for_stmt.start..for_stmt.end {
@@ -583,6 +592,29 @@ impl Compiler {
                 "world_tradition",
                 "ML_STYLE_WORLD_TRADITION",
                 format!("world tradition `{kind}` is outside active style vocabulary"),
+                line,
+                column,
+            );
+        }
+    }
+
+    fn check_historical_era(&mut self, kind: &str, line: usize, column: usize) {
+        if self.style.historical_eras.is_empty()
+            || self.has_override("historical_era")
+            || self.has_score_override("historical_era")
+        {
+            return;
+        }
+        if !self
+            .style
+            .historical_eras
+            .iter()
+            .any(|allowed| allowed == kind)
+        {
+            self.push_style_diagnostic(
+                "historical_era",
+                "ML_STYLE_HISTORICAL_ERA",
+                format!("historical era `{kind}` is outside active style vocabulary"),
                 line,
                 column,
             );
@@ -1619,6 +1651,14 @@ fn style_from_program_inner(
                     TheoryDomain::WorldTraditions,
                     &mut diagnostics,
                 );
+            }
+            "historical_era" => {
+                context.historical_eras = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_vocab_entries(style, entry, TheoryDomain::StyleEras, &mut diagnostics);
             }
             "max_melodic_leap" => {
                 context.max_melodic_leap = entry.value.trim().parse::<Interval>().ok();
@@ -2985,6 +3025,49 @@ score demo style GlobalPractice {
         .unwrap();
 
         assert_eq!(ir.tracks[0].events.len(), 1);
+    }
+
+    #[test]
+    fn historical_era_accepts_catalog_entry() {
+        let ir = compile_source(
+            r#"
+style PeriodPractice {
+  historical_era: baroque
+}
+score demo style PeriodPractice {
+  voice lead {
+    historical_era baroque {
+      note D4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
+    }
+
+    #[test]
+    fn historical_era_rejects_unlisted_entry() {
+        let diagnostics = compile_source(
+            r#"
+style PeriodPractice {
+  historical_era: baroque
+}
+score demo style PeriodPractice {
+  voice lead {
+    historical_era jazz {
+      note D4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_HISTORICAL_ERA");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("historical_era"));
     }
 
     #[test]
