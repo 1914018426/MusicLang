@@ -9,8 +9,8 @@ use musiclang_core::{
 use musiclang_parser::{
     parse_source, ArpeggioStmt, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt,
     DynamicStmt, Expr, ExprKind, FunctionDecl, ModulateStmt, NoteStmt, OstinatoStmt, OverrideStmt,
-    PedalStmt, Program, ProgressionStmt, RestStmt, RomanStmt, SequenceStmt, Stmt, StyleDecl,
-    TransposeStmt, VoiceDecl, WithStyleStmt,
+    PedalStmt, Program, ProgressionStmt, RestStmt, RomanStmt, ScaleStmt, SequenceStmt, Stmt,
+    StyleDecl, TransposeStmt, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +182,7 @@ impl Compiler {
             Stmt::Note(note) => self.compile_note(note, track),
             Stmt::Rest(rest) => self.compile_rest(rest, track),
             Stmt::Degree(degree) => self.compile_degree(degree, track),
+            Stmt::Scale(scale) => self.compile_scale(scale, track),
             Stmt::Pedal(pedal) => self.compile_pedal(pedal, track),
             Stmt::Ostinato(ostinato) => self.compile_ostinato(ostinato, track),
             Stmt::Sequence(sequence) => self.compile_sequence(sequence, track),
@@ -415,11 +416,7 @@ impl Compiler {
             );
             return None;
         };
-        let scale = if key.is_minor {
-            [0, 2, 3, 5, 7, 8, 10]
-        } else {
-            [0, 2, 4, 5, 7, 9, 11]
-        };
+        let scale = key_scale_pattern(key);
         let semitone = key_tonic_semitone(key) + scale[index] + accidental;
         let pitch_class = PitchClass::from_semitone(semitone);
         let octave = degree.octave.clamp(i8::MIN as i32, i8::MAX as i32) as i8;
@@ -439,6 +436,80 @@ impl Compiler {
             }
         };
         self.apply_pitch_transpose(pitch, degree.line, degree.column, degree.span)
+    }
+
+    fn compile_scale(&mut self, scale: &ScaleStmt, track: &mut TrackBuilder) {
+        let Some(duration) = self.eval_duration(&scale.duration_expr, scale.line, scale.column)
+        else {
+            return;
+        };
+        let Some(pitches) = self.scale_run_pitches(scale) else {
+            return;
+        };
+        self.check_rhythm_vocab(duration, scale.line, scale.column, Some(scale.span));
+        for pitch in pitches {
+            self.check_pitch_style(pitch, scale.line, scale.column, Some(scale.span));
+            self.check_instrument_range(
+                track.program,
+                pitch,
+                scale.line,
+                scale.column,
+                Some(scale.span),
+            );
+            track.push_note(Note::new(pitch, duration), Some(scale.span));
+        }
+    }
+
+    fn scale_run_pitches(&mut self, scale: &ScaleStmt) -> Option<Vec<Pitch>> {
+        let tonic = scale.tonic.parse::<PitchClass>().ok().or_else(|| {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_THEORY_SCALE",
+                    format!("unsupported scale tonic `{}`", scale.tonic),
+                    scale.line,
+                    scale.column,
+                )
+                .with_span(scale.span),
+            );
+            None
+        })?;
+        let Some(pattern) = scale_mode_pattern(&scale.mode) else {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_THEORY_SCALE",
+                    format!("unsupported scale mode `{}`", scale.mode),
+                    scale.line,
+                    scale.column,
+                )
+                .with_span(scale.span),
+            );
+            return None;
+        };
+        let mut semitone = tonic.semitone();
+        let mut pitches = Vec::with_capacity(pattern.len() + 1);
+        pitches.push(self.scale_run_pitch(semitone, scale)?);
+        for step in pattern {
+            semitone += step;
+            pitches.push(self.scale_run_pitch(semitone, scale)?);
+        }
+        Some(pitches)
+    }
+
+    fn scale_run_pitch(&mut self, semitone: i16, scale: &ScaleStmt) -> Option<Pitch> {
+        let pitch_class = PitchClass::from_semitone(semitone);
+        let octave = scale.octave + i32::from(semitone.div_euclid(12));
+        let octave = octave.clamp(i8::MIN as i32, i8::MAX as i32) as i8;
+        let pitch = match Pitch::new(pitch_class, octave) {
+            Ok(pitch) => pitch,
+            Err(error) => {
+                self.diagnostics.push(
+                    Diagnostic::error("ML_CORE_PITCH", error.to_string(), scale.line, scale.column)
+                        .with_span(scale.span),
+                );
+                return None;
+            }
+        };
+        self.apply_pitch_transpose(pitch, scale.line, scale.column, scale.span)
     }
 
     fn compile_pedal(&mut self, pedal: &PedalStmt, track: &mut TrackBuilder) {
@@ -2946,6 +3017,38 @@ fn parse_scale_degree(value: &str) -> Option<(usize, i16)> {
         .then_some((degree - 1, accidental))
 }
 
+fn key_scale_pattern(key: KeySignature) -> [i16; 7] {
+    if key.is_minor {
+        [0, 2, 3, 5, 7, 8, 10]
+    } else {
+        [0, 2, 4, 5, 7, 9, 11]
+    }
+}
+
+fn scale_mode_pattern(mode: &str) -> Option<Vec<i16>> {
+    let mode = match mode.trim() {
+        "major" => "major",
+        "minor" | "min" | "natural_minor" => "natural_minor",
+        other => other,
+    };
+    let domain = if matches!(mode, "major" | "natural_minor") {
+        TheoryDomain::Scales
+    } else {
+        TheoryDomain::Modes
+    };
+    musiclang_core::theory_catalog()
+        .entries(domain)
+        .iter()
+        .find(|entry| entry.id == mode)
+        .map(|entry| {
+            entry
+                .pattern
+                .iter()
+                .filter_map(pattern_step_semitones)
+                .collect()
+        })
+}
+
 fn roman_chord_pitches(symbol: &str, key: KeySignature) -> Option<Vec<Pitch>> {
     let (symbol, applied_target) = symbol
         .split_once('/')
@@ -3462,6 +3565,88 @@ score demo {
             .map(|event| event.pitch.to_string())
             .collect::<Vec<_>>();
         assert_eq!(pitches, vec!["C4", "E4", "D#4", "G4", "A4", "B4"]);
+    }
+
+    #[test]
+    fn compiles_scale_run() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    scale C major 4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 8);
+        assert_eq!(events[0].pitch.class(), PitchClass::C);
+        assert_eq!(events[1].pitch.class(), PitchClass::D);
+        assert_eq!(events[2].pitch.class(), PitchClass::E);
+        assert_eq!(events[7].pitch.class(), PitchClass::C);
+        assert_eq!(events[0].start_tick, 0);
+        assert_eq!(events[7].start_tick, 1680);
+        assert_eq!(events[0].duration_ticks, 240);
+    }
+
+    #[test]
+    fn compiles_modal_scale_run() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    scale D dorian 4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 8);
+        assert_eq!(events[0].pitch.class(), PitchClass::D);
+        assert_eq!(events[1].pitch.class(), PitchClass::E);
+        assert_eq!(events[2].pitch.class(), PitchClass::F);
+        assert_eq!(events[6].pitch.class(), PitchClass::C);
+    }
+
+    #[test]
+    fn transpose_block_transposes_scale_run() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    transpose M2 {
+      scale C major 4, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events[0].pitch.class(), PitchClass::D);
+        assert_eq!(events[1].pitch.class(), PitchClass::E);
+        assert_eq!(events[2].pitch.class(), PitchClass::Fs);
+    }
+
+    #[test]
+    fn rejects_unknown_scale_mode() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice lead {
+    scale C imaginary 4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_THEORY_SCALE");
     }
 
     #[test]

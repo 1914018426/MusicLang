@@ -70,6 +70,7 @@ pub enum Stmt {
     Note(NoteStmt),
     Rest(RestStmt),
     Degree(DegreeStmt),
+    Scale(ScaleStmt),
     Pedal(PedalStmt),
     Ostinato(OstinatoStmt),
     Sequence(SequenceStmt),
@@ -197,6 +198,18 @@ pub struct RestStmt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DegreeStmt {
     pub degree: String,
+    pub octave: i32,
+    pub duration: String,
+    pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScaleStmt {
+    pub tonic: String,
+    pub mode: String,
     pub octave: i32,
     pub duration: String,
     pub duration_expr: Expr,
@@ -871,6 +884,9 @@ impl Parser {
         if self.check_ident("degree") {
             return self.parse_degree().map(Stmt::Degree);
         }
+        if self.check_ident("scale") {
+            return self.parse_scale().map(Stmt::Scale);
+        }
         if self.check_ident("pedal") {
             return self.parse_pedal().map(Stmt::Pedal);
         }
@@ -1081,6 +1097,25 @@ impl Parser {
         let duration_expr = self.parse_expr_until_stmt_end()?;
         Some(DegreeStmt {
             degree,
+            octave,
+            duration: expr_to_source(&duration_expr),
+            duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_scale(&mut self) -> Option<ScaleStmt> {
+        let start = self.expect_ident_text("scale")?;
+        let tonic = self.expect_name()?;
+        let mode = self.expect_name()?;
+        let octave = self.expect_number()?;
+        self.expect(TokenKind::Comma, "expected `,` after scale octave")?;
+        let duration_expr = self.parse_expr_until_stmt_end()?;
+        Some(ScaleStmt {
+            tonic,
+            mode,
             octave,
             duration: expr_to_source(&duration_expr),
             duration_expr,
@@ -1698,6 +1733,7 @@ impl Parser {
                 | "note"
                 | "rest"
                 | "degree"
+                | "scale"
                 | "pedal"
                 | "ostinato"
                 | "sequence"
@@ -2244,6 +2280,31 @@ score demo {
         assert_eq!(degree.degree, "b3");
         assert_eq!(degree.octave, 4);
         assert_eq!(degree.duration, "1/8");
+    }
+
+    #[test]
+    fn parses_scale_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    scale C major 4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Scale(scale) = &voice.statements[0] else {
+            panic!("expected scale");
+        };
+
+        assert_eq!(scale.tonic, "C");
+        assert_eq!(scale.mode, "major");
+        assert_eq!(scale.octave, 4);
+        assert_eq!(scale.duration, "1/8");
     }
 
     #[test]

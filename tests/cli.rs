@@ -259,6 +259,33 @@ score demo {
 }
 
 #[test]
+fn music_ir_expands_scale_run() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/scale-run.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  voice lead {
+    scale C major 4, 1/8
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["ir", &input_path]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("class: C"));
+    assert!(stdout.contains("class: D"));
+    assert!(stdout.contains("class: E"));
+    assert!(stdout.contains("start_tick: 1680"));
+    assert!(stdout.contains("duration_ticks: 240"));
+}
+
+#[test]
 fn music_ir_expands_ostinato_block() {
     let workspace = env!("CARGO_MANIFEST_DIR");
     let input_path = format!("{workspace}/target/ostinato.music");
