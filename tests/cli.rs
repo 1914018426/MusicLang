@@ -96,6 +96,36 @@ score warning_only style WarningScale {
 }
 
 #[test]
+fn music_check_strict_rejects_disabled_style_rules() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/check-strict-off.music");
+    fs::write(
+        &input_path,
+        r#"
+style HiddenScale {
+  scale: C major
+  severity_scale: off
+}
+
+score hidden style HiddenScale {
+  key C major
+  voice lead {
+    note F#4, 1/4
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let strict_output = run_music(&["check", &input_path, "--strict"]);
+
+    assert!(!strict_output.status.success());
+    let stderr = String::from_utf8_lossy(&strict_output.stderr);
+    assert!(stderr.contains("strict quality gate rejects disabled style rule"));
+    assert!(stderr.contains("severity_scale"));
+}
+
+#[test]
 fn music_styles_lists_builtin_registry() {
     let output = run_music(&["styles"]);
 
@@ -1218,6 +1248,35 @@ score warning_only style WarningScale {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("analysis quality gate failed"));
     assert!(stderr.contains("diagnostics 1 exceeds 0"));
+}
+
+#[test]
+fn music_analyze_strict_rejects_override_suppression() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/analyze-strict-override.music");
+    fs::write(
+        &input_path,
+        r#"
+style StrictScale {
+  scale: C major
+}
+
+score hidden style StrictScale {
+  key C major
+  voice lead {
+    override scale allow reason "hide bad chromatic note" {
+      note F#4, 1/4
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let output = run_music(&["analyze", &input_path, "--strict"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("strict quality gate rejects override suppression"));
 }
 
 #[test]

@@ -136,7 +136,7 @@ music theory --find maqam
 music repl
 ```
 
-`check --strict`, `compile --strict`, `build --strict`, and `export --strict` reject any compiler diagnostic before accepting or writing output. Strict output commands also reject explicit suppression through `override` blocks or `severity_*: off`. `analyze --strict` applies the same zero-diagnostic requirement and also enforces listening-quality repetition thresholds. Project manifests can set `strict = true` to make `music build` use strict output rules by default.
+`check --strict`, `compile --strict`, `build --strict`, and `export --strict` reject any compiler diagnostic before accepting or writing output. Strict quality gates also reject explicit suppression through `override` blocks or `severity_*: off`. `analyze --strict` applies the same zero-diagnostic requirement and also enforces listening-quality repetition thresholds. Project manifests can set `strict = true` to make `music build` use strict output rules by default.
 
 ## Diagnostics
 

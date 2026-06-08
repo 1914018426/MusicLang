@@ -319,6 +319,7 @@ fn check_file(input: &str, strict: bool) -> Result<(), String> {
     let source =
         fs::read_to_string(input).map_err(|error| format!("failed to read {input}: {error}"))?;
     if strict {
+        reject_strict_suppression(&source)?;
         let compilation = musiclang_compiler::compile_source_with_diagnostics(&source)
             .map_err(format_diagnostics)?;
         if !compilation.diagnostics.is_empty() {
@@ -411,6 +412,9 @@ struct ScoreAnalysis {
 fn analyze_file(input: &str, json: bool, strict: bool) -> Result<(), String> {
     let source =
         fs::read_to_string(input).map_err(|error| format!("failed to read {input}: {error}"))?;
+    if strict {
+        reject_strict_suppression(&source)?;
+    }
     let compilation =
         musiclang_compiler::compile_source_with_diagnostics(&source).map_err(format_diagnostics)?;
     let analysis = analyze_score(&compilation.ir, &compilation.diagnostics);
