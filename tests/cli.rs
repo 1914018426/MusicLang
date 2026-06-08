@@ -403,6 +403,33 @@ score demo {
 }
 
 #[test]
+fn music_ir_expands_tremolo_as_alternating_notes() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/tremolo.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  voice strings {
+    tremolo C4 with G4 repeats 4, 1/32
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["ir", &input_path]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("class: C"));
+    assert!(stdout.contains("class: G"));
+    assert!(stdout.contains("start_tick: 60"));
+    assert!(stdout.contains("start_tick: 180"));
+    assert!(stdout.contains("duration_ticks: 60"));
+}
+
+#[test]
 fn music_ir_expands_strum_as_staggered_notes() {
     let workspace = env!("CARGO_MANIFEST_DIR");
     let input_path = format!("{workspace}/target/strum.music");

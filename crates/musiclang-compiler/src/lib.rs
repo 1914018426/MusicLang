@@ -10,7 +10,7 @@ use musiclang_parser::{
     parse_source, ArpeggioStmt, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt,
     DynamicStmt, Expr, ExprKind, FunctionDecl, GlissandoStmt, ModulateStmt, NoteStmt, OstinatoStmt,
     OverrideStmt, PedalStmt, Program, ProgressionStmt, RestStmt, RomanStmt, ScaleStmt,
-    SequenceStmt, Stmt, StrumStmt, StyleDecl, TransposeStmt, VoiceDecl, WithStyleStmt,
+    SequenceStmt, Stmt, StrumStmt, StyleDecl, TransposeStmt, TremoloStmt, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +182,7 @@ impl Compiler {
             Stmt::Note(note) => self.compile_note(note, track),
             Stmt::Rest(rest) => self.compile_rest(rest, track),
             Stmt::Glissando(glissando) => self.compile_glissando(glissando, track),
+            Stmt::Tremolo(tremolo) => self.compile_tremolo(tremolo, track),
             Stmt::Degree(degree) => self.compile_degree(degree, track),
             Stmt::Scale(scale) => self.compile_scale(scale, track),
             Stmt::Pedal(pedal) => self.compile_pedal(pedal, track),
@@ -460,6 +461,68 @@ impl Compiler {
                         glissando.column,
                     )
                     .with_span(glissando.span),
+                );
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn compile_tremolo(&mut self, tremolo: &TremoloStmt, track: &mut TrackBuilder) {
+        let Some(first) = self.eval_pitch(&tremolo.first_expr, tremolo.line, tremolo.column) else {
+            return;
+        };
+        let Some(second) = self.eval_pitch(&tremolo.second_expr, tremolo.line, tremolo.column)
+        else {
+            return;
+        };
+        let Some(repeats) = self.eval_tremolo_repeats(tremolo) else {
+            return;
+        };
+        let Some(duration) =
+            self.eval_duration(&tremolo.duration_expr, tremolo.line, tremolo.column)
+        else {
+            return;
+        };
+        self.check_rhythm_vocab(duration, tremolo.line, tremolo.column, Some(tremolo.span));
+        for index in 0..repeats {
+            let pitch = if index % 2 == 0 { first } else { second };
+            self.check_pitch_style(pitch, tremolo.line, tremolo.column, Some(tremolo.span));
+            self.check_instrument_range(
+                track.program,
+                pitch,
+                tremolo.line,
+                tremolo.column,
+                Some(tremolo.span),
+            );
+            track.push_note(Note::new(pitch, duration), Some(tremolo.span));
+        }
+    }
+
+    fn eval_tremolo_repeats(&mut self, tremolo: &TremoloStmt) -> Option<usize> {
+        match self.eval_expr(&tremolo.repeats_expr, tremolo.line, tremolo.column) {
+            Some(Value::Int(value)) if value > 0 => Some(value as usize),
+            Some(Value::Int(_)) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_THEORY_TREMOLO",
+                        "tremolo repeats must be positive",
+                        tremolo.line,
+                        tremolo.column,
+                    )
+                    .with_span(tremolo.span),
+                );
+                None
+            }
+            Some(_) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected integer tremolo repeats",
+                        tremolo.line,
+                        tremolo.column,
+                    )
+                    .with_span(tremolo.span),
                 );
                 None
             }
@@ -6967,6 +7030,68 @@ score demo {
         .unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_THEORY_GLISSANDO");
+    }
+
+    #[test]
+    fn tremolo_emits_alternating_repeated_notes() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice strings {
+    tremolo C4 with G4 repeats 4, 1/32
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].pitch.to_string(), "C4");
+        assert_eq!(events[1].pitch.to_string(), "G4");
+        assert_eq!(events[2].pitch.to_string(), "C4");
+        assert_eq!(events[3].pitch.to_string(), "G4");
+        assert_eq!(events[1].start_tick, 60);
+        assert_eq!(events[3].start_tick, 180);
+        assert_eq!(events[0].duration_ticks, 60);
+    }
+
+    #[test]
+    fn transpose_block_transposes_tremolo() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice strings {
+    transpose M2 {
+      tremolo C4 with G4 repeats 2, 1/16
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].pitch.to_string(), "D4");
+        assert_eq!(events[1].pitch.to_string(), "A4");
+        assert_eq!(events[1].start_tick, 120);
+    }
+
+    #[test]
+    fn tremolo_rejects_non_positive_repeats() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice strings {
+    tremolo C4 with G4 repeats 0, 1/32
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_THEORY_TREMOLO");
     }
 
     #[test]

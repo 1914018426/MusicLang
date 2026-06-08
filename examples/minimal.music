@@ -16,6 +16,7 @@ score demo {
       note E4, 1/8
     }
     glissando C4 to G4 steps 5, 1/16
+    tremolo C4 with G4 repeats 4, 1/32
     transpose P5 {
       note C4, 1/8
       chord [E4, G4], 1/8

@@ -70,6 +70,7 @@ pub enum Stmt {
     Note(NoteStmt),
     Rest(RestStmt),
     Glissando(GlissandoStmt),
+    Tremolo(TremoloStmt),
     Degree(DegreeStmt),
     Scale(ScaleStmt),
     Pedal(PedalStmt),
@@ -206,6 +207,21 @@ pub struct GlissandoStmt {
     pub start_expr: Expr,
     pub end_expr: Expr,
     pub steps_expr: Expr,
+    pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TremoloStmt {
+    pub first_pitch: String,
+    pub second_pitch: String,
+    pub repeats: i32,
+    pub duration: String,
+    pub first_expr: Expr,
+    pub second_expr: Expr,
+    pub repeats_expr: Expr,
     pub duration_expr: Expr,
     pub line: usize,
     pub column: usize,
@@ -919,6 +935,9 @@ impl Parser {
         if self.check_ident("glissando") {
             return self.parse_glissando().map(Stmt::Glissando);
         }
+        if self.check_ident("tremolo") {
+            return self.parse_tremolo().map(Stmt::Tremolo);
+        }
         if self.check_ident("degree") {
             return self.parse_degree().map(Stmt::Degree);
         }
@@ -1151,6 +1170,34 @@ impl Parser {
             start_expr,
             end_expr,
             steps_expr,
+            duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_tremolo(&mut self) -> Option<TremoloStmt> {
+        let start = self.expect_ident_text("tremolo")?;
+        let first_expr = self.parse_expr_until_keyword("with")?;
+        self.expect_ident_text("with")?;
+        let second_expr = self.parse_expr_until_keyword("repeats")?;
+        self.expect_ident_text("repeats")?;
+        let repeats_expr = self.parse_expr_until(&[TokenKind::Comma])?;
+        self.expect(TokenKind::Comma, "expected `,` after tremolo repeats")?;
+        let duration_expr = self.parse_expr_until_stmt_end()?;
+        let repeats = match repeats_expr.kind {
+            ExprKind::Int(value) => value,
+            _ => 0,
+        };
+        Some(TremoloStmt {
+            first_pitch: expr_to_source(&first_expr),
+            second_pitch: expr_to_source(&second_expr),
+            repeats,
+            duration: expr_to_source(&duration_expr),
+            first_expr,
+            second_expr,
+            repeats_expr,
             duration_expr,
             line: start.span.line,
             column: start.span.column,
@@ -1874,6 +1921,7 @@ impl Parser {
                 | "note"
                 | "rest"
                 | "glissando"
+                | "tremolo"
                 | "degree"
                 | "scale"
                 | "pedal"
@@ -2423,6 +2471,31 @@ score demo {
         assert_eq!(glissando.end_pitch, "G4");
         assert_eq!(glissando.steps, 5);
         assert_eq!(glissando.duration, "1/16");
+    }
+
+    #[test]
+    fn parses_tremolo_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice strings {
+    tremolo C4 with G4 repeats 4, 1/32
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Tremolo(tremolo) = &voice.statements[0] else {
+            panic!("expected tremolo");
+        };
+
+        assert_eq!(tremolo.first_pitch, "C4");
+        assert_eq!(tremolo.second_pitch, "G4");
+        assert_eq!(tremolo.repeats, 4);
+        assert_eq!(tremolo.duration, "1/32");
     }
 
     #[test]
