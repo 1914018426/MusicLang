@@ -1,11 +1,32 @@
 use std::fs;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 fn run_music(args: &[&str]) -> std::process::Output {
     run_music_in(args, env!("CARGO_MANIFEST_DIR"))
 }
 
 fn run_music_in(args: &[&str], current_dir: &str) -> std::process::Output {
+    music_command(args, current_dir).output().unwrap()
+}
+
+fn run_music_with_stdin(args: &[&str], input: &str) -> std::process::Output {
+    let mut child = music_command(args, env!("CARGO_MANIFEST_DIR"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn music_command(args: &[&str], current_dir: &str) -> Command {
     let manifest = format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"));
     let mut command = Command::new(env!("CARGO"));
     command.current_dir(current_dir);
@@ -20,7 +41,8 @@ fn run_music_in(args: &[&str], current_dir: &str) -> std::process::Output {
         "music",
         "--",
     ]);
-    command.args(args).output().unwrap()
+    command.args(args);
+    command
 }
 
 #[test]
@@ -233,6 +255,40 @@ fn music_check_reports_error_on_violation() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("ML_STYLE_SCALE"));
+}
+
+#[test]
+fn music_repl_loads_diagnoses_shows_ir_and_exports() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let output_path = format!("{workspace}/target/repl-export.mid");
+    let _ = fs::remove_file(&output_path);
+    let script = format!(
+        ":load examples/minimal.music\n:diagnose\n:show ir\n:export {output_path}\n:quit\n"
+    );
+
+    let output = run_music_with_stdin(&["repl"], &script);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("loaded examples/minimal.music"));
+    assert!(stdout.contains("ok"));
+    assert!(stdout.contains("ScoreIr"));
+    assert!(stdout.contains(&format!("wrote {output_path}")));
+    assert!(fs::read(&output_path).unwrap().starts_with(b"MThd"));
+}
+
+#[test]
+fn music_repl_reset_clears_source_buffer() {
+    let script =
+        "score demo {\n  voice lead {\n    note C4, 1/4\n  }\n}\n:reset\n:show source\n:quit\n";
+
+    let output = run_music_with_stdin(&["repl"], script);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("reset"));
+    let after_reset = stdout.split("reset").last().unwrap();
+    assert!(!after_reset.contains("score demo"));
 }
 
 #[test]
