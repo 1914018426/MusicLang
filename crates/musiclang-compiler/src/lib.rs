@@ -110,6 +110,7 @@ impl Compiler {
         let mut tracks = Vec::new();
         let (title, composer, tempo_bpm, meter, key) = lower::score_metadata(&self.program);
         self.check_score_key_metadata();
+        self.check_function_calls();
         self.score_key = key;
         self.check_score_style(tempo_bpm, meter);
         let statements = self.program.score.statements.clone();
@@ -187,6 +188,78 @@ impl Compiler {
                 self.key_signature_or_diagnostic(
                     &key.tonic, &key.mode, key.line, key.column, key.span,
                 );
+            }
+        }
+    }
+
+    fn check_function_calls(&mut self) {
+        let score_statements = self.program.score.statements.clone();
+        self.check_function_calls_in_statements(&score_statements);
+        let functions = self.program.functions.clone();
+        for function in functions {
+            self.check_function_calls_in_statements(&function.statements);
+        }
+    }
+
+    fn check_function_calls_in_statements(&mut self, statements: &[Stmt]) {
+        for statement in statements {
+            match statement {
+                Stmt::Call(call) => {
+                    if !self.functions.contains_key(&call.name) {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "ML_RESOLVE_UNKNOWN_NAME",
+                                format!("unknown function `{}`", call.name),
+                                call.line,
+                                call.column,
+                            )
+                            .with_span(call.span),
+                        );
+                    }
+                }
+                Stmt::Voice(voice) => self.check_function_calls_in_statements(&voice.statements),
+                Stmt::Ostinato(ostinato) => {
+                    self.check_function_calls_in_statements(&ostinato.statements)
+                }
+                Stmt::Sequence(sequence) => {
+                    self.check_function_calls_in_statements(&sequence.statements)
+                }
+                Stmt::Tuplet(tuplet) => self.check_function_calls_in_statements(&tuplet.statements),
+                Stmt::Transpose(transpose) => {
+                    self.check_function_calls_in_statements(&transpose.statements)
+                }
+                Stmt::Section(section) => {
+                    self.check_function_calls_in_statements(&section.statements)
+                }
+                Stmt::Ornament(ornament) => {
+                    self.check_function_calls_in_statements(&ornament.statements)
+                }
+                Stmt::NonChordTone(non_chord_tone) => {
+                    self.check_function_calls_in_statements(&non_chord_tone.statements)
+                }
+                Stmt::TuningSystem(tuning_system) => {
+                    self.check_function_calls_in_statements(&tuning_system.statements)
+                }
+                Stmt::WorldTradition(world_tradition) => {
+                    self.check_function_calls_in_statements(&world_tradition.statements)
+                }
+                Stmt::HistoricalEra(historical_era) => {
+                    self.check_function_calls_in_statements(&historical_era.statements)
+                }
+                Stmt::HarmonicFunction(harmonic_function) => {
+                    self.check_function_calls_in_statements(&harmonic_function.statements)
+                }
+                Stmt::For(for_stmt) => {
+                    self.check_function_calls_in_statements(&for_stmt.statements)
+                }
+                Stmt::If(if_stmt) => self.check_function_calls_in_statements(&if_stmt.statements),
+                Stmt::Override(override_stmt) => {
+                    self.check_function_calls_in_statements(&override_stmt.statements)
+                }
+                Stmt::WithStyle(with_style) => {
+                    self.check_function_calls_in_statements(&with_style.statements)
+                }
+                _ => {}
             }
         }
     }
@@ -375,16 +448,6 @@ impl Compiler {
                     self.compile_statements(&function.statements, track);
                     self.pop_scope();
                     self.function_call_stack.pop();
-                } else {
-                    self.diagnostics.push(
-                        Diagnostic::error(
-                            "ML_RESOLVE_UNKNOWN_NAME",
-                            format!("unknown function `{}`", call.name),
-                            call.line,
-                            call.column,
-                        )
-                        .with_span(call.span),
-                    );
                 }
             }
             Stmt::Override(override_stmt) => self.compile_override(override_stmt, track),
@@ -5030,6 +5093,44 @@ score demo {
         let expected_start = source.find("missing").unwrap();
         assert_eq!(span.start, expected_start);
         assert_eq!(span.end, expected_start + "missing".len());
+    }
+
+    #[test]
+    fn unused_function_unknown_call_uses_stable_diagnostic_code() {
+        let source = r#"
+fn hidden {
+  call missing_motif
+}
+score demo {
+  voice lead {
+    note C4, 1/4
+  }
+}
+"#;
+        let diagnostics = compile_source(source).unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_RESOLVE_UNKNOWN_NAME"));
+    }
+
+    #[test]
+    fn unexecuted_branch_unknown_call_uses_stable_diagnostic_code() {
+        let source = r#"
+score demo {
+  voice lead {
+    if false == true {
+      call missing_motif
+    }
+    note C4, 1/4
+  }
+}
+"#;
+        let diagnostics = compile_source(source).unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_RESOLVE_UNKNOWN_NAME"));
     }
 
     #[test]
