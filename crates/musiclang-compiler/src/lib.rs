@@ -44,7 +44,7 @@ mod stylecheck;
 use eval::Value;
 
 fn is_phrase_function_transform(callee: &str) -> bool {
-    matches!(callee, "map" | "filter")
+    matches!(callee, "map" | "filter" | "mapi")
 }
 
 struct Compiler {
@@ -3559,7 +3559,51 @@ impl Compiler {
         match transform {
             "map" => self.eval_map_value(value, function_name, line, column, span),
             "filter" => self.eval_filter_value(value, function_name, line, column, span),
+            "mapi" => self.eval_mapi_value(value, function_name, line, column, span),
             _ => None,
+        }
+    }
+
+    fn eval_mapi_value(
+        &mut self,
+        value: Value,
+        function_name: &str,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        let mut index = 0;
+        self.eval_mapi_value_with_index(value, function_name, &mut index, line, column, span)
+    }
+
+    fn eval_mapi_value_with_index(
+        &mut self,
+        value: Value,
+        function_name: &str,
+        index: &mut i32,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        match value {
+            Value::List(values) => values
+                .into_iter()
+                .map(|value| {
+                    self.eval_mapi_value_with_index(value, function_name, index, line, column, span)
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(Value::List),
+            value => {
+                let current_index = *index;
+                *index += 1;
+                self.eval_user_function_call_or_unknown(
+                    function_name,
+                    vec![Value::Int(current_index), value],
+                    line,
+                    column,
+                    span,
+                )
+            }
         }
     }
 
@@ -3577,9 +3621,13 @@ impl Compiler {
                 .map(|value| self.eval_map_value(value, function_name, line, column, span))
                 .collect::<Option<Vec<_>>>()
                 .map(Value::List),
-            value => {
-                self.eval_user_function_call_or_unknown(function_name, value, line, column, span)
-            }
+            value => self.eval_user_function_call_or_unknown(
+                function_name,
+                vec![value],
+                line,
+                column,
+                span,
+            ),
         }
     }
 
@@ -3605,7 +3653,7 @@ impl Compiler {
                         )?),
                         value => match self.eval_user_function_call_or_unknown(
                             function_name,
-                            value.clone(),
+                            vec![value.clone()],
                             line,
                             column,
                             span,
@@ -3631,7 +3679,7 @@ impl Compiler {
             }
             value => match self.eval_user_function_call_or_unknown(
                 function_name,
-                value.clone(),
+                vec![value.clone()],
                 line,
                 column,
                 span,
@@ -3657,12 +3705,12 @@ impl Compiler {
     fn eval_user_function_call_or_unknown(
         &mut self,
         function_name: &str,
-        value: Value,
+        args: Vec<Value>,
         line: usize,
         column: usize,
         span: Span,
     ) -> Option<Value> {
-        match self.eval_user_function_call(function_name, &[value], line, column, span) {
+        match self.eval_user_function_call(function_name, &args, line, column, span) {
             Some(value) => value,
             None => {
                 self.diagnostics.push(
@@ -3697,6 +3745,9 @@ impl Compiler {
             }
             ("filter", [value, Value::String(function_name)]) => {
                 self.eval_filter_value(value.clone(), function_name, line, column, span)
+            }
+            ("mapi", [value, Value::String(function_name)]) => {
+                self.eval_mapi_value(value.clone(), function_name, line, column, span)
             }
             ("transpose", [value, Value::Interval(interval)]) => {
                 self.eval_transpose_value(value.clone(), *interval, line, column, span)
@@ -6782,6 +6833,27 @@ score demo {
         assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "G4");
         assert_eq!(ir.tracks[0].events[0].duration_ticks, 240);
         assert_eq!(ir.tracks[0].events[1].duration_ticks, 480);
+    }
+
+    #[test]
+    fn maps_phrase_values_with_index() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [{p:root, d:1/8}, {p:root |> transpose(M3), d:1/8}, {p:root |> transpose(P5), d:1/4}]
+fn mark(i, event) = {p:event.p, d:event.d, middle:i == 1}
+fn keep(event) = (event.middle) == true
+score demo {
+  voice lead {
+    play riff(C4) |> mapi(mark) |> filter(keep)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "E4");
+        assert_eq!(ir.tracks[0].events[0].duration_ticks, 240);
     }
 
     #[test]
