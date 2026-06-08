@@ -17,6 +17,7 @@ style Chamber extends Classical {
   mode_pattern: D dorian
   chord_vocab: C E G; F A C; G B D
   chord_quality_vocab: major minor dominant7
+  set_class_vocab: 016 all_interval_tetrachord
   meter: 3/4
   meter_catalog: 3/4 6/8
   tempo_range: 60..132
@@ -42,6 +43,7 @@ style Chamber extends Classical {
 - `mode_pattern`: derives the active pitch collection from `tonic mode_id` using the `modes` theory catalog, then enforces it through `scale`.
 - `chord_vocab`: chord pitch classes must match one configured vocabulary entry.
 - `chord_quality_vocab`: chord pitch-class interval structures must match one configured quality from the `chord_qualities` theory catalog.
+- `set_class_vocab`: chord pitch-class sets must match one configured entry from the `set_classes` theory catalog.
 - `meter`: score `meter` metadata must match the active style meter.
 - `meter_catalog`: score `meter` metadata must match one configured meter from the `meters` theory catalog.
 - `tempo_range`: score `tempo` metadata must stay within the configured BPM range.
@@ -138,6 +140,7 @@ Overrides suppress style rules only. They do not bypass parser, type, name-resol
 - `ML_STYLE_SCALE`
 - `ML_STYLE_CHORD_VOCAB`
 - `ML_STYLE_CHORD_QUALITY_VOCAB`
+- `ML_STYLE_SET_CLASS_VOCAB`
 - `ML_STYLE_METER`
 - `ML_STYLE_METER_CATALOG`
 - `ML_STYLE_TEMPO_RANGE`

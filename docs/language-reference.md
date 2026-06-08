@@ -64,6 +64,7 @@ style Sparse {
   mode_pattern: D dorian
   chord_vocab: C E G
   chord_quality_vocab: major minor dominant7
+  set_class_vocab: 016 all_interval_tetrachord
   meter: 3/4
   meter_catalog: 3/4 6/8
   tempo_range: 60..120
@@ -121,6 +122,7 @@ Stable diagnostic codes include:
 - `ML_STYLE_SCALE`
 - `ML_STYLE_CHORD_VOCAB`
 - `ML_STYLE_CHORD_QUALITY_VOCAB`
+- `ML_STYLE_SET_CLASS_VOCAB`
 - `ML_STYLE_METER`
 - `ML_STYLE_METER_CATALOG`
 - `ML_STYLE_TEMPO_RANGE`

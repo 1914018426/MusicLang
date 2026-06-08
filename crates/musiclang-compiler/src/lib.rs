@@ -148,6 +148,7 @@ mod stylecheck {
             "scale"
                 | "chord_vocab"
                 | "chord_quality_vocab"
+                | "set_class_vocab"
                 | "meter"
                 | "meter_catalog"
                 | "tempo_range"
@@ -413,6 +414,7 @@ impl Compiler {
         };
         self.check_chord_vocab(&pitches, chord.line, chord.column);
         self.check_chord_quality_vocab(&pitches, chord.line, chord.column);
+        self.check_set_class_vocab(&pitches, chord.line, chord.column);
         self.check_rhythm_vocab(duration, chord.line, chord.column);
         match Chord::new(pitches, duration) {
             Ok(compiled_chord) => track.push_chord(compiled_chord, Some(chord.span)),
@@ -1245,6 +1247,26 @@ impl Compiler {
         }
     }
 
+    fn check_set_class_vocab(&mut self, pitches: &[Pitch], line: usize, column: usize) {
+        if self.style.set_class_vocab.is_empty() || self.has_override("set_class_vocab") {
+            return;
+        }
+        let allowed = self
+            .style
+            .set_class_vocab
+            .iter()
+            .any(|set_class| chord_matches_set_class(pitches, set_class));
+        if !allowed {
+            self.push_style_diagnostic(
+                "set_class_vocab",
+                "ML_STYLE_SET_CLASS_VOCAB",
+                "chord set class is outside active style vocabulary".to_string(),
+                line,
+                column,
+            );
+        }
+    }
+
     fn check_rhythm_vocab(&mut self, duration: Duration, line: usize, column: usize) {
         if self.style.rhythm_vocab.is_empty() || self.has_override("rhythm_vocab") {
             return;
@@ -1466,6 +1488,14 @@ fn style_from_program_inner(
                     .split_whitespace()
                     .map(ToString::to_string)
                     .collect();
+            }
+            "set_class_vocab" => {
+                context.set_class_vocab = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_vocab_entries(style, entry, TheoryDomain::SetClasses, &mut diagnostics);
             }
             "rhythm_vocab" => {
                 context.rhythm_vocab = entry
@@ -1851,6 +1881,25 @@ fn chord_matches_quality(pitches: &[Pitch], quality: &str) -> bool {
         .is_some_and(|entry| {
             entry.pattern.len() == intervals.len()
                 && entry.pattern.iter().all(|step| intervals.contains(*step))
+        })
+}
+
+fn chord_matches_set_class(pitches: &[Pitch], set_class: &str) -> bool {
+    let Some(root) = pitches.first().map(|pitch| pitch.class().semitone()) else {
+        return false;
+    };
+    let normalized = pitches
+        .iter()
+        .map(|pitch| (pitch.class().semitone() - root).rem_euclid(12).to_string())
+        .collect::<BTreeSet<_>>();
+    let catalog = musiclang_core::theory_catalog();
+    catalog
+        .entries(TheoryDomain::SetClasses)
+        .iter()
+        .find(|entry| entry.id == set_class)
+        .is_some_and(|entry| {
+            entry.pattern.len() == normalized.len()
+                && entry.pattern.iter().all(|step| normalized.contains(*step))
         })
 }
 
@@ -2748,6 +2797,45 @@ score demo style Pulse {
         .unwrap();
 
         assert_eq!(ir.tracks[0].events.len(), 1);
+    }
+
+    #[test]
+    fn set_class_vocab_accepts_catalog_set_class() {
+        let ir = compile_source(
+            r#"
+style PostTonal {
+  set_class_vocab: 016
+}
+score demo style PostTonal {
+  voice lead {
+    chord [C4, Db4, Gb4], 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 3);
+    }
+
+    #[test]
+    fn set_class_vocab_rejects_unlisted_set_class() {
+        let diagnostics = compile_source(
+            r#"
+style PostTonal {
+  set_class_vocab: 016
+}
+score demo style PostTonal {
+  voice lead {
+    chord [C4, E4, G4], 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_SET_CLASS_VOCAB");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("set_class_vocab"));
     }
 
     #[test]
