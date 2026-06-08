@@ -53,7 +53,7 @@ style Chamber extends Classical {
 - `meter_catalog`: score `meter` metadata must match one configured meter from the `meters` theory catalog.
 - `tempo_range`: score `tempo` metadata must stay within the configured BPM range.
 - `rhythm_vocab`: note and chord durations must belong to the configured rhythmic vocabulary.
-- `rhythm_concept`: score rhythm pattern must satisfy configured concepts from the `rhythms` theory catalog (`ostinato` requires a repeating duration cell, `syncopation` requires an offbeat attack, and `hemiola` requires a three-in-two duration pattern).
+- `rhythm_concept`: score rhythm pattern must satisfy configured concepts from the `rhythms` theory catalog (`ostinato` requires a repeating duration cell, `syncopation` requires an offbeat attack, `hemiola` requires a three-in-two duration pattern, and `swing` requires a long-short 2:1 duration pair).
 - `dynamic_vocab`: `dynamic` statements must use configured entries from the `dynamics` theory catalog.
 - `articulation_vocab`: `articulation` statements must use configured entries from the `ornaments` theory catalog.
 - `ornament`: `ornament` annotation blocks must use configured entries from the `ornaments` theory catalog.

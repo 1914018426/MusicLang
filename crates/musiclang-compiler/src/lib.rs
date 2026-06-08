@@ -881,6 +881,7 @@ impl Compiler {
                 "ostinato" => tracks.iter().any(track_has_repeated_duration_cell),
                 "syncopation" => tracks.iter().any(track_has_syncopation),
                 "hemiola" => tracks.iter().any(track_has_hemiola),
+                "swing" => tracks.iter().any(track_has_swing),
                 _ => true,
             };
             if !valid {
@@ -1987,6 +1988,13 @@ fn track_has_hemiola(track: &TrackIr) -> bool {
             && events.iter().map(|event| event.duration_ticks).sum::<u32>()
                 == DEFAULT_TICKS_PER_QUARTER * 2
     })
+}
+
+fn track_has_swing(track: &TrackIr) -> bool {
+    track
+        .events
+        .windows(2)
+        .any(|events| events[0].duration_ticks == events[1].duration_ticks * 2)
 }
 
 fn harmonic_functions(tracks: &[TrackIr]) -> Vec<String> {
@@ -3397,6 +3405,49 @@ score demo style CrossRhythm {
   voice lead {
     note C4, 1/4
     note D4, 1/4
+    note E4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_RHYTHM_CONCEPT");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("rhythm_concept"));
+    }
+
+    #[test]
+    fn rhythm_concept_swing_accepts_long_short_pair() {
+        let ir = compile_source(
+            r#"
+style SwingFeel {
+  rhythm_concept: swing
+}
+score demo style SwingFeel {
+  voice lead {
+    note C4, 1/6
+    note D4, 1/12
+    note E4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 3);
+    }
+
+    #[test]
+    fn rhythm_concept_swing_rejects_even_durations() {
+        let diagnostics = compile_source(
+            r#"
+style SwingFeel {
+  rhythm_concept: swing
+}
+score demo style SwingFeel {
+  voice lead {
+    note C4, 1/8
+    note D4, 1/8
     note E4, 1/4
   }
 }
