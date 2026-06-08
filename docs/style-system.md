@@ -98,7 +98,7 @@ style MicrotonalPractice {
 }
 ```
 
-Styles can configure rule severity with `severity_<rule>: error`, `severity_<rule>: warning`, or `severity_<rule>: off`. `error` is the default and blocks compilation; `warning` records a diagnostic without blocking non-strict output; `off` disables that rule. Strict quality gates (`check --strict`, `analyze --strict`, `compile --strict`, `build --strict`, and `export --strict`) reject every diagnostic, including warnings.
+Styles can configure rule severity with `severity_<rule>: error`, `severity_<rule>: warning`, or `severity_<rule>: off`. `error` is the default and blocks compilation; `warning` records a diagnostic without blocking non-strict output; `off` disables that rule. Strict quality gates (`check --strict`, `analyze --strict`, `compile --strict`, `build --strict`, and `export --strict`) reject every diagnostic, including warnings, and strict output commands reject `severity_*: off` suppression.
 
 Styles can declare custom rule IDs with `rule_<id>: description`. These rule IDs participate in override validation, so local exceptions can be audited without extending the compiler's built-in rule enum.
 
@@ -143,7 +143,7 @@ override scale allow reason "intentional chromatic color" {
 }
 ```
 
-Overrides suppress style rules only. They do not bypass parser, type, name-resolution, or core music errors. Use them for intentional local musical exceptions, not to make demos or listening outputs pass quality checks.
+Overrides suppress style rules only. They do not bypass parser, type, name-resolution, or core music errors. Use them for intentional local musical exceptions, not to make demos or listening outputs pass quality checks. Strict output commands reject `override` blocks so publishable artifacts cannot be produced by hiding style diagnostics.
 
 Published listening demos should compile with no diagnostics, no `severity_*: off`, and no cleanup overrides. CI enforces this policy with strict demo analysis and strict MIDI/MusicXML/WAV export smoke tests.
 

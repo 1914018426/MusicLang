@@ -233,6 +233,7 @@ fn compile_file(input: &str, output: Option<&str>, strict: bool) -> Result<(), S
 
 fn compile_for_output(source: &str, strict: bool) -> Result<musiclang_core::ScoreIr, String> {
     if strict {
+        reject_strict_suppression(source)?;
         let compilation = musiclang_compiler::compile_source_with_diagnostics(source)
             .map_err(format_diagnostics)?;
         if !compilation.diagnostics.is_empty() {
@@ -242,6 +243,30 @@ fn compile_for_output(source: &str, strict: bool) -> Result<musiclang_core::Scor
     } else {
         musiclang_compiler::compile_source(source).map_err(format_diagnostics)
     }
+}
+
+fn reject_strict_suppression(source: &str) -> Result<(), String> {
+    for (line_index, line) in source.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("override ") {
+            return Err(format!(
+                "strict quality gate rejects override suppression at {}:{}",
+                line_index + 1,
+                line.len() - trimmed.len() + 1
+            ));
+        }
+        if let Some((key, value)) = trimmed.split_once(':') {
+            if key.trim_start().starts_with("severity_") && value.trim() == "off" {
+                return Err(format!(
+                    "strict quality gate rejects disabled style rule `{}` at {}:{}",
+                    key.trim(),
+                    line_index + 1,
+                    line.len() - trimmed.len() + 1
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn export_file(

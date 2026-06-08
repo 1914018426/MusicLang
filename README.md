@@ -71,7 +71,7 @@ music theory --domain harmonic_functions
 music theory --find maqam
 ```
 
-`--strict` is the quality gate for publishable/listening material. It rejects every diagnostic, including warning-only style diagnostics, and `music analyze --strict` also rejects excessive repeated bars. CI runs strict analysis and strict MIDI/MusicXML/WAV export smoke tests for the complete Jazz demo.
+`--strict` is the quality gate for publishable/listening material. It rejects every diagnostic, including warning-only style diagnostics, and rejects explicit suppression such as `override` blocks or `severity_*: off`. `music analyze --strict` also rejects excessive repeated bars. CI runs strict analysis and strict MIDI/MusicXML/WAV export smoke tests for the complete Jazz demo.
 
 Listening demos are expected to pass without diagnostic suppression: no `override` for cleanup, no `severity_*: off`, no warnings, and no uncontrolled repeated-bar padding.
 
