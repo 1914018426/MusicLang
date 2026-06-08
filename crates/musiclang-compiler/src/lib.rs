@@ -207,17 +207,24 @@ impl Compiler {
     fn compile_statement(&mut self, statement: &Stmt, track: &mut TrackBuilder) {
         match statement {
             Stmt::Voice(voice) => self.compile_voice(voice, track),
-            Stmt::Tempo(tempo) => self.tempo_changes.push(TempoChangeIr {
-                bpm: tempo.bpm,
-                tick: track.cursor_tick(),
-            }),
-            Stmt::Meter(meter) => self.meter_changes.push(MeterChangeIr {
-                meter: Meter {
+            Stmt::Tempo(tempo) => {
+                self.check_tempo_style(tempo.bpm, tempo.line, tempo.column, Some(tempo.span));
+                self.tempo_changes.push(TempoChangeIr {
+                    bpm: tempo.bpm,
+                    tick: track.cursor_tick(),
+                });
+            }
+            Stmt::Meter(meter) => {
+                let compiled_meter = Meter {
                     numerator: meter.numerator,
                     denominator: meter.denominator,
-                },
-                tick: track.cursor_tick(),
-            }),
+                };
+                self.check_meter_style(compiled_meter, meter.line, meter.column, Some(meter.span));
+                self.meter_changes.push(MeterChangeIr {
+                    meter: compiled_meter,
+                    tick: track.cursor_tick(),
+                });
+            }
             Stmt::Key(key) => {
                 if let Some(signature) = self.key_signature_or_diagnostic(
                     &key.tonic, &key.mode, key.line, key.column, key.span,
@@ -1948,20 +1955,47 @@ impl Compiler {
     }
 
     fn check_score_style(&mut self, tempo_bpm: u16, meter: Option<Meter>) {
+        self.check_tempo_style(
+            tempo_bpm,
+            self.program.score.line,
+            self.program.score.column,
+            Some(self.program.score.span),
+        );
+        if let Some(meter) = meter {
+            self.check_meter_style(
+                meter,
+                self.program.score.line,
+                self.program.score.column,
+                Some(self.program.score.span),
+            );
+        }
+    }
+
+    fn check_tempo_style(
+        &mut self,
+        tempo_bpm: u16,
+        line: usize,
+        column: usize,
+        span: Option<Span>,
+    ) {
         if let Some((min, max)) = self.style.tempo_range {
             if (tempo_bpm < min || tempo_bpm > max) && !self.has_override("tempo_range") {
-                self.push_style_diagnostic(
+                self.push_style_diagnostic_with_span(
                     "tempo_range",
                     "ML_STYLE_TEMPO_RANGE",
                     format!("tempo {tempo_bpm} is outside active style tempo range {min}..={max}"),
-                    self.program.score.line,
-                    self.program.score.column,
+                    line,
+                    column,
+                    span,
                 );
             }
         }
-        if let (Some(expected), Some(actual)) = (self.style.meter, meter) {
+    }
+
+    fn check_meter_style(&mut self, actual: Meter, line: usize, column: usize, span: Option<Span>) {
+        if let Some(expected) = self.style.meter {
             if expected != actual && !self.has_override("meter") {
-                self.push_style_diagnostic(
+                self.push_style_diagnostic_with_span(
                     "meter",
                     "ML_STYLE_METER",
                     format!(
@@ -1971,31 +2005,31 @@ impl Compiler {
                         expected.numerator,
                         expected.denominator
                     ),
-                    self.program.score.line,
-                    self.program.score.column,
+                    line,
+                    column,
+                    span,
                 );
             }
         }
-        if let Some(actual) = meter {
-            if !self.style.meter_catalog.is_empty()
-                && !self.has_override("meter_catalog")
-                && !self
-                    .style
-                    .meter_catalog
-                    .iter()
-                    .any(|entry_id| meter_matches_catalog(actual, entry_id))
-            {
-                self.push_style_diagnostic(
-                    "meter_catalog",
-                    "ML_STYLE_METER_CATALOG",
-                    format!(
-                        "meter {}/{} is outside active style meter catalog",
-                        actual.numerator, actual.denominator
-                    ),
-                    self.program.score.line,
-                    self.program.score.column,
-                );
-            }
+        if !self.style.meter_catalog.is_empty()
+            && !self.has_override("meter_catalog")
+            && !self
+                .style
+                .meter_catalog
+                .iter()
+                .any(|entry_id| meter_matches_catalog(actual, entry_id))
+        {
+            self.push_style_diagnostic_with_span(
+                "meter_catalog",
+                "ML_STYLE_METER_CATALOG",
+                format!(
+                    "meter {}/{} is outside active style meter catalog",
+                    actual.numerator, actual.denominator
+                ),
+                line,
+                column,
+                span,
+            );
         }
     }
 
@@ -5295,6 +5329,29 @@ score demo {
     }
 
     #[test]
+    fn meter_statement_rule_fails() {
+        let diagnostics = compile_source(
+            r#"
+style Three {
+  meter: 3/4
+}
+score demo {
+  meter 3/4
+  voice lead {
+    meter 4/4
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_STYLE_METER"));
+    }
+
+    #[test]
     fn meter_catalog_accepts_listed_catalog_meter() {
         let ir = compile_source(
             r#"
@@ -6350,6 +6407,31 @@ score demo {
         .unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_TEMPO_RANGE");
+    }
+
+    #[test]
+    fn tempo_statement_range_rule_fails() {
+        let diagnostics = compile_source(
+            r#"
+style Slow {
+  tempo_range: 40..80
+}
+score demo {
+  tempo 60
+  voice lead {
+    section Bridge {
+      tempo 120
+      note C4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_STYLE_TEMPO_RANGE"));
     }
 
     #[test]
