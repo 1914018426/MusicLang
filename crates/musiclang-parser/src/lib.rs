@@ -189,6 +189,11 @@ pub enum BinaryOp {
     Add,
     Sub,
     Eq,
+    NotEq,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -633,6 +638,11 @@ pub enum TokenKind {
     Colon,
     Eq,
     EqEq,
+    NotEq,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
     Dot,
     DotDot,
     Pipe,
@@ -688,6 +698,11 @@ impl Lexer {
                 '-' => tokens.push(self.simple(TokenKind::Minus)),
                 '|' if self.peek_next() == Some('>') => tokens.push(self.double(TokenKind::Pipe)),
                 '=' if self.peek_next() == Some('=') => tokens.push(self.double(TokenKind::EqEq)),
+                '!' if self.peek_next() == Some('=') => tokens.push(self.double(TokenKind::NotEq)),
+                '<' if self.peek_next() == Some('=') => tokens.push(self.double(TokenKind::LtEq)),
+                '>' if self.peek_next() == Some('=') => tokens.push(self.double(TokenKind::GtEq)),
+                '<' => tokens.push(self.simple(TokenKind::Lt)),
+                '>' => tokens.push(self.simple(TokenKind::Gt)),
                 '=' => tokens.push(self.simple(TokenKind::Eq)),
                 '.' if self.peek_next() == Some('.') => tokens.push(self.double(TokenKind::DotDot)),
                 '.' => tokens.push(self.simple(TokenKind::Dot)),
@@ -2511,10 +2526,20 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
         }
         return parse_expr_tokens(inner);
     }
-    if let Some(index) = find_top_level_operator(tokens, TokenKind::EqEq) {
+    if let Some((index, op)) = find_top_level_binary_operator(
+        tokens,
+        &[
+            (TokenKind::EqEq, BinaryOp::Eq),
+            (TokenKind::NotEq, BinaryOp::NotEq),
+            (TokenKind::LtEq, BinaryOp::LtEq),
+            (TokenKind::GtEq, BinaryOp::GtEq),
+            (TokenKind::Lt, BinaryOp::Lt),
+            (TokenKind::Gt, BinaryOp::Gt),
+        ],
+    ) {
         return Some(Expr::new(
             ExprKind::Binary {
-                op: BinaryOp::Eq,
+                op,
                 left: Box::new(parse_expr_tokens(&tokens[..index])?),
                 right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
             },
@@ -2588,6 +2613,28 @@ fn find_top_level_ident(tokens: &[Token], text: &str) -> Option<usize> {
                 depth = depth.saturating_sub(1)
             }
             TokenKind::Ident if depth == 0 && token.text == text => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_top_level_binary_operator(
+    tokens: &[Token],
+    operators: &[(TokenKind, BinaryOp)],
+) -> Option<(usize, BinaryOp)> {
+    let mut depth = 0usize;
+    for (index, token) in tokens.iter().enumerate() {
+        match token.kind {
+            TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+            TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                depth = depth.saturating_sub(1)
+            }
+            _ if depth == 0 => {
+                if let Some((_, op)) = operators.iter().find(|(kind, _)| token.kind == *kind) {
+                    return Some((index, *op));
+                }
+            }
             _ => {}
         }
     }
@@ -2764,6 +2811,11 @@ fn expr_to_source(expr: &Expr) -> String {
                 BinaryOp::Add => "+",
                 BinaryOp::Sub => "-",
                 BinaryOp::Eq => "==",
+                BinaryOp::NotEq => "!=",
+                BinaryOp::Lt => "<",
+                BinaryOp::LtEq => "<=",
+                BinaryOp::Gt => ">",
+                BinaryOp::GtEq => ">=",
             };
             format!("{} {op} {}", expr_to_source(left), expr_to_source(right))
         }
@@ -3635,6 +3687,47 @@ score demo {
             program.functions[0].body_expr().map(|expr| &expr.kind),
             Some(ExprKind::Conditional { .. })
         ));
+    }
+
+    #[test]
+    fn parses_comparison_expression_operators() {
+        let program = parse_source(
+            r#"
+fn ne(i) = i != 1
+fn lt(i) = i < 2
+fn le(i) = i <= 2
+fn gt(i) = i > 0
+fn ge(i) = i >= 0
+score demo {
+  voice lead {
+    note C4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let operators = program
+            .functions
+            .iter()
+            .map(
+                |function| match function.body_expr().map(|expr| &expr.kind) {
+                    Some(ExprKind::Binary { op, .. }) => *op,
+                    _ => panic!("expected binary expression"),
+                },
+            )
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            operators,
+            [
+                BinaryOp::NotEq,
+                BinaryOp::Lt,
+                BinaryOp::LtEq,
+                BinaryOp::Gt,
+                BinaryOp::GtEq
+            ]
+        );
     }
 
     #[test]

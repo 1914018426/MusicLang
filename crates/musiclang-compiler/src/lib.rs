@@ -3912,6 +3912,20 @@ impl Compiler {
             (BinaryOp::Eq, Value::Bool(left), Value::Bool(right)) => {
                 Some(Value::Bool(left == right))
             }
+            (BinaryOp::NotEq, Value::Int(left), Value::Int(right)) => {
+                Some(Value::Bool(left != right))
+            }
+            (BinaryOp::NotEq, Value::Bool(left), Value::Bool(right)) => {
+                Some(Value::Bool(left != right))
+            }
+            (BinaryOp::Lt, Value::Int(left), Value::Int(right)) => Some(Value::Bool(left < right)),
+            (BinaryOp::LtEq, Value::Int(left), Value::Int(right)) => {
+                Some(Value::Bool(left <= right))
+            }
+            (BinaryOp::Gt, Value::Int(left), Value::Int(right)) => Some(Value::Bool(left > right)),
+            (BinaryOp::GtEq, Value::Int(left), Value::Int(right)) => {
+                Some(Value::Bool(left >= right))
+            }
             _ => {
                 self.diagnostics.push(
                     Diagnostic::error(
@@ -6922,6 +6936,37 @@ score demo {
         assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
         assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "F#4");
         assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "G4");
+    }
+
+    #[test]
+    fn comparison_expressions_shape_phrase_predicates() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [{p:root, d:1/8}, {p:root |> transpose(M2), d:1/8}, {p:root |> transpose(M3), d:1/8}, {p:root |> transpose(P5), d:1/8}]
+fn ne(i, event) = {p:event.p, d:event.d, keep:i != 1}
+fn lt(i, event) = {p:event.p, d:event.d, keep:i < 3}
+fn le(i, event) = {p:event.p, d:event.d, keep:i <= 2}
+fn gt(i, event) = {p:event.p, d:event.d, keep:i > 0}
+fn ge(i, event) = {p:event.p, d:event.d, keep:i >= 1}
+fn keep(event) = (event.keep) == true
+score demo {
+  voice lead {
+    play riff(C4) |> mapi(ne) |> filter(keep)
+    play riff(C4) |> mapi(lt) |> filter(keep)
+    play riff(C4) |> mapi(le) |> filter(keep)
+    play riff(C4) |> mapi(gt) |> filter(keep)
+    play riff(C4) |> mapi(ge) |> filter(keep)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 15);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "E4");
+        assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "G4");
+        assert_eq!(ir.tracks[0].events[14].pitch.to_string(), "G4");
     }
 
     #[test]
