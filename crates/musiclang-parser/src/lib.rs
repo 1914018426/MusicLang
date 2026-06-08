@@ -69,6 +69,7 @@ pub enum Stmt {
     Voice(VoiceDecl),
     Note(NoteStmt),
     Chord(ChordStmt),
+    Roman(RomanStmt),
     Dynamic(DynamicStmt),
     Velocity(VelocityStmt),
     Articulation(ArticulationStmt),
@@ -181,6 +182,16 @@ pub struct ChordStmt {
     pub pitch_exprs: Vec<Expr>,
     pub root_expr: Option<Expr>,
     pub quality: Option<String>,
+    pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RomanStmt {
+    pub symbol: String,
+    pub duration: String,
     pub duration_expr: Expr,
     pub line: usize,
     pub column: usize,
@@ -740,6 +751,9 @@ impl Parser {
         if self.check_ident("chord") {
             return self.parse_chord().map(Stmt::Chord);
         }
+        if self.check_ident("roman") {
+            return self.parse_roman().map(Stmt::Roman);
+        }
         if self.check_ident("dynamic") {
             return self.parse_dynamic().map(Stmt::Dynamic);
         }
@@ -936,6 +950,21 @@ impl Parser {
             pitch_exprs: Vec::new(),
             root_expr: Some(root_expr),
             quality: Some(quality),
+            duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_roman(&mut self) -> Option<RomanStmt> {
+        let start = self.expect_ident_text("roman")?;
+        let symbol = self.expect_name()?;
+        self.expect(TokenKind::Comma, "expected `,` after roman numeral")?;
+        let duration_expr = self.parse_expr_until_stmt_end()?;
+        Some(RomanStmt {
+            symbol,
+            duration: expr_to_source(&duration_expr),
             duration_expr,
             line: start.span.line,
             column: start.span.column,
@@ -1272,6 +1301,7 @@ impl Parser {
             "voice"
                 | "note"
                 | "chord"
+                | "roman"
                 | "dynamic"
                 | "velocity"
                 | "articulation"
@@ -1722,6 +1752,30 @@ score demo {
         );
         assert_eq!(chord.quality.as_deref(), Some("minor7"));
         assert!(chord.pitch_exprs.is_empty());
+    }
+
+    #[test]
+    fn parses_roman_numeral_chord() {
+        let program = parse_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    roman V7, 1/2
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Roman(roman) = &voice.statements[0] else {
+            panic!("expected roman numeral chord");
+        };
+
+        assert_eq!(roman.symbol, "V7");
+        assert_eq!(roman.duration, "1/2");
     }
 
     #[test]

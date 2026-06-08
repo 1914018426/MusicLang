@@ -1,8 +1,10 @@
 score demo {
+  key C major
   voice lead {
     note C4, 1/4
     note E4, 1/4
     chord [C4, E4, G4], 1/2
     chord D3 minor, 1/2
+    roman V7, 1/2
   }
 }

@@ -8,7 +8,7 @@ use musiclang_core::{
 };
 use musiclang_parser::{
     parse_source, ArticulationStmt, BinaryOp, ChordStmt, DynamicStmt, Expr, ExprKind, FunctionDecl,
-    NoteStmt, OverrideStmt, Program, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
+    NoteStmt, OverrideStmt, Program, RomanStmt, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +53,7 @@ struct Compiler {
     section_labels: Vec<String>,
     markers: Vec<MarkerIr>,
     pending_non_chord_tones: Vec<PendingNonChordTone>,
+    score_key: Option<KeySignature>,
 }
 
 struct PendingNonChordTone {
@@ -82,12 +83,14 @@ impl Compiler {
             section_labels: Vec::new(),
             markers: Vec::new(),
             pending_non_chord_tones: Vec::new(),
+            score_key: None,
         }
     }
 
     fn compile(mut self) -> Result<Compilation, Vec<Diagnostic>> {
         let mut tracks = Vec::new();
         let (title, composer, tempo_bpm, meter, key) = lower::score_metadata(&self.program);
+        self.score_key = key;
         self.check_score_style(tempo_bpm, meter);
         let statements = self.program.score.statements.clone();
 
@@ -166,6 +169,7 @@ impl Compiler {
             Stmt::Voice(voice) => self.compile_voice(voice, track),
             Stmt::Note(note) => self.compile_note(note, track),
             Stmt::Chord(chord) => self.compile_chord(chord, track),
+            Stmt::Roman(roman) => self.compile_roman(roman, track),
             Stmt::Dynamic(dynamic) => {
                 self.check_dynamic_vocab(dynamic);
                 if let Some(velocity) = dynamic_velocity(&dynamic.mark) {
@@ -423,6 +427,58 @@ impl Compiler {
             Err(error) => self.diagnostics.push(
                 Diagnostic::error("ML_CORE_CHORD", error.to_string(), chord.line, chord.column)
                     .with_span(chord.span),
+            ),
+        }
+    }
+
+    fn compile_roman(&mut self, roman: &RomanStmt, track: &mut TrackBuilder) {
+        let Some(key) = self.score_key else {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_THEORY_ROMAN_KEY",
+                    "roman numeral chord requires score key metadata",
+                    roman.line,
+                    roman.column,
+                )
+                .with_span(roman.span),
+            );
+            return;
+        };
+        let Some(pitches) = roman_chord_pitches(&roman.symbol, key) else {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_THEORY_ROMAN_NUMERAL",
+                    format!("unsupported roman numeral chord `{}`", roman.symbol),
+                    roman.line,
+                    roman.column,
+                )
+                .with_span(roman.span),
+            );
+            return;
+        };
+        let Some(duration) = self.eval_duration(&roman.duration_expr, roman.line, roman.column)
+        else {
+            return;
+        };
+        for pitch in &pitches {
+            self.check_pitch_style(*pitch, roman.line, roman.column, Some(roman.span));
+            self.check_instrument_range(
+                track.program,
+                *pitch,
+                roman.line,
+                roman.column,
+                Some(roman.span),
+            );
+        }
+        self.check_chord_vocab(&pitches, roman.line, roman.column, Some(roman.span));
+        self.check_chord_quality_vocab(&pitches, roman.line, roman.column, Some(roman.span));
+        self.check_set_class_vocab(&pitches, roman.line, roman.column, Some(roman.span));
+        self.check_rhythm_vocab(duration, roman.line, roman.column, Some(roman.span));
+        match Chord::new(pitches, duration) {
+            Ok(compiled_chord) => track.push_chord(compiled_chord, Some(roman.span)),
+            Err(error) => self.diagnostics.push(
+                Diagnostic::error("ML_CORE_CHORD", error.to_string(), roman.line, roman.column)
+                    .with_span(roman.span),
             ),
         }
     }
@@ -2398,6 +2454,94 @@ fn expand_chord_quality(root: Pitch, quality: &str) -> Option<Vec<Pitch>> {
         .collect()
 }
 
+fn roman_chord_pitches(symbol: &str, key: KeySignature) -> Option<Vec<Pitch>> {
+    let (degree, quality, seventh) = parse_roman_symbol(symbol)?;
+    let tonic = key_tonic_semitone(key);
+    let scale = if key.is_minor {
+        [0, 2, 3, 5, 7, 8, 10]
+    } else {
+        [0, 2, 4, 5, 7, 9, 11]
+    };
+    let root_class = PitchClass::from_semitone(tonic + scale[degree]);
+    let root_octave = if degree >= 4 { 3 } else { 4 };
+    let root = Pitch::new(root_class, root_octave).ok()?;
+    let mut pitches = expand_chord_quality(root, quality)?;
+    if seventh && !quality.ends_with('7') {
+        pitches.push(root.transpose(Interval::new(10)).ok()?);
+    }
+    Some(pitches)
+}
+
+fn parse_roman_symbol(symbol: &str) -> Option<(usize, &'static str, bool)> {
+    let (body, seventh) = symbol
+        .strip_suffix('7')
+        .map_or((symbol, false), |body| (body, true));
+    let normalized = body
+        .trim_start_matches('b')
+        .trim_start_matches('#')
+        .trim_end_matches('°')
+        .trim_end_matches('+');
+    let upper = normalized.to_ascii_uppercase();
+    let degree = match upper.as_str() {
+        "I" => 0,
+        "II" => 1,
+        "III" => 2,
+        "IV" => 3,
+        "V" => 4,
+        "VI" => 5,
+        "VII" => 6,
+        _ => return None,
+    };
+    let quality = if body.ends_with('°') {
+        "diminished"
+    } else if body.ends_with('+') {
+        "augmented"
+    } else if normalized.chars().next()?.is_ascii_lowercase() {
+        "minor"
+    } else if seventh && upper == "V" {
+        "dominant7"
+    } else {
+        "major"
+    };
+    Some((degree, quality, seventh && quality != "dominant7"))
+}
+
+fn key_tonic_semitone(key: KeySignature) -> i16 {
+    match (key.fifths, key.is_minor) {
+        (-7, false) => 11,
+        (-6, false) => 6,
+        (-5, false) => 1,
+        (-4, false) => 8,
+        (-3, false) => 3,
+        (-2, false) => 10,
+        (-1, false) => 5,
+        (0, false) => 0,
+        (1, false) => 7,
+        (2, false) => 2,
+        (3, false) => 9,
+        (4, false) => 4,
+        (5, false) => 11,
+        (6, false) => 6,
+        (7, false) => 1,
+        (-7, true) => 8,
+        (-6, true) => 3,
+        (-5, true) => 10,
+        (-4, true) => 5,
+        (-3, true) => 0,
+        (-2, true) => 7,
+        (-1, true) => 2,
+        (0, true) => 9,
+        (1, true) => 4,
+        (2, true) => 11,
+        (3, true) => 6,
+        (4, true) => 1,
+        (5, true) => 8,
+        (6, true) => 3,
+        (7, true) => 10,
+        _ => 0,
+    }
+}
+
 fn chord_matches_quality(pitches: &[Pitch], quality: &str) -> bool {
     let Some(root) = pitches.first().map(|pitch| pitch.class().semitone()) else {
         return false;
@@ -2719,6 +2863,47 @@ score demo {
         assert!(diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "ML_THEORY_CHORD_QUALITY"));
+    }
+
+    #[test]
+    fn expands_roman_numeral_chords_against_score_key() {
+        let ir = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    roman I, 1/4
+    roman V7, 1/2
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let pitches = ir.tracks[0]
+            .events
+            .iter()
+            .map(|event| event.pitch.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(pitches, vec!["C4", "E4", "G4", "G3", "B3", "D4", "F4"]);
+    }
+
+    #[test]
+    fn roman_numeral_requires_score_key() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice lead {
+    roman I, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_THEORY_ROMAN_KEY"));
     }
 
     #[test]

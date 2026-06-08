@@ -204,6 +204,34 @@ score demo {
 }
 
 #[test]
+fn music_ir_expands_roman_numeral_chord() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/roman-chord.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  key C major
+  voice lead {
+    roman V7, 1/2
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["ir", &input_path]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("class: G"));
+    assert!(stdout.contains("class: B"));
+    assert!(stdout.contains("class: D"));
+    assert!(stdout.contains("class: F"));
+    assert!(stdout.contains("duration_ticks: 960"));
+}
+
+#[test]
 fn music_export_musicxml_produces_valid_file() {
     let workspace = env!("CARGO_MANIFEST_DIR");
     let input_path = write_analyze_metadata_fixture();
