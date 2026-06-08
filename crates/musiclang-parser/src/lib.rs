@@ -31,10 +31,32 @@ pub struct StyleEntry {
 pub struct FunctionDecl {
     pub name: String,
     pub params: Vec<String>,
-    pub statements: Vec<Stmt>,
+    pub body: FunctionBody,
     pub line: usize,
     pub column: usize,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FunctionBody {
+    Block(Vec<Stmt>),
+    Expr(Expr),
+}
+
+impl FunctionDecl {
+    pub fn statements(&self) -> &[Stmt] {
+        match &self.body {
+            FunctionBody::Block(statements) => statements,
+            FunctionBody::Expr(_) => &[],
+        }
+    }
+
+    pub fn body_expr(&self) -> Option<&Expr> {
+        match &self.body {
+            FunctionBody::Block(_) => None,
+            FunctionBody::Expr(expr) => Some(expr),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -909,11 +931,15 @@ impl Parser {
         let start = self.expect_ident_text("fn")?;
         let name = self.expect_name()?;
         let params = self.parse_param_list()?;
-        let statements = self.parse_required_block()?;
+        let body = if self.consume(TokenKind::Eq).is_some() {
+            FunctionBody::Expr(self.parse_expr_until_line_end()?)
+        } else {
+            FunctionBody::Block(self.parse_required_block()?)
+        };
         Some(FunctionDecl {
             name,
             params,
-            statements,
+            body,
             line: start.span.line,
             column: start.span.column,
             span: start.span,
@@ -2098,6 +2124,32 @@ impl Parser {
             return None;
         }
         Some(symbols)
+    }
+
+    fn parse_expr_until_line_end(&mut self) -> Option<Expr> {
+        let line = self.peek().span.line;
+        let mut tokens = Vec::new();
+        let mut depth = 0usize;
+        while !self.check(TokenKind::Eof) {
+            if depth == 0 && (self.check(TokenKind::RBrace) || self.peek().span.line != line) {
+                break;
+            }
+            let token = self.advance().clone();
+            match token.kind {
+                TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+                TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1)
+                }
+                _ => {}
+            }
+            tokens.push(token);
+        }
+        parse_expr_tokens(&tokens).or_else(|| {
+            if let Some(token) = tokens.first() {
+                self.push_token_diagnostic("ML_PARSE_EXPR", "expected expression", token);
+            }
+            None
+        })
     }
 
     fn parse_expr_until_stmt_end(&mut self) -> Option<Expr> {
@@ -3447,6 +3499,27 @@ score demo {
     }
 
     #[test]
+    fn parses_expression_bodied_function() {
+        let program = parse_source(
+            r#"
+fn up(p, i) = p |> transpose(i)
+score demo {
+  voice lead {
+    note up(C4, M3), 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(program.functions[0].params, ["p", "i"]);
+        assert!(matches!(
+            program.functions[0].body_expr().map(|expr| &expr.kind),
+            Some(ExprKind::Pipe { .. })
+        ));
+    }
+
+    #[test]
     fn parses_compact_tuple_dict_and_access_expressions() {
         let program = parse_source(
             r#"
@@ -3462,7 +3535,7 @@ score demo {
         )
         .unwrap();
 
-        let Stmt::Note(note) = &program.functions[0].statements[0] else {
+        let Stmt::Note(note) = &program.functions[0].statements()[0] else {
             panic!("expected note");
         };
         let ExprKind::Pipe { value, call } = &note.pitch_expr.kind else {

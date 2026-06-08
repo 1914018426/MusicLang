@@ -205,7 +205,10 @@ impl Compiler {
         let functions = self.program.functions.clone();
         for function in functions {
             let mut calls = Vec::new();
-            self.collect_function_calls(&function.statements, &mut calls);
+            self.collect_function_calls(function.statements(), &mut calls);
+            if let Some(expr) = function.body_expr() {
+                self.collect_expression_calls(expr, function.line, function.column, &mut calls);
+            }
             self.check_unknown_function_calls(&calls);
             graph.insert(function.name.clone(), calls);
         }
@@ -238,7 +241,72 @@ impl Compiler {
         self.check_function_arity_in_statements(&statements);
         let functions = self.program.functions.clone();
         for function in functions {
-            self.check_function_arity_in_statements(&function.statements);
+            self.check_function_arity_in_statements(function.statements());
+            if let Some(expr) = function.body_expr() {
+                self.check_function_arity_in_expr(expr, function.line, function.column);
+            }
+        }
+    }
+
+    fn check_function_arity_in_expr(&mut self, expr: &Expr, line: usize, column: usize) {
+        match &expr.kind {
+            ExprKind::Call { callee, args } => {
+                if let Some(function) = self.functions.get(callee) {
+                    if function.body_expr().is_some() && function.params.len() != args.len() {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "ML_TYPE_MISMATCH",
+                                format!(
+                                    "function `{}` expects {} arguments, got {}",
+                                    callee,
+                                    function.params.len(),
+                                    args.len()
+                                ),
+                                line,
+                                column,
+                            )
+                            .with_span(expr.span),
+                        );
+                    }
+                }
+                for arg in args {
+                    self.check_function_arity_in_expr(arg, line, column);
+                }
+            }
+            ExprKind::MethodCall { target, args, .. } => {
+                self.check_function_arity_in_expr(target, line, column);
+                for arg in args {
+                    self.check_function_arity_in_expr(arg, line, column);
+                }
+            }
+            ExprKind::Pipe { value, call } => {
+                self.check_function_arity_in_expr(value, line, column);
+                self.check_function_arity_in_expr(call, line, column);
+            }
+            ExprKind::List(values) | ExprKind::Tuple(values) => {
+                for value in values {
+                    self.check_function_arity_in_expr(value, line, column);
+                }
+            }
+            ExprKind::Dict(entries) => {
+                for (_, value) in entries {
+                    self.check_function_arity_in_expr(value, line, column);
+                }
+            }
+            ExprKind::Access { target, .. } => {
+                self.check_function_arity_in_expr(target, line, column)
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.check_function_arity_in_expr(left, line, column);
+                self.check_function_arity_in_expr(right, line, column);
+            }
+            ExprKind::Ident(_)
+            | ExprKind::Int(_)
+            | ExprKind::Bool(_)
+            | ExprKind::PitchLiteral(_)
+            | ExprKind::IntervalLiteral(_)
+            | ExprKind::DurationLiteral(_)
+            | ExprKind::StringLiteral(_) => {}
         }
     }
 
@@ -357,6 +425,59 @@ impl Compiler {
         visiting.pop();
     }
 
+    fn collect_expression_calls(
+        &self,
+        expr: &Expr,
+        line: usize,
+        column: usize,
+        calls: &mut Vec<(String, usize, usize, Span)>,
+    ) {
+        match &expr.kind {
+            ExprKind::Call { callee, args } => {
+                if self.functions.contains_key(callee) {
+                    calls.push((callee.clone(), line, column, expr.span));
+                }
+                for arg in args {
+                    self.collect_expression_calls(arg, line, column, calls);
+                }
+            }
+            ExprKind::MethodCall { target, args, .. } => {
+                self.collect_expression_calls(target, line, column, calls);
+                for arg in args {
+                    self.collect_expression_calls(arg, line, column, calls);
+                }
+            }
+            ExprKind::Pipe { value, call } => {
+                self.collect_expression_calls(value, line, column, calls);
+                self.collect_expression_calls(call, line, column, calls);
+            }
+            ExprKind::List(values) | ExprKind::Tuple(values) => {
+                for value in values {
+                    self.collect_expression_calls(value, line, column, calls);
+                }
+            }
+            ExprKind::Dict(entries) => {
+                for (_, value) in entries {
+                    self.collect_expression_calls(value, line, column, calls);
+                }
+            }
+            ExprKind::Access { target, .. } => {
+                self.collect_expression_calls(target, line, column, calls)
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.collect_expression_calls(left, line, column, calls);
+                self.collect_expression_calls(right, line, column, calls);
+            }
+            ExprKind::Ident(_)
+            | ExprKind::Int(_)
+            | ExprKind::Bool(_)
+            | ExprKind::PitchLiteral(_)
+            | ExprKind::IntervalLiteral(_)
+            | ExprKind::DurationLiteral(_)
+            | ExprKind::StringLiteral(_) => {}
+        }
+    }
+
     fn collect_function_calls(
         &self,
         statements: &[Stmt],
@@ -415,7 +536,7 @@ impl Compiler {
         self.check_style_references_in_statements(&score_statements);
         let functions = self.program.functions.clone();
         for function in functions {
-            self.check_style_references_in_statements(&function.statements);
+            self.check_style_references_in_statements(function.statements());
         }
     }
 
@@ -504,7 +625,7 @@ impl Compiler {
         self.check_override_rules_in_statements(&score_statements);
         let functions = self.program.functions.clone();
         for function in functions {
-            self.check_override_rules_in_statements(&function.statements);
+            self.check_override_rules_in_statements(function.statements());
         }
     }
 
@@ -581,10 +702,11 @@ impl Compiler {
         self.check_expression_names_in_statements(&score_statements, &mut vec![HashSet::new()]);
         let functions = self.program.functions.clone();
         for function in functions {
-            self.check_expression_names_in_statements(
-                &function.statements,
-                &mut vec![function.params.iter().cloned().collect()],
-            );
+            let mut scopes = vec![function.params.iter().cloned().collect()];
+            self.check_expression_names_in_statements(function.statements(), &mut scopes);
+            if let Some(expr) = function.body_expr() {
+                self.check_expression_name(expr, function.line, function.column, &scopes);
+            }
         }
     }
 
@@ -1160,7 +1282,7 @@ impl Compiler {
                     for (param, value) in function.params.iter().zip(args) {
                         self.set_var(param, value);
                     }
-                    self.compile_statements(&function.statements, track);
+                    self.compile_statements(function.statements(), track);
                     self.pop_scope();
                     self.function_call_stack.pop();
                 }
@@ -3064,6 +3186,49 @@ impl Compiler {
         }
     }
 
+    fn eval_user_function_call(
+        &mut self,
+        callee: &str,
+        args: &[Value],
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Option<Value>> {
+        let function = self.functions.get(callee)?.clone();
+        let Some(body_expr) = function.body_expr().cloned() else {
+            return None;
+        };
+        if function.params.len() != args.len() {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_TYPE_MISMATCH",
+                    format!(
+                        "function `{}` expects {} arguments, got {}",
+                        callee,
+                        function.params.len(),
+                        args.len()
+                    ),
+                    line,
+                    column,
+                )
+                .with_span(span),
+            );
+            return Some(None);
+        }
+        if self.function_call_stack.iter().any(|name| name == callee) {
+            return Some(None);
+        }
+        self.function_call_stack.push(callee.to_string());
+        self.push_scope();
+        for (param, value) in function.params.iter().zip(args.iter().cloned()) {
+            self.set_var(param, value);
+        }
+        let value = self.eval_expr(&body_expr, line, column);
+        self.pop_scope();
+        self.function_call_stack.pop();
+        Some(value)
+    }
+
     fn eval_call(
         &mut self,
         callee: &str,
@@ -3072,6 +3237,9 @@ impl Compiler {
         column: usize,
         span: Span,
     ) -> Option<Value> {
+        if let Some(value) = self.eval_user_function_call(callee, &args, line, column, span) {
+            return value;
+        }
         match (callee, args.as_slice()) {
             ("transpose", [Value::Pitch(pitch), Value::Interval(interval)]) => {
                 match pitch.transpose(*interval) {
@@ -6056,6 +6224,26 @@ score demo {
         assert_eq!(events[1].pitch.to_string(), "E4");
         assert_eq!(events[2].pitch.to_string(), "G4");
         assert_eq!(events[3].pitch.to_string(), "B4");
+    }
+
+    #[test]
+    fn expression_bodied_function_returns_value() {
+        let ir = compile_source(
+            r#"
+fn up(p, i) = p |> transpose(i)
+score demo {
+  voice lead {
+    note up(C4, M3), 1/8
+    note up(G4, M3), 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 2);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "E4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "B4");
     }
 
     #[test]
