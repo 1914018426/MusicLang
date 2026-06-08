@@ -349,6 +349,7 @@ pub fn tokenize_source(source: &str) -> Result<Vec<Token>, Vec<Diagnostic>> {
 struct Lexer {
     chars: Vec<char>,
     index: usize,
+    byte_index: usize,
     line: usize,
     column: usize,
 }
@@ -358,6 +359,7 @@ impl Lexer {
         Self {
             chars: source.chars().collect(),
             index: 0,
+            byte_index: 0,
             line: 1,
             column: 1,
         }
@@ -403,7 +405,7 @@ impl Lexer {
         tokens.push(Token {
             kind: TokenKind::Eof,
             text: String::new(),
-            span: Span::point(self.line, self.column),
+            span: self.span_from(self.line, self.column, self.byte_index),
         });
         if diagnostics.is_empty() {
             Ok(tokens)
@@ -413,24 +415,31 @@ impl Lexer {
     }
 
     fn simple(&mut self, kind: TokenKind) -> Token {
-        let span = Span::point(self.line, self.column);
+        let line = self.line;
+        let column = self.column;
+        let start = self.byte_index;
         let text = self.advance().unwrap().to_string();
+        let span = self.span(line, column, start, self.byte_index);
         Token { kind, text, span }
     }
 
     fn double(&mut self, kind: TokenKind) -> Token {
-        let span = Span::point(self.line, self.column);
+        let line = self.line;
+        let column = self.column;
+        let start = self.byte_index;
         let first = self.advance().unwrap();
         let second = self.advance().unwrap();
         Token {
             kind,
             text: format!("{first}{second}"),
-            span,
+            span: self.span(line, column, start, self.byte_index),
         }
     }
 
     fn string(&mut self, diagnostics: &mut Vec<Diagnostic>) -> Option<Token> {
-        let span = Span::point(self.line, self.column);
+        let line = self.line;
+        let column = self.column;
+        let start = self.byte_index;
         self.advance();
         let mut text = String::new();
         while let Some(ch) = self.peek() {
@@ -439,7 +448,7 @@ impl Lexer {
                 return Some(Token {
                     kind: TokenKind::String,
                     text,
-                    span,
+                    span: self.span(line, column, start, self.byte_index),
                 });
             }
             text.push(ch);
@@ -448,14 +457,16 @@ impl Lexer {
         diagnostics.push(Diagnostic::error(
             "ML_LEX_STRING",
             "unterminated string literal",
-            span.line,
-            span.column,
+            line,
+            column,
         ));
         None
     }
 
     fn word(&mut self) -> Token {
-        let span = Span::point(self.line, self.column);
+        let line = self.line;
+        let column = self.column;
+        let start = self.byte_index;
         let mut text = String::new();
         while let Some(ch) = self.peek() {
             if is_word_continue(ch) {
@@ -466,6 +477,7 @@ impl Lexer {
             }
         }
         let kind = classify_word(&text);
+        let span = self.span(line, column, start, self.byte_index);
         Token { kind, text, span }
     }
 
@@ -495,6 +507,7 @@ impl Lexer {
     fn advance(&mut self) -> Option<char> {
         let ch = self.peek()?;
         self.index += 1;
+        self.byte_index += ch.len_utf8();
         if ch == '\n' {
             self.line += 1;
             self.column = 1;
@@ -502,6 +515,20 @@ impl Lexer {
             self.column += 1;
         }
         Some(ch)
+    }
+
+    fn span_from(&self, line: usize, column: usize, start: usize) -> Span {
+        self.span(line, column, start, start)
+    }
+
+    fn span(&self, line: usize, column: usize, start: usize, end: usize) -> Span {
+        Span {
+            source_id: musiclang_core::SourceId(0),
+            start,
+            end,
+            line,
+            column,
+        }
     }
 }
 
@@ -1499,6 +1526,29 @@ mod tests {
 
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Plus));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Interval));
+    }
+
+    #[test]
+    fn token_spans_cover_source_offsets() {
+        let tokens = tokenize_source("note C4 + M3, 1/4").unwrap();
+
+        assert_eq!(tokens[0].text, "note");
+        assert_eq!(tokens[0].span.start, 0);
+        assert_eq!(tokens[0].span.end, 4);
+        assert_eq!(tokens[1].text, "C4");
+        assert_eq!(tokens[1].span.start, 5);
+        assert_eq!(tokens[1].span.end, 7);
+    }
+
+    #[test]
+    fn token_spans_use_utf8_byte_offsets() {
+        let tokens = tokenize_source("// π\nnote C4, 1/4").unwrap();
+
+        assert_eq!(tokens[0].text, "note");
+        assert_eq!(tokens[0].span.line, 2);
+        assert_eq!(tokens[0].span.column, 1);
+        assert_eq!(tokens[0].span.start, "// π\n".len());
+        assert_eq!(tokens[0].span.end, "// π\nnote".len());
     }
 
     #[test]
