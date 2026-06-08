@@ -231,6 +231,35 @@ score demo {
 }
 
 #[test]
+fn music_ir_expands_sequence_block() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/sequence.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  voice lead {
+    sequence 3 by M2 {
+      note C4, 1/8
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["ir", &input_path]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("class: C"));
+    assert!(stdout.contains("class: D"));
+    assert!(stdout.contains("class: E"));
+    assert!(stdout.contains("start_tick: 480"));
+    assert!(stdout.contains("duration_ticks: 240"));
+}
+
+#[test]
 fn music_ir_expands_named_chord_quality() {
     let workspace = env!("CARGO_MANIFEST_DIR");
     let input_path = format!("{workspace}/target/named-chord.music");

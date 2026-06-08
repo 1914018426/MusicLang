@@ -9,7 +9,7 @@ use musiclang_core::{
 use musiclang_parser::{
     parse_source, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DynamicStmt, Expr, ExprKind,
     FunctionDecl, ModulateStmt, NoteStmt, OstinatoStmt, OverrideStmt, PedalStmt, Program,
-    ProgressionStmt, RomanStmt, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
+    ProgressionStmt, RomanStmt, SequenceStmt, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +55,7 @@ struct Compiler {
     markers: Vec<MarkerIr>,
     pending_non_chord_tones: Vec<PendingNonChordTone>,
     score_key: Option<KeySignature>,
+    pitch_transpose_semitones: i16,
 }
 
 struct PendingNonChordTone {
@@ -85,6 +86,7 @@ impl Compiler {
             markers: Vec::new(),
             pending_non_chord_tones: Vec::new(),
             score_key: None,
+            pitch_transpose_semitones: 0,
         }
     }
 
@@ -171,6 +173,7 @@ impl Compiler {
             Stmt::Note(note) => self.compile_note(note, track),
             Stmt::Pedal(pedal) => self.compile_pedal(pedal, track),
             Stmt::Ostinato(ostinato) => self.compile_ostinato(ostinato, track),
+            Stmt::Sequence(sequence) => self.compile_sequence(sequence, track),
             Stmt::Chord(chord) => self.compile_chord(chord, track),
             Stmt::Roman(roman) => self.compile_roman(roman, track),
             Stmt::Progression(progression) => self.compile_progression(progression, track),
@@ -442,6 +445,57 @@ impl Compiler {
         }
     }
 
+    fn compile_sequence(&mut self, sequence: &SequenceStmt, track: &mut TrackBuilder) {
+        let Some(count) = self.eval_sequence_count(sequence) else {
+            return;
+        };
+        let Some(interval) = self.eval_interval(
+            &sequence.interval_expr,
+            sequence.line,
+            sequence.column,
+            "expected interval sequence step",
+        ) else {
+            return;
+        };
+        let base_transpose = self.pitch_transpose_semitones;
+        for index in 0..count {
+            self.pitch_transpose_semitones = base_transpose + interval.semitones() * index as i16;
+            self.compile_statements(&sequence.statements, track);
+        }
+        self.pitch_transpose_semitones = base_transpose;
+    }
+
+    fn eval_sequence_count(&mut self, sequence: &SequenceStmt) -> Option<usize> {
+        match self.eval_expr(&sequence.count_expr, sequence.line, sequence.column) {
+            Some(Value::Int(value)) if value > 0 => Some(value as usize),
+            Some(Value::Int(_)) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_THEORY_SEQUENCE",
+                        "sequence count must be positive",
+                        sequence.line,
+                        sequence.column,
+                    )
+                    .with_span(sequence.span),
+                );
+                None
+            }
+            Some(_) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected integer sequence count",
+                        sequence.line,
+                        sequence.column,
+                    )
+                    .with_span(sequence.span),
+                );
+                None
+            }
+            None => None,
+        }
+    }
+
     fn compile_chord(&mut self, chord: &ChordStmt, track: &mut TrackBuilder) {
         let mut pitches = Vec::new();
         if let (Some(root_expr), Some(quality)) = (&chord.root_expr, &chord.quality) {
@@ -464,6 +518,14 @@ impl Compiler {
         for pitch_expr in &chord.pitch_exprs {
             match self.eval_expr(pitch_expr, chord.line, chord.column) {
                 Some(Value::Pitch(pitch)) => {
+                    let Some(pitch) = self.apply_pitch_transpose(
+                        pitch,
+                        chord.line,
+                        chord.column,
+                        pitch_expr.span,
+                    ) else {
+                        continue;
+                    };
                     self.check_pitch_style(pitch, chord.line, chord.column, Some(chord.span));
                     self.check_instrument_range(
                         track.program,
@@ -477,6 +539,14 @@ impl Compiler {
                 Some(Value::List(values)) => {
                     for value in values {
                         if let Value::Pitch(pitch) = value {
+                            let Some(pitch) = self.apply_pitch_transpose(
+                                pitch,
+                                chord.line,
+                                chord.column,
+                                pitch_expr.span,
+                            ) else {
+                                continue;
+                            };
                             self.check_pitch_style(
                                 pitch,
                                 chord.line,
@@ -1630,7 +1700,7 @@ impl Compiler {
 
     fn eval_pitch(&mut self, expr: &Expr, line: usize, column: usize) -> Option<Pitch> {
         match self.eval_expr(expr, line, column)? {
-            Value::Pitch(pitch) => Some(pitch),
+            Value::Pitch(pitch) => self.apply_pitch_transpose(pitch, line, column, expr.span),
             _ => {
                 self.diagnostics.push(
                     Diagnostic::error(
@@ -1640,6 +1710,47 @@ impl Compiler {
                         column,
                     )
                     .with_span(expr.span),
+                );
+                None
+            }
+        }
+    }
+
+    fn apply_pitch_transpose(
+        &mut self,
+        pitch: Pitch,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Pitch> {
+        if self.pitch_transpose_semitones == 0 {
+            return Some(pitch);
+        }
+        match pitch.transpose(Interval::new(self.pitch_transpose_semitones)) {
+            Ok(pitch) => Some(pitch),
+            Err(error) => {
+                self.diagnostics.push(
+                    Diagnostic::error("ML_EVAL_UNSUPPORTED_OP", error.to_string(), line, column)
+                        .with_span(span),
+                );
+                None
+            }
+        }
+    }
+
+    fn eval_interval(
+        &mut self,
+        expr: &Expr,
+        line: usize,
+        column: usize,
+        message: &'static str,
+    ) -> Option<Interval> {
+        match self.eval_expr(expr, line, column)? {
+            Value::Interval(interval) => Some(interval),
+            _ => {
+                self.diagnostics.push(
+                    Diagnostic::error("ML_TYPE_MISMATCH", message, line, column)
+                        .with_span(expr.span),
                 );
                 None
             }
@@ -3165,6 +3276,57 @@ score demo {
         assert!(diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "ML_THEORY_OSTINATO"));
+    }
+
+    #[test]
+    fn expands_sequence_block_with_transposed_repetitions() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    sequence 3 by M2 {
+      note C4, 1/8
+      chord [E4, G4], 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let track = &ir.tracks[0];
+        let pitches = track
+            .events
+            .iter()
+            .map(|event| event.pitch.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pitches,
+            vec!["C4", "E4", "G4", "D4", "F#4", "A4", "E4", "G#4", "B4"]
+        );
+        assert_eq!(track.events[0].start_tick, 0);
+        assert_eq!(track.events[3].start_tick, 480);
+        assert_eq!(track.events[6].start_tick, 960);
+    }
+
+    #[test]
+    fn rejects_non_positive_sequence_count() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice lead {
+    sequence 0 by M2 {
+      note C4, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_THEORY_SEQUENCE"));
     }
 
     #[test]

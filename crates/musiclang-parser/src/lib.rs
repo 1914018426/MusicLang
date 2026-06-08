@@ -70,6 +70,7 @@ pub enum Stmt {
     Note(NoteStmt),
     Pedal(PedalStmt),
     Ostinato(OstinatoStmt),
+    Sequence(SequenceStmt),
     Chord(ChordStmt),
     Roman(RomanStmt),
     Progression(ProgressionStmt),
@@ -197,6 +198,18 @@ pub struct PedalStmt {
 pub struct OstinatoStmt {
     pub count: i32,
     pub count_expr: Expr,
+    pub statements: Vec<Stmt>,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SequenceStmt {
+    pub count: i32,
+    pub count_expr: Expr,
+    pub interval: String,
+    pub interval_expr: Expr,
     pub statements: Vec<Stmt>,
     pub line: usize,
     pub column: usize,
@@ -811,6 +824,9 @@ impl Parser {
         if self.check_ident("ostinato") {
             return self.parse_ostinato().map(Stmt::Ostinato);
         }
+        if self.check_ident("sequence") {
+            return self.parse_sequence().map(Stmt::Sequence);
+        }
         if self.check_ident("chord") {
             return self.parse_chord().map(Stmt::Chord);
         }
@@ -1021,6 +1037,28 @@ impl Parser {
         Some(OstinatoStmt {
             count,
             count_expr,
+            statements,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_sequence(&mut self) -> Option<SequenceStmt> {
+        let start = self.expect_ident_text("sequence")?;
+        let count_expr = self.parse_expr_until_keyword("by")?;
+        self.expect_ident_text("by")?;
+        let interval_expr = self.parse_expr_until(&[TokenKind::LBrace])?;
+        let count = match count_expr.kind {
+            ExprKind::Int(value) => value,
+            _ => 0,
+        };
+        let statements = self.parse_required_block()?;
+        Some(SequenceStmt {
+            count,
+            count_expr,
+            interval: expr_to_source(&interval_expr),
+            interval_expr,
             statements,
             line: start.span.line,
             column: start.span.column,
@@ -1389,6 +1427,29 @@ impl Parser {
         })
     }
 
+    fn parse_expr_until_keyword(&mut self, keyword: &str) -> Option<Expr> {
+        let mut tokens = Vec::new();
+        let mut depth = 0usize;
+        while !self.check(TokenKind::Eof) {
+            if depth == 0 && self.check_ident(keyword) {
+                break;
+            }
+            let token = self.advance().clone();
+            match token.kind {
+                TokenKind::LBracket | TokenKind::LParen => depth += 1,
+                TokenKind::RBracket | TokenKind::RParen => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            tokens.push(token);
+        }
+        parse_expr_tokens(&tokens).or_else(|| {
+            if let Some(token) = tokens.first() {
+                self.push_token_diagnostic("ML_PARSE_EXPR", "expected expression", token);
+            }
+            None
+        })
+    }
+
     fn parse_named_chord_head(&mut self) -> Option<(Expr, String)> {
         let mut tokens = Vec::new();
         let mut depth = 0usize;
@@ -1492,6 +1553,7 @@ impl Parser {
                 | "note"
                 | "pedal"
                 | "ostinato"
+                | "sequence"
                 | "chord"
                 | "roman"
                 | "progression"
@@ -1998,6 +2060,32 @@ score demo {
         assert_eq!(ostinato.count, 3);
         assert_eq!(ostinato.statements.len(), 2);
         assert!(matches!(ostinato.statements[0], Stmt::Note(_)));
+    }
+
+    #[test]
+    fn parses_sequence_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    sequence 3 by M2 {
+      note C4, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Sequence(sequence) = &voice.statements[0] else {
+            panic!("expected sequence");
+        };
+
+        assert_eq!(sequence.count, 3);
+        assert_eq!(sequence.interval, "M2");
+        assert_eq!(sequence.statements.len(), 1);
     }
 
     #[test]

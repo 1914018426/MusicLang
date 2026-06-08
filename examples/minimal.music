@@ -8,6 +8,10 @@ score demo {
       note C3, 1/8
       note G3, 1/8
     }
+    sequence 3 by M2 {
+      note C4, 1/8
+      note E4, 1/8
+    }
     chord [C4, E4, G4], 1/2
     chord D3 minor, 1/2
     progression I vi ii V7 I, 1/4
