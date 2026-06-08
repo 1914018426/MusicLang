@@ -60,6 +60,7 @@ pub enum Stmt {
     Velocity(VelocityStmt),
     Articulation(ArticulationStmt),
     Section(SectionStmt),
+    NonChordTone(NonChordToneStmt),
     For(ForStmt),
     If(IfStmt),
     Let(LetStmt),
@@ -181,6 +182,15 @@ pub struct ArticulationStmt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SectionStmt {
     pub label: String,
+    pub statements: Vec<Stmt>,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NonChordToneStmt {
+    pub kind: String,
     pub statements: Vec<Stmt>,
     pub line: usize,
     pub column: usize,
@@ -630,6 +640,9 @@ impl Parser {
         if self.check_ident("section") {
             return self.parse_section().map(Stmt::Section);
         }
+        if self.check_ident("non_chord_tone") {
+            return self.parse_non_chord_tone().map(Stmt::NonChordTone);
+        }
         if self.check_ident("for") {
             return self.parse_for().map(Stmt::For);
         }
@@ -820,6 +833,19 @@ impl Parser {
         })
     }
 
+    fn parse_non_chord_tone(&mut self) -> Option<NonChordToneStmt> {
+        let start = self.expect_ident_text("non_chord_tone")?;
+        let kind = self.expect_name()?;
+        let statements = self.parse_required_block()?;
+        Some(NonChordToneStmt {
+            kind,
+            statements,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
     fn parse_for(&mut self) -> Option<ForStmt> {
         let start = self.expect_ident_text("for")?;
         let variable = self.expect_name()?;
@@ -992,6 +1018,7 @@ impl Parser {
                 | "velocity"
                 | "articulation"
                 | "section"
+                | "non_chord_tone"
                 | "for"
                 | "if"
                 | "let"
@@ -1503,6 +1530,29 @@ score demo {
         };
         assert_eq!(section.label, "A");
         assert_eq!(section.statements.len(), 1);
+    }
+
+    #[test]
+    fn parses_non_chord_tone_statement() {
+        let source = r#"
+score demo {
+  voice lead {
+    non_chord_tone passing_tone {
+      note D4, 1/8
+    }
+  }
+}
+"#;
+        let program = parse_source(source).unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::NonChordTone(non_chord_tone) = &voice.statements[0] else {
+            panic!("expected non-chord tone");
+        };
+
+        assert_eq!(non_chord_tone.kind, "passing_tone");
+        assert_eq!(non_chord_tone.statements.len(), 1);
     }
 
     #[test]

@@ -155,6 +155,7 @@ mod stylecheck {
                 | "rhythm_concept"
                 | "dynamic_vocab"
                 | "articulation_vocab"
+                | "non_chord_tone"
                 | "max_melodic_leap"
                 | "contrapuntal_motion"
                 | "cadence"
@@ -295,6 +296,14 @@ impl Compiler {
                     tick: track.cursor_tick(),
                 });
                 self.compile_statements(&section.statements, track);
+            }
+            Stmt::NonChordTone(non_chord_tone) => {
+                self.check_non_chord_tone(
+                    &non_chord_tone.kind,
+                    non_chord_tone.line,
+                    non_chord_tone.column,
+                );
+                self.compile_statements(&non_chord_tone.statements, track);
             }
             Stmt::For(for_stmt) => {
                 for value in for_stmt.start..for_stmt.end {
@@ -487,6 +496,29 @@ impl Compiler {
                 ),
                 articulation.line,
                 articulation.column,
+            );
+        }
+    }
+
+    fn check_non_chord_tone(&mut self, kind: &str, line: usize, column: usize) {
+        if self.style.non_chord_tones.is_empty()
+            || self.has_override("non_chord_tone")
+            || self.has_score_override("non_chord_tone")
+        {
+            return;
+        }
+        if !self
+            .style
+            .non_chord_tones
+            .iter()
+            .any(|allowed| allowed == kind)
+        {
+            self.push_style_diagnostic(
+                "non_chord_tone",
+                "ML_STYLE_NON_CHORD_TONE",
+                format!("non-chord tone `{kind}` is outside active style vocabulary"),
+                line,
+                column,
             );
         }
     }
@@ -1464,6 +1496,14 @@ fn style_from_program_inner(
                     .map(ToString::to_string)
                     .collect();
                 validate_vocab_entries(style, entry, TheoryDomain::Ornaments, &mut diagnostics);
+            }
+            "non_chord_tone" => {
+                context.non_chord_tones = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_vocab_entries(style, entry, TheoryDomain::NonChordTones, &mut diagnostics);
             }
             "max_melodic_leap" => {
                 context.max_melodic_leap = entry.value.trim().parse::<Interval>().ok();
@@ -2838,6 +2878,51 @@ score demo style ShortArticulations {
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_ARTICULATION_VOCAB");
         assert_eq!(diagnostics[0].rule.as_deref(), Some("articulation_vocab"));
+    }
+
+    #[test]
+    fn non_chord_tone_rule_accepts_listed_tone() {
+        let ir = compile_source(
+            r#"
+style Ornamented {
+  non_chord_tone: passing_tone neighbor_tone
+}
+score demo style Ornamented {
+  voice lead {
+    note C4, 1/8
+    non_chord_tone passing_tone {
+      note D4, 1/8
+    }
+    note E4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 3);
+    }
+
+    #[test]
+    fn non_chord_tone_rule_rejects_unlisted_tone() {
+        let diagnostics = compile_source(
+            r#"
+style Ornamented {
+  non_chord_tone: passing_tone
+}
+score demo style Ornamented {
+  voice lead {
+    non_chord_tone neighbor_tone {
+      note D4, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_NON_CHORD_TONE");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("non_chord_tone"));
     }
 
     #[test]

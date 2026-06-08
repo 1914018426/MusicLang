@@ -24,6 +24,7 @@ style Chamber extends Classical {
   rhythm_concept: ostinato
   dynamic_vocab: p mp mf f
   articulation_vocab: staccato tenuto accent
+  non_chord_tone: passing_tone neighbor_tone
   max_melodic_leap: P5
   contrapuntal_motion: contrary oblique similar
   cadence: authentic
@@ -48,6 +49,7 @@ style Chamber extends Classical {
 - `rhythm_concept`: score rhythm pattern must satisfy configured concepts from the `rhythms` theory catalog (e.g., `ostinato` requires a repeating duration cell).
 - `dynamic_vocab`: `dynamic` statements must use configured entries from the `dynamics` theory catalog.
 - `articulation_vocab`: `articulation` statements must use configured entries from the `ornaments` theory catalog.
+- `non_chord_tone`: `non_chord_tone` annotation blocks must use configured entries from the `non_chord_tones` theory catalog.
 - `max_melodic_leap`: consecutive notes in a voice must not exceed the configured interval.
 - `contrapuntal_motion`: simultaneous voice pairs must move only through allowed motion types (`parallel`, `similar`, `contrary`, `oblique`).
 - `instrument_range`: notes in a voice with `program` must fit the configured MIDI program range.
@@ -143,6 +145,7 @@ Overrides suppress style rules only. They do not bypass parser, type, name-resol
 - `ML_STYLE_RHYTHM_CONCEPT`
 - `ML_STYLE_DYNAMIC_VOCAB`
 - `ML_STYLE_ARTICULATION_VOCAB`
+- `ML_STYLE_NON_CHORD_TONE`
 - `ML_STYLE_MAX_MELODIC_LEAP`
 - `ML_STYLE_CONTRAPUNTAL_MOTION`
 - `ML_STYLE_INSTRUMENT_RANGE`
