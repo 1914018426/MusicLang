@@ -373,6 +373,37 @@ score demo {
 }
 
 #[test]
+fn music_ir_scales_tuplet_block() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/tuplet.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  voice lead {
+    tuplet 3 in 1/4 {
+      note C4, 1/8
+      rest 1/8
+      chord [E4, G4], 1/8
+    }
+    note C5, 1/4
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["ir", &input_path]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("duration_ticks: 160"));
+    assert!(stdout.contains("start_tick: 320"));
+    assert!(stdout.contains("start_tick: 480"));
+    assert!(stdout.contains("duration_ticks: 480"));
+}
+
+#[test]
 fn music_ir_expands_glissando_as_stepped_notes() {
     let workspace = env!("CARGO_MANIFEST_DIR");
     let input_path = format!("{workspace}/target/glissando.music");

@@ -10,7 +10,8 @@ use musiclang_parser::{
     parse_source, ArpeggioStmt, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt,
     DynamicStmt, Expr, ExprKind, FunctionDecl, GlissandoStmt, ModulateStmt, NoteStmt, OstinatoStmt,
     OverrideStmt, PedalStmt, Program, ProgressionStmt, RestStmt, RomanStmt, ScaleStmt,
-    SequenceStmt, Stmt, StrumStmt, StyleDecl, TransposeStmt, TremoloStmt, VoiceDecl, WithStyleStmt,
+    SequenceStmt, Stmt, StrumStmt, StyleDecl, TransposeStmt, TremoloStmt, TupletStmt, VoiceDecl,
+    WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,6 +189,7 @@ impl Compiler {
             Stmt::Pedal(pedal) => self.compile_pedal(pedal, track),
             Stmt::Ostinato(ostinato) => self.compile_ostinato(ostinato, track),
             Stmt::Sequence(sequence) => self.compile_sequence(sequence, track),
+            Stmt::Tuplet(tuplet) => self.compile_tuplet(tuplet, track),
             Stmt::Transpose(transpose) => self.compile_transpose(transpose, track),
             Stmt::Chord(chord) => self.compile_chord(chord, track),
             Stmt::Arpeggio(arpeggio) => self.compile_arpeggio(arpeggio, track),
@@ -802,6 +804,19 @@ impl Compiler {
         self.pitch_transpose_semitones = base_transpose;
     }
 
+    fn compile_tuplet(&mut self, tuplet: &TupletStmt, track: &mut TrackBuilder) {
+        let Some(count) = self.eval_tuplet_count(tuplet) else {
+            return;
+        };
+        let Some(space) = self.eval_duration(&tuplet.space_expr, tuplet.line, tuplet.column) else {
+            return;
+        };
+        self.check_rhythm_vocab(space, tuplet.line, tuplet.column, Some(tuplet.span));
+        track.push_time_scale(count as u32, space.ticks(DEFAULT_TICKS_PER_QUARTER));
+        self.compile_statements(&tuplet.statements, track);
+        track.pop_time_scale();
+    }
+
     fn eval_sequence_count(&mut self, sequence: &SequenceStmt) -> Option<usize> {
         match self.eval_expr(&sequence.count_expr, sequence.line, sequence.column) {
             Some(Value::Int(value)) if value > 0 => Some(value as usize),
@@ -826,6 +841,37 @@ impl Compiler {
                         sequence.column,
                     )
                     .with_span(sequence.span),
+                );
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn eval_tuplet_count(&mut self, tuplet: &TupletStmt) -> Option<usize> {
+        match self.eval_expr(&tuplet.count_expr, tuplet.line, tuplet.column) {
+            Some(Value::Int(value)) if value > 0 => Some(value as usize),
+            Some(Value::Int(_)) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_THEORY_TUPLET",
+                        "tuplet count must be positive",
+                        tuplet.line,
+                        tuplet.column,
+                    )
+                    .with_span(tuplet.span),
+                );
+                None
+            }
+            Some(_) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected integer tuplet count",
+                        tuplet.line,
+                        tuplet.column,
+                    )
+                    .with_span(tuplet.span),
                 );
                 None
             }
@@ -3566,6 +3612,7 @@ struct TrackBuilder {
     articulation: Option<String>,
     events: Vec<NoteEventIr>,
     overridden_event_rules: HashMap<String, HashSet<u32>>,
+    time_scales: Vec<(u32, u32)>,
 }
 
 impl TrackBuilder {
@@ -3578,15 +3625,32 @@ impl TrackBuilder {
             articulation: None,
             events: Vec::new(),
             overridden_event_rules: HashMap::new(),
+            time_scales: Vec::new(),
         }
     }
 
+    fn scaled_ticks(&self, duration: Duration) -> u32 {
+        let mut ticks = u64::from(duration.ticks(DEFAULT_TICKS_PER_QUARTER));
+        for (count, space_ticks) in &self.time_scales {
+            ticks = ticks * u64::from(*space_ticks) / (u64::from(*count) * 240);
+        }
+        ticks.max(1).min(u64::from(u32::MAX)) as u32
+    }
+
+    fn push_time_scale(&mut self, count: u32, space_ticks: u32) {
+        self.time_scales.push((count, space_ticks));
+    }
+
+    fn pop_time_scale(&mut self) {
+        self.time_scales.pop();
+    }
+
     fn advance(&mut self, duration: Duration) {
-        self.cursor_tick += duration.ticks(DEFAULT_TICKS_PER_QUARTER);
+        self.cursor_tick += self.scaled_ticks(duration);
     }
 
     fn push_note(&mut self, note: Note, source_span: Option<Span>) {
-        let duration_ticks = note.duration().ticks(DEFAULT_TICKS_PER_QUARTER);
+        let duration_ticks = self.scaled_ticks(note.duration());
         self.events.push(NoteEventIr {
             pitch: note.pitch(),
             start_tick: self.cursor_tick,
@@ -3635,7 +3699,7 @@ impl TrackBuilder {
     }
 
     fn push_chord(&mut self, chord: Chord, source_span: Option<Span>) {
-        let duration_ticks = chord.duration().ticks(DEFAULT_TICKS_PER_QUARTER);
+        let duration_ticks = self.scaled_ticks(chord.duration());
         for pitch in chord.pitches() {
             self.events.push(NoteEventIr {
                 pitch: *pitch,
@@ -3656,8 +3720,8 @@ impl TrackBuilder {
         offset: Duration,
         source_span: Option<Span>,
     ) {
-        let duration_ticks = duration.ticks(DEFAULT_TICKS_PER_QUARTER);
-        let offset_ticks = offset.ticks(DEFAULT_TICKS_PER_QUARTER);
+        let duration_ticks = self.scaled_ticks(duration);
+        let offset_ticks = self.scaled_ticks(offset);
         for (index, pitch) in pitches.iter().enumerate() {
             self.events.push(NoteEventIr {
                 pitch: *pitch,
@@ -4038,6 +4102,52 @@ score demo {
         assert!(diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "ML_THEORY_SEQUENCE"));
+    }
+
+    #[test]
+    fn tuplet_scales_enclosed_durations_into_target_space() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    tuplet 3 in 1/4 {
+      note C4, 1/8
+      rest 1/8
+      chord [E4, G4], 1/8
+    }
+    note C5, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].duration_ticks, 160);
+        assert_eq!(events[0].start_tick, 0);
+        assert_eq!(events[1].start_tick, 320);
+        assert_eq!(events[2].start_tick, 320);
+        assert_eq!(events[3].start_tick, 480);
+        assert_eq!(events[3].duration_ticks, 480);
+    }
+
+    #[test]
+    fn tuplet_rejects_non_positive_count() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice lead {
+    tuplet 0 in 1/4 {
+      note C4, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_THEORY_TUPLET");
     }
 
     #[test]

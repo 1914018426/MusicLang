@@ -76,6 +76,7 @@ pub enum Stmt {
     Pedal(PedalStmt),
     Ostinato(OstinatoStmt),
     Sequence(SequenceStmt),
+    Tuplet(TupletStmt),
     Transpose(TransposeStmt),
     Chord(ChordStmt),
     Arpeggio(ArpeggioStmt),
@@ -280,6 +281,18 @@ pub struct SequenceStmt {
     pub count_expr: Expr,
     pub interval: String,
     pub interval_expr: Expr,
+    pub statements: Vec<Stmt>,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TupletStmt {
+    pub count: i32,
+    pub count_expr: Expr,
+    pub space: String,
+    pub space_expr: Expr,
     pub statements: Vec<Stmt>,
     pub line: usize,
     pub column: usize,
@@ -953,6 +966,9 @@ impl Parser {
         if self.check_ident("sequence") {
             return self.parse_sequence().map(Stmt::Sequence);
         }
+        if self.check_ident("tuplet") {
+            return self.parse_tuplet().map(Stmt::Tuplet);
+        }
         if self.check_ident("transpose") {
             return self.parse_transpose().map(Stmt::Transpose);
         }
@@ -1298,6 +1314,28 @@ impl Parser {
             count_expr,
             interval: expr_to_source(&interval_expr),
             interval_expr,
+            statements,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_tuplet(&mut self) -> Option<TupletStmt> {
+        let start = self.expect_ident_text("tuplet")?;
+        let count_expr = self.parse_expr_until_keyword("in")?;
+        self.expect_ident_text("in")?;
+        let space_expr = self.parse_expr_until(&[TokenKind::LBrace])?;
+        let count = match count_expr.kind {
+            ExprKind::Int(value) => value,
+            _ => 0,
+        };
+        let statements = self.parse_required_block()?;
+        Some(TupletStmt {
+            count,
+            count_expr,
+            space: expr_to_source(&space_expr),
+            space_expr,
             statements,
             line: start.span.line,
             column: start.span.column,
@@ -1927,6 +1965,7 @@ impl Parser {
                 | "pedal"
                 | "ostinato"
                 | "sequence"
+                | "tuplet"
                 | "transpose"
                 | "chord"
                 | "arpeggio"
@@ -2546,6 +2585,34 @@ score demo {
         assert_eq!(scale.mode, "major");
         assert_eq!(scale.octave, 4);
         assert_eq!(scale.duration, "1/8");
+    }
+
+    #[test]
+    fn parses_tuplet_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    tuplet 3 in 1/4 {
+      note C4, 1/8
+      note D4, 1/8
+      note E4, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Tuplet(tuplet) = &voice.statements[0] else {
+            panic!("expected tuplet");
+        };
+
+        assert_eq!(tuplet.count, 3);
+        assert_eq!(tuplet.space, "1/4");
+        assert_eq!(tuplet.statements.len(), 3);
     }
 
     #[test]
