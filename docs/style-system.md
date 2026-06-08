@@ -68,7 +68,7 @@ style Chamber extends Classical {
 - `parallel_fifths`: simultaneous voice pairs must not move through consecutive perfect fifths.
 - `voice_crossing`: an upper voice must not cross below a lower voice at the same tick.
 - `cadence`: final sonorities must satisfy configured cadence patterns (`authentic`, `plagal`, `deceptive`, `half`).
-- `harmonic_progression`: sonorities must contain the configured functional progression (`tonic`, `predominant`, `dominant`, `submediant`).
+- `harmonic_progression`: sonorities must contain the configured functional progression (`tonic`, `predominant`, `dominant`, `secondary_dominant`, `submediant`).
 - `texture`: compiled tracks must satisfy configured texture (`monophony`, `polyphony`, `homophony`, `heterophony`).
 - `form`: explicit `section` labels must match the configured entry from the `forms` theory catalog, such as `binary`, `ternary`, `sonata`, or `rondo`.
 

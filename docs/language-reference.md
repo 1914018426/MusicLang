@@ -82,7 +82,7 @@ style Sparse {
   tuning_system: equal_temperament_12 just_intonation
   world_tradition: maqam hindustani_raga
   historical_era: baroque classical jazz
-  harmonic_function: tonic predominant dominant
+  harmonic_function: tonic predominant dominant secondary_dominant
   max_melodic_leap: P5
   contrapuntal_motion: contrary oblique similar
   cadence: authentic

@@ -2034,6 +2034,8 @@ fn harmonic_function(classes: &[PitchClass]) -> Option<&'static str> {
         || contains_classes(classes, &[PitchClass::B, PitchClass::D, PitchClass::F])
     {
         Some("dominant")
+    } else if contains_classes(classes, &[PitchClass::D, PitchClass::Fs, PitchClass::A]) {
+        Some("secondary_dominant")
     } else if contains_classes(classes, &[PitchClass::A, PitchClass::C, PitchClass::E]) {
         Some("submediant")
     } else {
@@ -3946,6 +3948,28 @@ score demo style Functional {
   voice chordal {
     chord [C4, E4, G4], 1/4
     chord [F4, A4, C5], 1/4
+    chord [G4, B4, D5], 1/4
+    chord [C4, E4, G4], 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 12);
+    }
+
+    #[test]
+    fn harmonic_progression_rule_accepts_secondary_dominant() {
+        let ir = compile_source(
+            r#"
+style Functional {
+  harmonic_progression: tonic secondary_dominant dominant tonic
+}
+score demo style Functional {
+  voice chordal {
+    chord [C4, E4, G4], 1/4
+    chord [D4, F#4, A4], 1/4
     chord [G4, B4, D5], 1/4
     chord [C4, E4, G4], 1/4
   }
