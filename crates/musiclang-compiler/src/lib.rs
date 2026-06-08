@@ -113,6 +113,7 @@ impl Compiler {
         self.check_function_calls();
         self.check_style_references();
         self.check_override_rules();
+        self.check_expression_names();
         self.score_key = key;
         self.check_score_style(tempo_bpm, meter);
         let statements = self.program.score.statements.clone();
@@ -493,6 +494,347 @@ impl Compiler {
             .with_rule(override_stmt.rule.clone())
             .with_style(self.style.name.clone()),
         );
+    }
+
+    fn check_expression_names(&mut self) {
+        let score_statements = self.program.score.statements.clone();
+        self.check_expression_names_in_statements(&score_statements, &mut vec![HashSet::new()]);
+        let functions = self.program.functions.clone();
+        for function in functions {
+            self.check_expression_names_in_statements(
+                &function.statements,
+                &mut vec![HashSet::new()],
+            );
+        }
+    }
+
+    fn check_expression_names_in_statements(
+        &mut self,
+        statements: &[Stmt],
+        scopes: &mut Vec<HashSet<String>>,
+    ) {
+        for statement in statements {
+            match statement {
+                Stmt::Voice(voice) => {
+                    self.check_expression_names_in_statements(&voice.statements, scopes)
+                }
+                Stmt::Note(note) => {
+                    self.check_expression_name(&note.pitch_expr, note.line, note.column, scopes);
+                    self.check_expression_name(&note.duration_expr, note.line, note.column, scopes);
+                }
+                Stmt::Drum(drum) => {
+                    self.check_expression_name(&drum.duration_expr, drum.line, drum.column, scopes);
+                }
+                Stmt::Rest(rest) => {
+                    self.check_expression_name(&rest.duration_expr, rest.line, rest.column, scopes);
+                }
+                Stmt::Glissando(glissando) => {
+                    self.check_expression_name(
+                        &glissando.start_expr,
+                        glissando.line,
+                        glissando.column,
+                        scopes,
+                    );
+                    self.check_expression_name(
+                        &glissando.end_expr,
+                        glissando.line,
+                        glissando.column,
+                        scopes,
+                    );
+                    self.check_expression_name(
+                        &glissando.steps_expr,
+                        glissando.line,
+                        glissando.column,
+                        scopes,
+                    );
+                    self.check_expression_name(
+                        &glissando.duration_expr,
+                        glissando.line,
+                        glissando.column,
+                        scopes,
+                    );
+                }
+                Stmt::Tremolo(tremolo) => {
+                    self.check_expression_name(
+                        &tremolo.first_expr,
+                        tremolo.line,
+                        tremolo.column,
+                        scopes,
+                    );
+                    self.check_expression_name(
+                        &tremolo.second_expr,
+                        tremolo.line,
+                        tremolo.column,
+                        scopes,
+                    );
+                    self.check_expression_name(
+                        &tremolo.repeats_expr,
+                        tremolo.line,
+                        tremolo.column,
+                        scopes,
+                    );
+                    self.check_expression_name(
+                        &tremolo.duration_expr,
+                        tremolo.line,
+                        tremolo.column,
+                        scopes,
+                    );
+                }
+                Stmt::Degree(degree) => {
+                    self.check_expression_name(
+                        &degree.duration_expr,
+                        degree.line,
+                        degree.column,
+                        scopes,
+                    );
+                }
+                Stmt::Scale(scale) => {
+                    self.check_expression_name(
+                        &scale.duration_expr,
+                        scale.line,
+                        scale.column,
+                        scopes,
+                    );
+                }
+                Stmt::Pedal(pedal) => {
+                    self.check_expression_name(&pedal.pitch_expr, pedal.line, pedal.column, scopes);
+                    self.check_expression_name(&pedal.count_expr, pedal.line, pedal.column, scopes);
+                    self.check_expression_name(
+                        &pedal.duration_expr,
+                        pedal.line,
+                        pedal.column,
+                        scopes,
+                    );
+                }
+                Stmt::Ostinato(ostinato) => {
+                    self.check_expression_name(
+                        &ostinato.count_expr,
+                        ostinato.line,
+                        ostinato.column,
+                        scopes,
+                    );
+                    self.check_expression_names_in_statements(&ostinato.statements, scopes);
+                }
+                Stmt::Sequence(sequence) => {
+                    self.check_expression_name(
+                        &sequence.count_expr,
+                        sequence.line,
+                        sequence.column,
+                        scopes,
+                    );
+                    self.check_expression_name(
+                        &sequence.interval_expr,
+                        sequence.line,
+                        sequence.column,
+                        scopes,
+                    );
+                    self.check_expression_names_in_statements(&sequence.statements, scopes);
+                }
+                Stmt::Tuplet(tuplet) => {
+                    self.check_expression_name(
+                        &tuplet.count_expr,
+                        tuplet.line,
+                        tuplet.column,
+                        scopes,
+                    );
+                    self.check_expression_name(
+                        &tuplet.space_expr,
+                        tuplet.line,
+                        tuplet.column,
+                        scopes,
+                    );
+                    self.check_expression_names_in_statements(&tuplet.statements, scopes);
+                }
+                Stmt::Transpose(transpose) => {
+                    self.check_expression_name(
+                        &transpose.interval_expr,
+                        transpose.line,
+                        transpose.column,
+                        scopes,
+                    );
+                    self.check_expression_names_in_statements(&transpose.statements, scopes);
+                }
+                Stmt::Chord(chord) => {
+                    for expr in &chord.pitch_exprs {
+                        self.check_expression_name(expr, chord.line, chord.column, scopes);
+                    }
+                    if let Some(expr) = &chord.root_expr {
+                        self.check_expression_name(expr, chord.line, chord.column, scopes);
+                    }
+                    self.check_expression_name(
+                        &chord.duration_expr,
+                        chord.line,
+                        chord.column,
+                        scopes,
+                    );
+                }
+                Stmt::Arpeggio(arpeggio) => {
+                    for expr in &arpeggio.pitch_exprs {
+                        self.check_expression_name(expr, arpeggio.line, arpeggio.column, scopes);
+                    }
+                    if let Some(expr) = &arpeggio.root_expr {
+                        self.check_expression_name(expr, arpeggio.line, arpeggio.column, scopes);
+                    }
+                    self.check_expression_name(
+                        &arpeggio.duration_expr,
+                        arpeggio.line,
+                        arpeggio.column,
+                        scopes,
+                    );
+                }
+                Stmt::Strum(strum) => {
+                    for expr in &strum.pitch_exprs {
+                        self.check_expression_name(expr, strum.line, strum.column, scopes);
+                    }
+                    if let Some(expr) = &strum.root_expr {
+                        self.check_expression_name(expr, strum.line, strum.column, scopes);
+                    }
+                    self.check_expression_name(
+                        &strum.duration_expr,
+                        strum.line,
+                        strum.column,
+                        scopes,
+                    );
+                    self.check_expression_name(
+                        &strum.offset_expr,
+                        strum.line,
+                        strum.column,
+                        scopes,
+                    );
+                }
+                Stmt::Roman(roman) => {
+                    self.check_expression_name(
+                        &roman.duration_expr,
+                        roman.line,
+                        roman.column,
+                        scopes,
+                    );
+                }
+                Stmt::Progression(progression) => {
+                    self.check_expression_name(
+                        &progression.duration_expr,
+                        progression.line,
+                        progression.column,
+                        scopes,
+                    );
+                }
+                Stmt::Cadence(cadence) => {
+                    self.check_expression_name(
+                        &cadence.duration_expr,
+                        cadence.line,
+                        cadence.column,
+                        scopes,
+                    );
+                }
+                Stmt::Section(section) => {
+                    self.check_expression_names_in_statements(&section.statements, scopes);
+                }
+                Stmt::Ornament(ornament) => {
+                    self.check_expression_names_in_statements(&ornament.statements, scopes);
+                }
+                Stmt::NonChordTone(non_chord_tone) => {
+                    self.check_expression_names_in_statements(&non_chord_tone.statements, scopes);
+                }
+                Stmt::TuningSystem(tuning_system) => {
+                    self.check_expression_names_in_statements(&tuning_system.statements, scopes);
+                }
+                Stmt::WorldTradition(world_tradition) => {
+                    self.check_expression_names_in_statements(&world_tradition.statements, scopes);
+                }
+                Stmt::HistoricalEra(historical_era) => {
+                    self.check_expression_names_in_statements(&historical_era.statements, scopes);
+                }
+                Stmt::HarmonicFunction(harmonic_function) => {
+                    self.check_expression_names_in_statements(
+                        &harmonic_function.statements,
+                        scopes,
+                    );
+                }
+                Stmt::For(for_stmt) => {
+                    scopes.push(HashSet::from([for_stmt.variable.clone()]));
+                    self.check_expression_names_in_statements(&for_stmt.statements, scopes);
+                    scopes.pop();
+                }
+                Stmt::If(if_stmt) => {
+                    self.check_expression_name(
+                        &if_stmt.condition,
+                        if_stmt.line,
+                        if_stmt.column,
+                        scopes,
+                    );
+                    self.check_expression_names_in_statements(&if_stmt.statements, scopes);
+                }
+                Stmt::Let(let_stmt) => {
+                    self.check_expression_name(
+                        &let_stmt.value_expr,
+                        let_stmt.line,
+                        let_stmt.column,
+                        scopes,
+                    );
+                    if let Some(scope) = scopes.last_mut() {
+                        scope.insert(let_stmt.name.clone());
+                    }
+                }
+                Stmt::Override(override_stmt) => {
+                    self.check_expression_names_in_statements(&override_stmt.statements, scopes);
+                }
+                Stmt::WithStyle(with_style) => {
+                    self.check_expression_names_in_statements(&with_style.statements, scopes);
+                }
+                Stmt::Tempo(_)
+                | Stmt::Meter(_)
+                | Stmt::Key(_)
+                | Stmt::Modulate(_)
+                | Stmt::Dynamic(_)
+                | Stmt::Velocity(_)
+                | Stmt::Articulation(_)
+                | Stmt::Call(_) => {}
+            }
+        }
+    }
+
+    fn check_expression_name(
+        &mut self,
+        expr: &Expr,
+        line: usize,
+        column: usize,
+        scopes: &[HashSet<String>],
+    ) {
+        match &expr.kind {
+            ExprKind::Ident(name) => {
+                if !scopes.iter().rev().any(|scope| scope.contains(name)) {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_RESOLVE_UNKNOWN_NAME",
+                            format!("unknown name `{name}`"),
+                            line,
+                            column,
+                        )
+                        .with_span(expr.span),
+                    );
+                }
+            }
+            ExprKind::List(values) => {
+                for value in values {
+                    self.check_expression_name(value, line, column, scopes);
+                }
+            }
+            ExprKind::Call { args, .. } => {
+                for arg in args {
+                    self.check_expression_name(arg, line, column, scopes);
+                }
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.check_expression_name(left, line, column, scopes);
+                self.check_expression_name(right, line, column, scopes);
+            }
+            ExprKind::Int(_)
+            | ExprKind::Bool(_)
+            | ExprKind::PitchLiteral(_)
+            | ExprKind::IntervalLiteral(_)
+            | ExprKind::DurationLiteral(_)
+            | ExprKind::StringLiteral(_) => {}
+        }
     }
 
     fn compile_voice(&mut self, voice: &VoiceDecl, track: &mut TrackBuilder) {
@@ -5284,6 +5626,68 @@ score demo {
         let expected_start = source.find("missing").unwrap();
         assert_eq!(span.start, expected_start);
         assert_eq!(span.end, expected_start + "missing".len());
+    }
+
+    #[test]
+    fn unused_function_unknown_expression_name_uses_stable_diagnostic_code() {
+        let source = r#"
+fn hidden {
+  note missing, 1/4
+}
+score demo {
+  voice lead {
+    note C4, 1/4
+  }
+}
+"#;
+        let diagnostics = compile_source(source).unwrap_err();
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_RESOLVE_UNKNOWN_NAME"
+                && diagnostic.message == "unknown name `missing`"
+        }));
+    }
+
+    #[test]
+    fn unexecuted_branch_unknown_expression_name_uses_stable_diagnostic_code() {
+        let source = r#"
+score demo {
+  voice lead {
+    if false == true {
+      note missing, 1/4
+    }
+    note C4, 1/4
+  }
+}
+"#;
+        let diagnostics = compile_source(source).unwrap_err();
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_RESOLVE_UNKNOWN_NAME"
+                && diagnostic.message == "unknown name `missing`"
+        }));
+    }
+
+    #[test]
+    fn static_expression_resolution_accepts_let_and_for_variables() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    let d = duration 1/4
+    note C4, d
+    for i in 0..2 {
+      if i == 1 {
+        note E4, d
+      }
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 2);
     }
 
     #[test]
