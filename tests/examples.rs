@@ -6,6 +6,17 @@ fn compile_example(path: &str) -> musiclang_core::ScoreIr {
     musiclang_compiler::compile_source(&source).unwrap()
 }
 
+fn listening_demo_paths() -> [&'static str; 6] {
+    [
+        "examples/demo_classical_minuet.music",
+        "examples/demo_jazz_blues.music",
+        "examples/demo_jazz_complete.music",
+        "examples/demo_minimal_pulse.music",
+        "examples/demo_cinematic_ambient.music",
+        "examples/drum_groove.music",
+    ]
+}
+
 #[test]
 fn valid_examples_compile_to_midi() {
     for path in [
@@ -47,14 +58,7 @@ fn style_violation_examples_keep_stable_diagnostic_code() {
 
 #[test]
 fn listening_demos_do_not_bypass_rules() {
-    for path in [
-        "examples/demo_classical_minuet.music",
-        "examples/demo_jazz_blues.music",
-        "examples/demo_jazz_complete.music",
-        "examples/demo_minimal_pulse.music",
-        "examples/demo_cinematic_ambient.music",
-        "examples/drum_groove.music",
-    ] {
+    for path in listening_demo_paths() {
         let source = fs::read_to_string(path).unwrap();
 
         assert!(!source.contains("override "), "{path} uses override");
@@ -63,15 +67,22 @@ fn listening_demos_do_not_bypass_rules() {
 }
 
 #[test]
+fn listening_demos_have_no_diagnostics() {
+    for path in listening_demo_paths() {
+        let source = fs::read_to_string(path).unwrap();
+        let compilation = musiclang_compiler::compile_source_with_diagnostics(&source).unwrap();
+
+        assert!(
+            compilation.diagnostics.is_empty(),
+            "{path} has diagnostics: {:?}",
+            compilation.diagnostics
+        );
+    }
+}
+
+#[test]
 fn listening_demos_keep_repetition_under_control() {
-    for path in [
-        "examples/demo_classical_minuet.music",
-        "examples/demo_jazz_blues.music",
-        "examples/demo_jazz_complete.music",
-        "examples/demo_minimal_pulse.music",
-        "examples/demo_cinematic_ambient.music",
-        "examples/drum_groove.music",
-    ] {
+    for path in listening_demo_paths() {
         let ir = compile_example(path);
         let analysis = repeated_bars(&ir);
 
