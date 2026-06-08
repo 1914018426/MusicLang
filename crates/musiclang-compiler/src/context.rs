@@ -34,10 +34,21 @@ pub(super) fn style(program: &Program) -> (StyleContext, Vec<Diagnostic>) {
         .unwrap_or_else(|| (StyleContext::core(), Vec::new()))
 }
 
-pub(super) fn functions(program: &Program) -> HashMap<String, FunctionDecl> {
-    program
-        .functions
-        .iter()
-        .map(|function| (function.name.clone(), function.clone()))
-        .collect()
+pub(super) fn functions(program: &Program) -> (HashMap<String, FunctionDecl>, Vec<Diagnostic>) {
+    let mut functions = HashMap::new();
+    let mut diagnostics = Vec::new();
+    for function in &program.functions {
+        if functions
+            .insert(function.name.clone(), function.clone())
+            .is_some()
+        {
+            diagnostics.push(Diagnostic::error(
+                "ML_RESOLVE_DUPLICATE_NAME",
+                format!("duplicate function `{}`", function.name),
+                function.line,
+                function.column,
+            ));
+        }
+    }
+    (functions, diagnostics)
 }

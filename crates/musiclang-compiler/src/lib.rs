@@ -65,8 +65,9 @@ struct PendingNonChordTone {
 
 impl Compiler {
     fn new(program: Program) -> Self {
-        let (style, diagnostics) = context::style(&program);
-        let functions = context::functions(&program);
+        let (style, mut diagnostics) = context::style(&program);
+        let (functions, function_diagnostics) = context::functions(&program);
+        diagnostics.extend(function_diagnostics);
         Self {
             program,
             style,
@@ -2837,6 +2838,28 @@ score demo {
         .unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_RESOLVE_UNKNOWN_NAME");
+    }
+
+    #[test]
+    fn duplicate_function_uses_stable_diagnostic_code() {
+        let diagnostics = compile_source(
+            r#"
+fn motif {
+  note C4, 1/4
+}
+fn motif {
+  note D4, 1/4
+}
+score demo {
+  voice lead {
+    call motif
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_RESOLVE_DUPLICATE_NAME");
     }
 
     #[test]
