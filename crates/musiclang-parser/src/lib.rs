@@ -150,6 +150,8 @@ pub enum BinaryOp {
 pub struct VoiceDecl {
     pub name: String,
     pub program: Option<u8>,
+    pub volume: Option<u8>,
+    pub pan: Option<u8>,
     pub statements: Vec<Stmt>,
     pub line: usize,
     pub column: usize,
@@ -1067,10 +1069,16 @@ impl Parser {
         let name = self.expect_name()?;
         self.expect(TokenKind::LBrace, "expected `{` to start voice block")?;
         let mut program = None;
+        let mut volume = None;
+        let mut pan = None;
         let mut statements = Vec::new();
         while !self.check(TokenKind::RBrace) && !self.check(TokenKind::Eof) {
             if self.check_ident("program") || self.check_ident("instrument") {
                 program = Some(self.parse_program_number()?);
+            } else if self.check_ident("volume") {
+                volume = Some(self.parse_controller_value("volume")?);
+            } else if self.check_ident("pan") {
+                pan = Some(self.parse_controller_value("pan")?);
             } else if let Some(stmt) = self.parse_stmt() {
                 statements.push(stmt);
             } else {
@@ -1081,6 +1089,8 @@ impl Parser {
         Some(VoiceDecl {
             name,
             program,
+            volume,
+            pan,
             statements,
             line: start.span.line,
             column: start.span.column,
@@ -1147,6 +1157,12 @@ impl Parser {
         self.advance();
         let program = self.expect_number()?;
         Some(program.clamp(0, 127) as u8)
+    }
+
+    fn parse_controller_value(&mut self, key: &str) -> Option<u8> {
+        self.expect_ident_text(key)?;
+        let value = self.expect_number()?;
+        Some(value.clamp(0, 127) as u8)
     }
 
     fn parse_note(&mut self) -> Option<NoteStmt> {

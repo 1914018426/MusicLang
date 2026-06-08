@@ -116,7 +116,8 @@ impl Compiler {
         for statement in statements {
             match statement {
                 Stmt::Voice(voice) => {
-                    let mut track = TrackBuilder::new(&voice.name, voice.program);
+                    let mut track =
+                        TrackBuilder::new(&voice.name, voice.program, voice.volume, voice.pan);
                     self.compile_voice(&voice, &mut track);
                     tracks.push(track.finish());
                 }
@@ -129,7 +130,7 @@ impl Compiler {
                     self.compile_override_tracks(&override_stmt, &mut tracks);
                 }
                 other => {
-                    let mut track = TrackBuilder::new("main", None);
+                    let mut track = TrackBuilder::new("main", None, None, None);
                     self.compile_statement(&other, &mut track);
                     if !track.events.is_empty() {
                         tracks.push(track.finish());
@@ -1968,12 +1969,13 @@ impl Compiler {
         for statement in &override_stmt.statements {
             match statement {
                 Stmt::Voice(voice) => {
-                    let mut track = TrackBuilder::new(&voice.name, voice.program);
+                    let mut track =
+                        TrackBuilder::new(&voice.name, voice.program, voice.volume, voice.pan);
                     self.compile_voice(voice, &mut track);
                     tracks.push(track.finish());
                 }
                 other => {
-                    let mut track = TrackBuilder::new("main", None);
+                    let mut track = TrackBuilder::new("main", None, None, None);
                     self.compile_statement(other, &mut track);
                     if !track.events.is_empty() {
                         tracks.push(track.finish());
@@ -3636,6 +3638,8 @@ fn parse_instrument_range(value: &str) -> Option<InstrumentRange> {
 struct TrackBuilder {
     name: String,
     program: Option<u8>,
+    volume: Option<u8>,
+    pan: Option<u8>,
     cursor_tick: u32,
     velocity: u8,
     articulation: Option<String>,
@@ -3645,10 +3649,12 @@ struct TrackBuilder {
 }
 
 impl TrackBuilder {
-    fn new(name: &str, program: Option<u8>) -> Self {
+    fn new(name: &str, program: Option<u8>, volume: Option<u8>, pan: Option<u8>) -> Self {
         Self {
             name: name.to_string(),
             program,
+            volume,
+            pan,
             cursor_tick: 0,
             velocity: 80,
             articulation: None,
@@ -3769,6 +3775,8 @@ impl TrackBuilder {
             name: self.name,
             channel: 0,
             program: self.program,
+            volume: self.volume,
+            pan: self.pan,
             events: self.events,
         }
     }

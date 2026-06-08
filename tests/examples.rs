@@ -54,3 +54,24 @@ fn override_example_keeps_audit_trace() {
         Some("intentional chromatic color")
     );
 }
+
+#[test]
+fn voice_volume_and_pan_lower_to_track_metadata() {
+    let ir = musiclang_compiler::compile_source(
+        r#"
+        score mix {
+          voice lead {
+            program 65
+            volume 92
+            pan 36
+            note C4, 1/4
+          }
+        }
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(ir.tracks[0].program, Some(65));
+    assert_eq!(ir.tracks[0].volume, Some(92));
+    assert_eq!(ir.tracks[0].pan, Some(36));
+}

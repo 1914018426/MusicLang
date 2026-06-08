@@ -7,6 +7,8 @@ score jazz_complete {
   override voice_crossing allow reason "jazz comping and walking bass intentionally overlap inner registers" {
     voice bass {
       program 32
+      volume 102
+      pan 46
       section Walking_Chorus_1 {
         note C2, 1/4
         note E2, 1/4
@@ -57,6 +59,8 @@ score jazz_complete {
     }
     voice piano {
       program 0
+      volume 88
+      pan 64
       section Head_Comp {
         strum C4 dominant7, 1/2 by 1/32
         strum F3 dominant7, 1/2 by 1/32
@@ -88,6 +92,8 @@ score jazz_complete {
     }
     voice tenor {
       program 65
+      volume 104
+      pan 82
       dynamic mf
       section Head_A {
         note C4, 1/8
@@ -147,6 +153,8 @@ score jazz_complete {
     }
     voice trumpet {
       program 56
+      volume 110
+      pan 96
       dynamic f
       section Riffs {
         rest 1/1

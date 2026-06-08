@@ -85,6 +85,30 @@ pub fn write_midi<W: Write>(score: &ScoreIr, writer: &mut W) -> io::Result<()> {
                 },
             ));
         }
+        if let Some(volume) = track.volume {
+            absolute_events.push((
+                0,
+                TrackEventKind::Midi {
+                    channel,
+                    message: MidiMessage::Controller {
+                        controller: u7::new(7),
+                        value: u7::new(volume.min(127)),
+                    },
+                },
+            ));
+        }
+        if let Some(pan) = track.pan {
+            absolute_events.push((
+                0,
+                TrackEventKind::Midi {
+                    channel,
+                    message: MidiMessage::Controller {
+                        controller: u7::new(10),
+                        value: u7::new(pan.min(127)),
+                    },
+                },
+            ));
+        }
         for event in &track.events {
             let key = u7::new(event.pitch.midi_number().map_err(io::Error::other)?);
             let velocity = articulated_velocity(event.velocity, event.articulation.as_deref());
@@ -213,6 +237,8 @@ mod tests {
                 name: "lead".to_string(),
                 channel: 2,
                 program: Some(40),
+                volume: Some(96),
+                pan: Some(40),
                 events: vec![NoteEventIr {
                     pitch: Pitch::new(PitchClass::C, 4).unwrap(),
                     start_tick: 0,
@@ -306,6 +332,20 @@ mod tests {
                 channel,
                 message: MidiMessage::ProgramChange { program },
             } if channel.as_int() == 2 && program.as_int() == 40
+        )));
+        assert!(smf.tracks[1].iter().any(|event| matches!(
+            event.kind,
+            TrackEventKind::Midi {
+                channel,
+                message: MidiMessage::Controller { controller, value },
+            } if channel.as_int() == 2 && controller.as_int() == 7 && value.as_int() == 96
+        )));
+        assert!(smf.tracks[1].iter().any(|event| matches!(
+            event.kind,
+            TrackEventKind::Midi {
+                channel,
+                message: MidiMessage::Controller { controller, value },
+            } if channel.as_int() == 2 && controller.as_int() == 10 && value.as_int() == 40
         )));
         assert!(smf.tracks[1].iter().any(|event| matches!(
             event.kind,

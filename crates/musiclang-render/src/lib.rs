@@ -209,6 +209,8 @@ mod tests {
                 name: "lead".to_string(),
                 channel: 0,
                 program: None,
+                volume: None,
+                pan: None,
                 events: vec![NoteEventIr {
                     pitch: Pitch::new(PitchClass::C, 4).unwrap(),
                     start_tick: 0,

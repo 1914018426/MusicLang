@@ -1582,6 +1582,8 @@ pub struct TrackIr {
     pub name: String,
     pub channel: u8,
     pub program: Option<u8>,
+    pub volume: Option<u8>,
+    pub pan: Option<u8>,
     pub events: Vec<NoteEventIr>,
 }
 
