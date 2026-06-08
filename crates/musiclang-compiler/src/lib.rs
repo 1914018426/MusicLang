@@ -2454,33 +2454,52 @@ fn expand_chord_quality(root: Pitch, quality: &str) -> Option<Vec<Pitch>> {
         .collect()
 }
 
+struct ParsedRoman {
+    degree: usize,
+    accidental: i16,
+    quality: &'static str,
+    inversion: usize,
+}
+
 fn roman_chord_pitches(symbol: &str, key: KeySignature) -> Option<Vec<Pitch>> {
-    let (degree, quality, seventh) = parse_roman_symbol(symbol)?;
+    let parsed = parse_roman_symbol(symbol)?;
     let tonic = key_tonic_semitone(key);
     let scale = if key.is_minor {
         [0, 2, 3, 5, 7, 8, 10]
     } else {
         [0, 2, 4, 5, 7, 9, 11]
     };
-    let root_class = PitchClass::from_semitone(tonic + scale[degree]);
-    let root_octave = if degree >= 4 { 3 } else { 4 };
+    let root_class = PitchClass::from_semitone(tonic + scale[parsed.degree] + parsed.accidental);
+    let root_octave = if parsed.degree >= 4 { 3 } else { 4 };
     let root = Pitch::new(root_class, root_octave).ok()?;
-    let mut pitches = expand_chord_quality(root, quality)?;
-    if seventh && !quality.ends_with('7') {
-        pitches.push(root.transpose(Interval::new(10)).ok()?);
-    }
+    let mut pitches = expand_chord_quality(root, parsed.quality)?;
+    invert_chord(&mut pitches, parsed.inversion)?;
     Some(pitches)
 }
 
-fn parse_roman_symbol(symbol: &str) -> Option<(usize, &'static str, bool)> {
-    let (body, seventh) = symbol
-        .strip_suffix('7')
-        .map_or((symbol, false), |body| (body, true));
-    let normalized = body
-        .trim_start_matches('b')
-        .trim_start_matches('#')
-        .trim_end_matches('°')
-        .trim_end_matches('+');
+fn parse_roman_symbol(symbol: &str) -> Option<ParsedRoman> {
+    let mut body = symbol.trim();
+    let mut accidental = 0;
+    while let Some(stripped) = body.strip_prefix('b') {
+        accidental -= 1;
+        body = stripped;
+    }
+    while let Some(stripped) = body.strip_prefix('#') {
+        accidental += 1;
+        body = stripped;
+    }
+
+    let figures = ["64", "65", "43", "42", "6", "7"];
+    let mut figure = "";
+    for candidate in figures {
+        if let Some(stripped) = body.strip_suffix(candidate) {
+            figure = candidate;
+            body = stripped;
+            break;
+        }
+    }
+
+    let normalized = body.trim_end_matches('°').trim_end_matches('+');
     let upper = normalized.to_ascii_uppercase();
     let degree = match upper.as_str() {
         "I" => 0,
@@ -2496,14 +2515,40 @@ fn parse_roman_symbol(symbol: &str) -> Option<(usize, &'static str, bool)> {
         "diminished"
     } else if body.ends_with('+') {
         "augmented"
-    } else if normalized.chars().next()?.is_ascii_lowercase() {
-        "minor"
-    } else if seventh && upper == "V" {
+    } else if matches!(figure, "7" | "65" | "43" | "42") && upper == "V" {
         "dominant7"
+    } else if normalized.chars().next()?.is_ascii_lowercase() {
+        if matches!(figure, "7" | "65" | "43" | "42") {
+            "minor7"
+        } else {
+            "minor"
+        }
+    } else if matches!(figure, "7" | "65" | "43" | "42") {
+        "major7"
     } else {
         "major"
     };
-    Some((degree, quality, seventh && quality != "dominant7"))
+    let inversion = match figure {
+        "6" | "65" => 1,
+        "64" | "43" => 2,
+        "42" => 3,
+        _ => 0,
+    };
+    Some(ParsedRoman {
+        degree,
+        accidental,
+        quality,
+        inversion,
+    })
+}
+
+fn invert_chord(pitches: &mut [Pitch], inversion: usize) -> Option<()> {
+    for index in 0..inversion {
+        let pitch = pitches.get_mut(index)?;
+        *pitch = pitch.transpose(Interval::new(12)).ok()?;
+    }
+    pitches.sort_by_key(|pitch| pitch.midi_number().ok());
+    Some(())
 }
 
 fn key_tonic_semitone(key: KeySignature) -> i16 {
@@ -2873,7 +2918,9 @@ score demo {
   key C major
   voice lead {
     roman I, 1/4
-    roman V7, 1/2
+    roman I6, 1/4
+    roman V65, 1/2
+    roman bVII, 1/4
   }
 }
 "#,
@@ -2885,7 +2932,10 @@ score demo {
             .iter()
             .map(|event| event.pitch.to_string())
             .collect::<Vec<_>>();
-        assert_eq!(pitches, vec!["C4", "E4", "G4", "G3", "B3", "D4", "F4"]);
+        assert_eq!(
+            pitches,
+            vec!["C4", "E4", "G4", "E4", "G4", "C5", "B3", "D4", "F4", "G4", "A#3", "D4", "F4"]
+        );
     }
 
     #[test]

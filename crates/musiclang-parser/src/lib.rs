@@ -959,7 +959,7 @@ impl Parser {
 
     fn parse_roman(&mut self) -> Option<RomanStmt> {
         let start = self.expect_ident_text("roman")?;
-        let symbol = self.expect_name()?;
+        let symbol = expr_to_source(&self.parse_expr_until(&[TokenKind::Comma])?);
         self.expect(TokenKind::Comma, "expected `,` after roman numeral")?;
         let duration_expr = self.parse_expr_until_stmt_end()?;
         Some(RomanStmt {
@@ -1761,7 +1761,7 @@ score demo {
 score demo {
   key C major
   voice lead {
-    roman V7, 1/2
+    roman V65, 1/2
   }
 }
 "#,
@@ -1774,7 +1774,7 @@ score demo {
             panic!("expected roman numeral chord");
         };
 
-        assert_eq!(roman.symbol, "V7");
+        assert_eq!(roman.symbol, "V65");
         assert_eq!(roman.duration, "1/2");
     }
 

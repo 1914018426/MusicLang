@@ -213,7 +213,8 @@ fn music_ir_expands_roman_numeral_chord() {
 score demo {
   key C major
   voice lead {
-    roman V7, 1/2
+    roman V65, 1/2
+    roman bVII, 1/4
   }
 }
 "#,
