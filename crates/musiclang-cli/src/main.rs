@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -271,6 +272,14 @@ fn ir_file(input: &str) -> Result<(), String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct TrackAnalysis {
+    name: String,
+    event_count: usize,
+    pitch_min: Option<String>,
+    pitch_max: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ScoreAnalysis {
     title: String,
     composer: Option<String>,
@@ -282,6 +291,9 @@ struct ScoreAnalysis {
     duration_ticks: u32,
     pitch_min: Option<String>,
     pitch_max: Option<String>,
+    pitch_classes: Vec<String>,
+    roman_roots: Vec<String>,
+    tracks: Vec<TrackAnalysis>,
     override_count: usize,
     diagnostic_count: usize,
     warning_count: usize,
@@ -335,6 +347,56 @@ fn analyze_score(
                 .find(|event| event.pitch.midi_number() == Ok(midi))
                 .map(|event| event.pitch.to_string())
         });
+    let pitch_classes = events
+        .iter()
+        .map(|event| event.pitch.class().to_string())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let roman_roots = ir
+        .key
+        .map(|key| {
+            events
+                .iter()
+                .map(|event| roman_degree(event.pitch.class(), key))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let tracks = ir
+        .tracks
+        .iter()
+        .map(|track| {
+            let track_events = track.events.iter().collect::<Vec<_>>();
+            let pitch_min = track_events
+                .iter()
+                .filter_map(|event| event.pitch.midi_number().ok())
+                .min()
+                .and_then(|midi| {
+                    track_events
+                        .iter()
+                        .find(|event| event.pitch.midi_number() == Ok(midi))
+                        .map(|event| event.pitch.to_string())
+                });
+            let pitch_max = track_events
+                .iter()
+                .filter_map(|event| event.pitch.midi_number().ok())
+                .max()
+                .and_then(|midi| {
+                    track_events
+                        .iter()
+                        .find(|event| event.pitch.midi_number() == Ok(midi))
+                        .map(|event| event.pitch.to_string())
+                });
+            TrackAnalysis {
+                name: track.name.clone(),
+                event_count: track.events.len(),
+                pitch_min,
+                pitch_max,
+            }
+        })
+        .collect();
     let warning_count = diagnostics
         .iter()
         .filter(|diagnostic| diagnostic.severity == musiclang_core::Severity::Warning)
@@ -350,6 +412,9 @@ fn analyze_score(
         duration_ticks,
         pitch_min,
         pitch_max,
+        pitch_classes,
+        roman_roots,
+        tracks,
         override_count: ir.overrides.len(),
         diagnostic_count: diagnostics.len(),
         warning_count,
@@ -374,6 +439,25 @@ fn print_analysis(analysis: &ScoreAnalysis) {
     if let (Some(low), Some(high)) = (&analysis.pitch_min, &analysis.pitch_max) {
         println!("pitch_range: {low}..{high}");
     }
+    if !analysis.pitch_classes.is_empty() {
+        println!("pitch_classes: {}", analysis.pitch_classes.join(","));
+    }
+    if !analysis.roman_roots.is_empty() {
+        println!("roman_roots: {}", analysis.roman_roots.join(","));
+    }
+    for track in &analysis.tracks {
+        if let (Some(low), Some(high)) = (&track.pitch_min, &track.pitch_max) {
+            println!(
+                "track {}: events={}, range={}..{}",
+                track.name, track.event_count, low, high
+            );
+        } else {
+            println!(
+                "track {}: events={}, range=none",
+                track.name, track.event_count
+            );
+        }
+    }
     println!("overrides: {}", analysis.override_count);
     println!("diagnostics: {}", analysis.diagnostic_count);
     println!("warnings: {}", analysis.warning_count);
@@ -381,7 +465,7 @@ fn print_analysis(analysis: &ScoreAnalysis) {
 
 fn print_analysis_json(analysis: &ScoreAnalysis) {
     print!(
-        "{{\"title\":\"{}\",\"composer\":{},\"tempo_bpm\":{},\"meter\":{},\"key\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"pitch_min\":{},\"pitch_max\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
+        "{{\"title\":\"{}\",\"composer\":{},\"tempo_bpm\":{},\"meter\":{},\"key\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"pitch_min\":{},\"pitch_max\":{},\"pitch_classes\":{},\"roman_roots\":{},\"tracks\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
         json_escape(&analysis.title),
         json_option(analysis.composer.as_deref()),
         analysis.tempo_bpm,
@@ -392,6 +476,9 @@ fn print_analysis_json(analysis: &ScoreAnalysis) {
         analysis.duration_ticks,
         json_option(analysis.pitch_min.as_deref()),
         json_option(analysis.pitch_max.as_deref()),
+        json_string_array(&analysis.pitch_classes),
+        json_string_array(&analysis.roman_roots),
+        json_track_analysis(&analysis.tracks),
         analysis.override_count,
         analysis.diagnostic_count,
         analysis.warning_count,
@@ -420,6 +507,32 @@ fn json_key_signature(key: Option<musiclang_core::KeySignature>) -> String {
         )
     })
     .unwrap_or_else(|| "null".to_string())
+}
+
+fn json_string_array(values: &[String]) -> String {
+    let values = values
+        .iter()
+        .map(|value| format!("\"{}\"", json_escape(value)))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{values}]")
+}
+
+fn json_track_analysis(tracks: &[TrackAnalysis]) -> String {
+    let tracks = tracks
+        .iter()
+        .map(|track| {
+            format!(
+                "{{\"name\":\"{}\",\"event_count\":{},\"pitch_min\":{},\"pitch_max\":{}}}",
+                json_escape(&track.name),
+                track.event_count,
+                json_option(track.pitch_min.as_deref()),
+                json_option(track.pitch_max.as_deref())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{tracks}]")
 }
 
 fn format_key_signature(key: musiclang_core::KeySignature) -> String {
@@ -467,6 +580,68 @@ fn key_signature_tonic(key: musiclang_core::KeySignature) -> &'static str {
         (6, true) => "D#",
         (7, true) => "A#",
         _ => "unknown",
+    }
+}
+
+fn key_signature_tonic_semitone(key: musiclang_core::KeySignature) -> i16 {
+    match (key.fifths, key.is_minor) {
+        (-7, false) => 11,
+        (-6, false) => 6,
+        (-5, false) => 1,
+        (-4, false) => 8,
+        (-3, false) => 3,
+        (-2, false) => 10,
+        (-1, false) => 5,
+        (0, false) => 0,
+        (1, false) => 7,
+        (2, false) => 2,
+        (3, false) => 9,
+        (4, false) => 4,
+        (5, false) => 11,
+        (6, false) => 6,
+        (7, false) => 1,
+        (-7, true) => 8,
+        (-6, true) => 3,
+        (-5, true) => 10,
+        (-4, true) => 5,
+        (-3, true) => 0,
+        (-2, true) => 7,
+        (-1, true) => 2,
+        (0, true) => 9,
+        (1, true) => 4,
+        (2, true) => 11,
+        (3, true) => 6,
+        (4, true) => 1,
+        (5, true) => 8,
+        (6, true) => 3,
+        (7, true) => 10,
+        _ => 0,
+    }
+}
+
+fn roman_degree(
+    pitch_class: musiclang_core::PitchClass,
+    key: musiclang_core::KeySignature,
+) -> String {
+    let offset = (pitch_class.semitone() - key_signature_tonic_semitone(key)).rem_euclid(12);
+    let label = match offset {
+        0 => "I",
+        1 => "bII",
+        2 => "II",
+        3 => "bIII",
+        4 => "III",
+        5 => "IV",
+        6 => "#IV",
+        7 => "V",
+        8 => "bVI",
+        9 => "VI",
+        10 => "bVII",
+        _ => "VII",
+    };
+    if key.is_minor {
+        label.to_ascii_lowercase()
+    } else {
+        label.to_string()
     }
 }
 

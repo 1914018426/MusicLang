@@ -258,6 +258,9 @@ score demo {
     note C4, 1/4
     note G4, 1/4
   }
+  voice bass {
+    note D3, 1/2
+  }
 }
 "#,
     )
@@ -277,9 +280,13 @@ fn music_analyze_summarizes_score() {
     assert!(stdout.contains("tempo: 96 bpm"));
     assert!(stdout.contains("meter: 3/4"));
     assert!(stdout.contains("key: D minor"));
-    assert!(stdout.contains("tracks: 1"));
-    assert!(stdout.contains("events: 2"));
-    assert!(stdout.contains("pitch_range: C4..G4"));
+    assert!(stdout.contains("tracks: 2"));
+    assert!(stdout.contains("events: 3"));
+    assert!(stdout.contains("pitch_range: D3..G4"));
+    assert!(stdout.contains("pitch_classes: C,D,G"));
+    assert!(stdout.contains("roman_roots: bvii,i,iv"));
+    assert!(stdout.contains("track lead: events=2, range=C4..G4"));
+    assert!(stdout.contains("track bass: events=1, range=D3..D3"));
 }
 
 #[test]
@@ -294,10 +301,15 @@ fn music_analyze_json_is_machine_readable() {
     assert!(stdout.contains("\"tempo_bpm\":96"));
     assert!(stdout.contains("\"meter\":{\"numerator\":3,\"denominator\":4}"));
     assert!(stdout.contains("\"key\":{\"tonic\":\"D\",\"mode\":\"minor\",\"fifths\":-1}"));
-    assert!(stdout.contains("\"track_count\":1"));
-    assert!(stdout.contains("\"event_count\":2"));
-    assert!(stdout.contains("\"pitch_min\":\"C4\""));
+    assert!(stdout.contains("\"track_count\":2"));
+    assert!(stdout.contains("\"event_count\":3"));
+    assert!(stdout.contains("\"pitch_min\":\"D3\""));
     assert!(stdout.contains("\"pitch_max\":\"G4\""));
+    assert!(stdout.contains("\"pitch_classes\":[\"C\",\"D\",\"G\"]"));
+    assert!(stdout.contains("\"roman_roots\":[\"bvii\",\"i\",\"iv\"]"));
+    assert!(stdout.contains(
+        "\"tracks\":[{\"name\":\"lead\",\"event_count\":2,\"pitch_min\":\"C4\",\"pitch_max\":\"G4\"},{\"name\":\"bass\",\"event_count\":1,\"pitch_min\":\"D3\",\"pitch_max\":\"D3\"}]"
+    ));
 }
 
 #[test]
