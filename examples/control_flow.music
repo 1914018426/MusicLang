@@ -1,0 +1,14 @@
+fn motif {
+  note C4, 1/8
+}
+score control_flow_demo {
+  voice lead {
+    let d = duration 1/4
+    for i in 0..3 {
+      if i == 1 {
+        call motif
+      }
+      note E4, d
+    }
+  }
+}

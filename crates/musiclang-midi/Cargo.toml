@@ -1,0 +1,9 @@
+[package]
+name = "musiclang-midi"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+musiclang-core = { path = "../musiclang-core" }
+midly.workspace = true

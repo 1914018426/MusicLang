@@ -1,0 +1,6 @@
+style Classical
+score violation {
+  voice lead {
+    note F#4, 1/4
+  }
+}

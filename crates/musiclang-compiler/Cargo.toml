@@ -1,0 +1,9 @@
+[package]
+name = "musiclang-compiler"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+musiclang-core = { path = "../musiclang-core" }
+musiclang-parser = { path = "../musiclang-parser" }

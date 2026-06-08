@@ -1,0 +1,8 @@
+style Sparse {
+  scale: C E G
+}
+score custom_style_violation {
+  voice lead {
+    note D4, 1/4
+  }
+}

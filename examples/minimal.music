@@ -1,0 +1,7 @@
+score demo {
+  voice lead {
+    note C4, 1/4
+    note E4, 1/4
+    chord [C4, E4, G4], 1/2
+  }
+}

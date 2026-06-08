@@ -1,0 +1,10 @@
+style Sparse {
+  scale: C E G
+}
+score custom_style_demo {
+  voice lead {
+    note C4, 1/4
+    note E4, 1/4
+    note G4, 1/4
+  }
+}

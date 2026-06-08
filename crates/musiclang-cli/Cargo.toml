@@ -1,0 +1,17 @@
+[package]
+name = "musiclang-cli"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "music"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+musiclang-core = { path = "../musiclang-core" }
+musiclang-parser = { path = "../musiclang-parser" }
+musiclang-compiler = { path = "../musiclang-compiler" }
+musiclang-midi = { path = "../musiclang-midi" }
+musiclang-render = { path = "../musiclang-render" }

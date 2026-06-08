@@ -1,0 +1,10 @@
+style Classical
+score override_demo {
+  voice lead {
+    note C4, 1/4
+    override scale allow reason "intentional chromatic color" {
+      note F#4, 1/4
+    }
+    note G4, 1/4
+  }
+}
