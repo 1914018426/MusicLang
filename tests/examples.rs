@@ -45,6 +45,23 @@ fn style_violation_examples_keep_stable_diagnostic_code() {
 }
 
 #[test]
+fn listening_demos_do_not_bypass_rules() {
+    for path in [
+        "examples/demo_classical_minuet.music",
+        "examples/demo_jazz_blues.music",
+        "examples/demo_jazz_complete.music",
+        "examples/demo_minimal_pulse.music",
+        "examples/demo_cinematic_ambient.music",
+        "examples/drum_groove.music",
+    ] {
+        let source = fs::read_to_string(path).unwrap();
+
+        assert!(!source.contains("override "), "{path} uses override");
+        assert!(!source.contains(": off"), "{path} disables a rule");
+    }
+}
+
+#[test]
 fn override_example_keeps_audit_trace() {
     let ir = compile_example("examples/override.music");
 

@@ -1,10 +1,9 @@
-score jazz_complete {
+score jazz_complete style Jazz {
   title "Midnight Rail Blues"
   composer "MusicLang"
   tempo 138
   meter 4/4
   key C major
-  override voice_crossing allow reason "jazz comping and walking bass intentionally overlap inner registers" {
     voice bass {
       program 32
       volume 102
@@ -186,5 +185,4 @@ score jazz_complete {
         note C6, 1/1
       }
     }
-  }
 }

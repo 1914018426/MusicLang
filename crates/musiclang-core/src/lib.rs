@@ -1812,17 +1812,38 @@ impl StyleContext {
         ]));
         style.chord_vocab = vec![
             vec![PitchClass::C, PitchClass::E, PitchClass::G, PitchClass::B],
+            vec![PitchClass::C, PitchClass::E, PitchClass::G, PitchClass::As],
+            vec![PitchClass::C, PitchClass::E, PitchClass::G],
             vec![PitchClass::D, PitchClass::F, PitchClass::A, PitchClass::C],
+            vec![PitchClass::D, PitchClass::Fs, PitchClass::A, PitchClass::C],
+            vec![
+                PitchClass::Ds,
+                PitchClass::G,
+                PitchClass::As,
+                PitchClass::Cs,
+            ],
             vec![PitchClass::E, PitchClass::G, PitchClass::B, PitchClass::D],
             vec![PitchClass::F, PitchClass::A, PitchClass::C, PitchClass::E],
+            vec![PitchClass::F, PitchClass::A, PitchClass::C, PitchClass::Ds],
+            vec![PitchClass::F, PitchClass::Gs, PitchClass::C, PitchClass::Ds],
+            vec![
+                PitchClass::Fs,
+                PitchClass::As,
+                PitchClass::Cs,
+                PitchClass::E,
+            ],
             vec![PitchClass::G, PitchClass::B, PitchClass::D, PitchClass::F],
             vec![PitchClass::A, PitchClass::C, PitchClass::E, PitchClass::G],
+            vec![PitchClass::As, PitchClass::D, PitchClass::F, PitchClass::Gs],
         ];
         style.rhythm_vocab = vec![
+            Duration::new(1, 1).expect("valid duration"),
             Duration::new(1, 2).expect("valid duration"),
             Duration::new(1, 4).expect("valid duration"),
             Duration::new(1, 8).expect("valid duration"),
             Duration::new(1, 16).expect("valid duration"),
+            Duration::new(1, 32).expect("valid duration"),
+            Duration::new(1, 64).expect("valid duration"),
         ];
         style.tempo_range = Some((60, 260));
         style
