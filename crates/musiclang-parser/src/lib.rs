@@ -155,6 +155,11 @@ pub enum ExprKind {
     List(Vec<Expr>),
     Tuple(Vec<Expr>),
     Dict(Vec<(String, Expr)>),
+    Conditional {
+        condition: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Box<Expr>,
+    },
     Access {
         target: Box<Expr>,
         key: String,
@@ -2414,6 +2419,11 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
         return None;
     }
     let span = expr_span(tokens);
+    if tokens.first()?.kind == TokenKind::Ident && tokens.first()?.text == "if" {
+        if let Some(result) = parse_conditional(tokens) {
+            return Some(result);
+        }
+    }
     if let Some(index) = find_last_top_level_operator(tokens, TokenKind::Pipe) {
         return Some(Expr::new(
             ExprKind::Pipe {
@@ -2552,6 +2562,38 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
     ))
 }
 
+fn parse_conditional(tokens: &[Token]) -> Option<Expr> {
+    let span = expr_span(tokens);
+    let then_index = find_top_level_ident(tokens, "then")?;
+    let else_index = find_top_level_ident(tokens, "else")?;
+    if then_index == 0 || else_index <= then_index + 1 || else_index + 1 >= tokens.len() {
+        return None;
+    }
+    Some(Expr::new(
+        ExprKind::Conditional {
+            condition: Box::new(parse_expr_tokens(&tokens[1..then_index])?),
+            then_branch: Box::new(parse_expr_tokens(&tokens[then_index + 1..else_index])?),
+            else_branch: Box::new(parse_expr_tokens(&tokens[else_index + 1..])?),
+        },
+        span,
+    ))
+}
+
+fn find_top_level_ident(tokens: &[Token], text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, token) in tokens.iter().enumerate() {
+        match token.kind {
+            TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+            TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                depth = depth.saturating_sub(1)
+            }
+            TokenKind::Ident if depth == 0 && token.text == text => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn find_top_level_operator(tokens: &[Token], kind: TokenKind) -> Option<usize> {
     let mut depth = 0usize;
     for (index, token) in tokens.iter().enumerate() {
@@ -2681,6 +2723,16 @@ fn expr_to_source(expr: &Expr) -> String {
                 .map(|(key, value)| format!("{key}:{}", expr_to_source(value)))
                 .collect::<Vec<_>>()
                 .join(", ")
+        ),
+        ExprKind::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => format!(
+            "if {} then {} else {}",
+            expr_to_source(condition),
+            expr_to_source(then_branch),
+            expr_to_source(else_branch)
         ),
         ExprKind::Access { target, key } => format!("{}.{}", expr_to_source(target), key),
         ExprKind::MethodCall {
@@ -3562,6 +3614,26 @@ score demo {
         assert!(matches!(
             program.functions[0].body_expr().map(|expr| &expr.kind),
             Some(ExprKind::Pipe { .. })
+        ));
+    }
+
+    #[test]
+    fn parses_conditional_expression() {
+        let program = parse_source(
+            r#"
+fn choose(i, event) = if i == 1 then event |> transpose(M2) else event
+score demo {
+  voice lead {
+    note choose(1, C4), 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            program.functions[0].body_expr().map(|expr| &expr.kind),
+            Some(ExprKind::Conditional { .. })
         ));
     }
 

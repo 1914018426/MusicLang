@@ -297,6 +297,15 @@ impl Compiler {
                     self.check_function_arity_in_expr(value, line, column);
                 }
             }
+            ExprKind::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.check_function_arity_in_expr(condition, line, column);
+                self.check_function_arity_in_expr(then_branch, line, column);
+                self.check_function_arity_in_expr(else_branch, line, column);
+            }
             ExprKind::Access { target, .. } => {
                 self.check_function_arity_in_expr(target, line, column)
             }
@@ -467,6 +476,15 @@ impl Compiler {
                 for (_, value) in entries {
                     self.collect_expression_calls(value, line, column, calls);
                 }
+            }
+            ExprKind::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_expression_calls(condition, line, column, calls);
+                self.collect_expression_calls(then_branch, line, column, calls);
+                self.collect_expression_calls(else_branch, line, column, calls);
             }
             ExprKind::Access { target, .. } => {
                 self.collect_expression_calls(target, line, column, calls)
@@ -1074,6 +1092,15 @@ impl Compiler {
                 for (_, value) in entries {
                     self.check_expression_name(value, line, column, scopes);
                 }
+            }
+            ExprKind::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.check_expression_name(condition, line, column, scopes);
+                self.check_expression_name(then_branch, line, column, scopes);
+                self.check_expression_name(else_branch, line, column, scopes);
             }
             ExprKind::Access { target, .. } => {
                 self.check_expression_name(target, line, column, scopes);
@@ -3190,6 +3217,26 @@ impl Compiler {
                 })
                 .collect::<Option<HashMap<_, _>>>()
                 .map(Value::Dict),
+            ExprKind::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => match self.eval_expr(condition, line, column)? {
+                Value::Bool(true) => self.eval_expr(then_branch, line, column),
+                Value::Bool(false) => self.eval_expr(else_branch, line, column),
+                _ => {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_TYPE_MISMATCH",
+                            "expected conditional expression to use bool condition",
+                            line,
+                            column,
+                        )
+                        .with_span(condition.span),
+                    );
+                    None
+                }
+            },
             ExprKind::Access { target, key } => {
                 let target = self.eval_expr(target, line, column)?;
                 self.eval_access(target, key, line, column, expr.span)
@@ -6854,6 +6901,27 @@ score demo {
         assert_eq!(ir.tracks[0].events.len(), 1);
         assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "E4");
         assert_eq!(ir.tracks[0].events[0].duration_ticks, 240);
+    }
+
+    #[test]
+    fn conditional_expression_shapes_phrase_transform() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [(root, 1/8), (root |> transpose(M3), 1/8), (root |> transpose(P5), 1/8)]
+fn vary(i, event) = if i == 1 then event |> transpose(M2) else event
+score demo {
+  voice lead {
+    play riff(C4) |> mapi(vary)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 3);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "F#4");
+        assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "G4");
     }
 
     #[test]
