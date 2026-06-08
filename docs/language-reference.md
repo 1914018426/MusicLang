@@ -15,10 +15,17 @@ score demo style Classical {
   tempo 96
   meter 4/4
   voice lead {
-    program 40
+    instrument sax
+    channel 2
     volume 96
     pan 64
     call motif
+  }
+  voice drums {
+    instrument drums
+    channel 9
+    drum kick, 1/4
+    drum snare, 1/4
   }
 }
 ```
@@ -31,9 +38,11 @@ score demo style Classical {
 - `meter numerator/denominator`
 - `key tonic major|minor`
 - `voice name { ... }`
-- `program midi_program` or `instrument midi_program`
+- `program midi_program`, `instrument midi_program`, or `instrument name` for built-ins such as `piano`, `bass`, `sax`, `trumpet`, `violin`, `strings`, `synth_pad`, and `drums`
+- `channel 0..15` for explicit MIDI channel selection; General MIDI drums conventionally use channel `9`
 - `volume 0..127` for MIDI channel volume (CC7)
 - `pan 0..127` for MIDI pan position (CC10)
+- `drum name, duration_expr` for General MIDI drum hits such as `kick`, `snare`, `closed_hat`, `open_hat`, `ride`, and `crash`
 - `dynamic mark` for catalog dynamics such as `p`, `mf`, `f`, or `sfz`
 - `velocity 0..127` for explicit MIDI velocity
 - `articulation mark` for catalog ornaments/articulations such as `staccato`, `tenuto`, `accent`, or `legato`

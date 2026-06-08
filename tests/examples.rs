@@ -13,6 +13,7 @@ fn valid_examples_compile_to_midi() {
         "examples/control_flow.music",
         "examples/override.music",
         "examples/custom_style.music",
+        "examples/drum_groove.music",
         "examples/demo_classical_minuet.music",
         "examples/demo_jazz_blues.music",
         "examples/demo_jazz_complete.music",
@@ -56,15 +57,22 @@ fn override_example_keeps_audit_trace() {
 }
 
 #[test]
-fn voice_volume_and_pan_lower_to_track_metadata() {
+fn voice_mix_metadata_and_drums_lower_to_tracks() {
     let ir = musiclang_compiler::compile_source(
         r#"
         score mix {
           voice lead {
-            program 65
+            instrument sax
+            channel 2
             volume 92
             pan 36
             note C4, 1/4
+          }
+          voice kit {
+            instrument drums
+            channel 9
+            drum kick, 1/8
+            drum snare, 1/8
           }
         }
         "#,
@@ -72,6 +80,11 @@ fn voice_volume_and_pan_lower_to_track_metadata() {
     .unwrap();
 
     assert_eq!(ir.tracks[0].program, Some(65));
+    assert_eq!(ir.tracks[0].channel, 2);
     assert_eq!(ir.tracks[0].volume, Some(92));
     assert_eq!(ir.tracks[0].pan, Some(36));
+    assert_eq!(ir.tracks[1].program, Some(0));
+    assert_eq!(ir.tracks[1].channel, 9);
+    assert_eq!(ir.tracks[1].events[0].pitch.midi_number().unwrap(), 36);
+    assert_eq!(ir.tracks[1].events[1].pitch.midi_number().unwrap(), 38);
 }

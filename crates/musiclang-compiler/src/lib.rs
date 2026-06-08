@@ -8,10 +8,10 @@ use musiclang_core::{
 };
 use musiclang_parser::{
     parse_source, ArpeggioStmt, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt,
-    DynamicStmt, Expr, ExprKind, FunctionDecl, GlissandoStmt, ModulateStmt, NoteStmt, OstinatoStmt,
-    OverrideStmt, PedalStmt, Program, ProgressionStmt, RestStmt, RomanStmt, ScaleStmt,
-    SequenceStmt, Stmt, StrumStmt, StyleDecl, TransposeStmt, TremoloStmt, TupletStmt, VoiceDecl,
-    WithStyleStmt,
+    DrumStmt, DynamicStmt, Expr, ExprKind, FunctionDecl, GlissandoStmt, ModulateStmt, NoteStmt,
+    OstinatoStmt, OverrideStmt, PedalStmt, Program, ProgressionStmt, RestStmt, RomanStmt,
+    ScaleStmt, SequenceStmt, Stmt, StrumStmt, StyleDecl, TransposeStmt, TremoloStmt, TupletStmt,
+    VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,8 +116,13 @@ impl Compiler {
         for statement in statements {
             match statement {
                 Stmt::Voice(voice) => {
-                    let mut track =
-                        TrackBuilder::new(&voice.name, voice.program, voice.volume, voice.pan);
+                    let mut track = TrackBuilder::new(
+                        &voice.name,
+                        voice.program,
+                        voice.channel,
+                        voice.volume,
+                        voice.pan,
+                    );
                     self.compile_voice(&voice, &mut track);
                     tracks.push(track.finish());
                 }
@@ -130,7 +135,7 @@ impl Compiler {
                     self.compile_override_tracks(&override_stmt, &mut tracks);
                 }
                 other => {
-                    let mut track = TrackBuilder::new("main", None, None, None);
+                    let mut track = TrackBuilder::new("main", None, None, None, None);
                     self.compile_statement(&other, &mut track);
                     if !track.events.is_empty() {
                         tracks.push(track.finish());
@@ -211,6 +216,7 @@ impl Compiler {
                 }
             }
             Stmt::Note(note) => self.compile_note(note, track),
+            Stmt::Drum(drum) => self.compile_drum(drum, track),
             Stmt::Rest(rest) => self.compile_rest(rest, track),
             Stmt::Glissando(glissando) => self.compile_glissando(glissando, track),
             Stmt::Tremolo(tremolo) => self.compile_tremolo(tremolo, track),
@@ -396,6 +402,26 @@ impl Compiler {
             Some(note.span),
         );
         track.push_note(Note::new(pitch, duration), Some(note.span));
+    }
+
+    fn compile_drum(&mut self, drum: &DrumStmt, track: &mut TrackBuilder) {
+        let Some(duration) = self.eval_duration(&drum.duration_expr, drum.line, drum.column) else {
+            return;
+        };
+        let Some(midi) = drum_midi_number(&drum.name) else {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_THEORY_DRUM",
+                    format!("unknown drum `{}`", drum.name),
+                    drum.line,
+                    drum.column,
+                )
+                .with_span(drum.span),
+            );
+            return;
+        };
+        self.check_rhythm_vocab(duration, drum.line, drum.column, Some(drum.span));
+        track.push_midi_note(midi, duration, Some(drum.span));
     }
 
     fn compile_rest(&mut self, rest: &RestStmt, track: &mut TrackBuilder) {
@@ -1969,13 +1995,18 @@ impl Compiler {
         for statement in &override_stmt.statements {
             match statement {
                 Stmt::Voice(voice) => {
-                    let mut track =
-                        TrackBuilder::new(&voice.name, voice.program, voice.volume, voice.pan);
+                    let mut track = TrackBuilder::new(
+                        &voice.name,
+                        voice.program,
+                        voice.channel,
+                        voice.volume,
+                        voice.pan,
+                    );
                     self.compile_voice(voice, &mut track);
                     tracks.push(track.finish());
                 }
                 other => {
-                    let mut track = TrackBuilder::new("main", None, None, None);
+                    let mut track = TrackBuilder::new("main", None, None, None, None);
                     self.compile_statement(other, &mut track);
                     if !track.events.is_empty() {
                         tracks.push(track.finish());
@@ -3635,9 +3666,28 @@ fn parse_instrument_range(value: &str) -> Option<InstrumentRange> {
     })
 }
 
+fn drum_midi_number(name: &str) -> Option<u8> {
+    match name {
+        "kick" | "bass_drum" => Some(36),
+        "snare" => Some(38),
+        "rimshot" => Some(37),
+        "clap" => Some(39),
+        "closed_hat" | "hihat" => Some(42),
+        "pedal_hat" => Some(44),
+        "open_hat" => Some(46),
+        "low_tom" => Some(45),
+        "mid_tom" => Some(47),
+        "high_tom" => Some(50),
+        "ride" => Some(51),
+        "crash" => Some(49),
+        _ => None,
+    }
+}
+
 struct TrackBuilder {
     name: String,
     program: Option<u8>,
+    channel: Option<u8>,
     volume: Option<u8>,
     pan: Option<u8>,
     cursor_tick: u32,
@@ -3649,10 +3699,17 @@ struct TrackBuilder {
 }
 
 impl TrackBuilder {
-    fn new(name: &str, program: Option<u8>, volume: Option<u8>, pan: Option<u8>) -> Self {
+    fn new(
+        name: &str,
+        program: Option<u8>,
+        channel: Option<u8>,
+        volume: Option<u8>,
+        pan: Option<u8>,
+    ) -> Self {
         Self {
             name: name.to_string(),
             program,
+            channel,
             volume,
             pan,
             cursor_tick: 0,
@@ -3688,6 +3745,19 @@ impl TrackBuilder {
         let duration_ticks = self.scaled_ticks(note.duration());
         self.events.push(NoteEventIr {
             pitch: note.pitch(),
+            start_tick: self.cursor_tick,
+            duration_ticks,
+            velocity: self.velocity,
+            articulation: self.articulation.clone(),
+            source_span,
+        });
+        self.cursor_tick += duration_ticks;
+    }
+
+    fn push_midi_note(&mut self, midi: u8, duration: Duration, source_span: Option<Span>) {
+        let duration_ticks = self.scaled_ticks(duration);
+        self.events.push(NoteEventIr {
+            pitch: Pitch::from_midi_number(i16::from(midi)).expect("valid GM drum note"),
             start_tick: self.cursor_tick,
             duration_ticks,
             velocity: self.velocity,
@@ -3773,7 +3843,7 @@ impl TrackBuilder {
     fn finish(self) -> TrackIr {
         TrackIr {
             name: self.name,
-            channel: 0,
+            channel: self.channel.unwrap_or(0),
             program: self.program,
             volume: self.volume,
             pan: self.pan,

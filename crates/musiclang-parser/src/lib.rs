@@ -71,6 +71,7 @@ pub enum Stmt {
     Meter(MeterDecl),
     Key(KeyDecl),
     Note(NoteStmt),
+    Drum(DrumStmt),
     Rest(RestStmt),
     Glissando(GlissandoStmt),
     Tremolo(TremoloStmt),
@@ -150,6 +151,7 @@ pub enum BinaryOp {
 pub struct VoiceDecl {
     pub name: String,
     pub program: Option<u8>,
+    pub channel: Option<u8>,
     pub volume: Option<u8>,
     pub pan: Option<u8>,
     pub statements: Vec<Stmt>,
@@ -189,6 +191,16 @@ pub struct NoteStmt {
     pub pitch: String,
     pub duration: String,
     pub pitch_expr: Expr,
+    pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrumStmt {
+    pub name: String,
+    pub duration: String,
     pub duration_expr: Expr,
     pub line: usize,
     pub column: usize,
@@ -956,6 +968,9 @@ impl Parser {
         if self.check_ident("note") {
             return self.parse_note().map(Stmt::Note);
         }
+        if self.check_ident("drum") {
+            return self.parse_drum().map(Stmt::Drum);
+        }
         if self.check_ident("rest") {
             return self.parse_rest().map(Stmt::Rest);
         }
@@ -1069,12 +1084,17 @@ impl Parser {
         let name = self.expect_name()?;
         self.expect(TokenKind::LBrace, "expected `{` to start voice block")?;
         let mut program = None;
+        let mut channel = None;
         let mut volume = None;
         let mut pan = None;
         let mut statements = Vec::new();
         while !self.check(TokenKind::RBrace) && !self.check(TokenKind::Eof) {
-            if self.check_ident("program") || self.check_ident("instrument") {
+            if self.check_ident("program") {
                 program = Some(self.parse_program_number()?);
+            } else if self.check_ident("instrument") {
+                program = Some(self.parse_instrument()?);
+            } else if self.check_ident("channel") {
+                channel = Some(self.parse_channel()?);
             } else if self.check_ident("volume") {
                 volume = Some(self.parse_controller_value("volume")?);
             } else if self.check_ident("pan") {
@@ -1089,6 +1109,7 @@ impl Parser {
         Some(VoiceDecl {
             name,
             program,
+            channel,
             volume,
             pan,
             statements,
@@ -1159,6 +1180,33 @@ impl Parser {
         Some(program.clamp(0, 127) as u8)
     }
 
+    fn parse_instrument(&mut self) -> Option<u8> {
+        self.expect_ident_text("instrument")?;
+        if self.peek().kind == TokenKind::Number {
+            let program = self.expect_number()?;
+            return Some(program.clamp(0, 127) as u8);
+        }
+        let token = self.peek().clone();
+        let name = self.expect_name()?;
+        match builtin_instrument_program(&name) {
+            Some(program) => Some(program),
+            None => {
+                self.push_token_diagnostic(
+                    "ML_PARSE_INSTRUMENT",
+                    format!("unknown built-in instrument `{name}`"),
+                    &token,
+                );
+                None
+            }
+        }
+    }
+
+    fn parse_channel(&mut self) -> Option<u8> {
+        self.expect_ident_text("channel")?;
+        let channel = self.expect_number()?;
+        Some(channel.clamp(0, 15) as u8)
+    }
+
     fn parse_controller_value(&mut self, key: &str) -> Option<u8> {
         self.expect_ident_text(key)?;
         let value = self.expect_number()?;
@@ -1174,6 +1222,21 @@ impl Parser {
             pitch: expr_to_source(&pitch_expr),
             duration: expr_to_source(&duration_expr),
             pitch_expr,
+            duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_drum(&mut self) -> Option<DrumStmt> {
+        let start = self.expect_ident_text("drum")?;
+        let name = self.expect_name()?;
+        self.expect(TokenKind::Comma, "expected `,` after drum name")?;
+        let duration_expr = self.parse_expr_until_stmt_end()?;
+        Some(DrumStmt {
+            name,
+            duration: expr_to_source(&duration_expr),
             duration_expr,
             line: start.span.line,
             column: start.span.column,
@@ -1985,6 +2048,7 @@ impl Parser {
             self.peek().text.as_str(),
             "voice"
                 | "note"
+                | "drum"
                 | "rest"
                 | "glissando"
                 | "tremolo"
@@ -2025,6 +2089,9 @@ impl Parser {
                 | "key"
                 | "program"
                 | "instrument"
+                | "channel"
+                | "volume"
+                | "pan"
         )
     }
 
@@ -2161,6 +2228,26 @@ impl Parser {
             self.index += 1;
         }
         &self.tokens[index]
+    }
+}
+
+fn builtin_instrument_program(name: &str) -> Option<u8> {
+    match name {
+        "piano" | "acoustic_grand_piano" => Some(0),
+        "electric_piano" => Some(4),
+        "organ" => Some(16),
+        "guitar" => Some(24),
+        "bass" | "acoustic_bass" => Some(32),
+        "violin" => Some(40),
+        "cello" => Some(42),
+        "strings" => Some(48),
+        "trumpet" => Some(56),
+        "trombone" => Some(57),
+        "sax" | "tenor_sax" => Some(65),
+        "flute" => Some(73),
+        "synth_pad" => Some(88),
+        "drums" | "drum_kit" => Some(0),
+        _ => None,
     }
 }
 
@@ -2439,6 +2526,32 @@ score demo {
         let expected_start = source.find("C4").unwrap();
         assert_eq!(note.pitch_expr.span.start, expected_start);
         assert_eq!(note.pitch_expr.span.end, expected_start + "C4".len());
+    }
+
+    #[test]
+    fn parses_named_instrument_channel_and_drum() {
+        let program = parse_source(
+            r#"
+score groove {
+  voice kit {
+    instrument drums
+    channel 9
+    drum kick, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        assert_eq!(voice.program, Some(0));
+        assert_eq!(voice.channel, Some(9));
+        let Stmt::Drum(drum) = &voice.statements[0] else {
+            panic!("expected drum");
+        };
+        assert_eq!(drum.name, "kick");
+        assert_eq!(drum.duration, "1/8");
     }
 
     #[test]

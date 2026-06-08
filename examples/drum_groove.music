@@ -1,0 +1,20 @@
+score drum_groove {
+  title "Drum Groove"
+  composer "MusicLang"
+  tempo 112
+  meter 4/4
+  voice kit {
+    instrument drums
+    channel 9
+    volume 108
+    pan 64
+    drum kick, 1/8
+    drum closed_hat, 1/8
+    drum snare, 1/8
+    drum closed_hat, 1/8
+    drum kick, 1/8
+    drum open_hat, 1/8
+    drum snare, 1/8
+    drum closed_hat, 1/8
+  }
+}

@@ -118,8 +118,13 @@ fn music_new_and_build_create_project_output() {
         .unwrap()
         .is_file());
     let source = fs::read_to_string(format!("{project}/src/main.music")).unwrap();
+    assert!(source.contains("instrument violin"));
+    assert!(source.contains("channel 0"));
     assert!(source.contains("volume 96"));
     assert!(source.contains("pan 64"));
+    assert!(source.contains("instrument drums"));
+    assert!(source.contains("channel 9"));
+    assert!(source.contains("drum kick"));
 
     let build_output = run_music_in(&["build"], &project);
     assert!(build_output.status.success());
