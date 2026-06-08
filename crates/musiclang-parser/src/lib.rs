@@ -30,6 +30,7 @@ pub struct StyleEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionDecl {
     pub name: String,
+    pub params: Vec<String>,
     pub statements: Vec<Stmt>,
     pub line: usize,
     pub column: usize,
@@ -531,6 +532,7 @@ pub struct LetStmt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallStmt {
     pub name: String,
+    pub args: Vec<Expr>,
     pub line: usize,
     pub column: usize,
     pub span: Span,
@@ -887,9 +889,11 @@ impl Parser {
     fn parse_function(&mut self) -> Option<FunctionDecl> {
         let start = self.expect_ident_text("fn")?;
         let name = self.expect_name()?;
+        let params = self.parse_param_list()?;
         let statements = self.parse_required_block()?;
         Some(FunctionDecl {
             name,
+            params,
             statements,
             line: start.span.line,
             column: start.span.column,
@@ -950,6 +954,53 @@ impl Parser {
         }
         self.expect(TokenKind::RBrace, "expected `}` to close block")?;
         Some(statements)
+    }
+
+    fn parse_param_list(&mut self) -> Option<Vec<String>> {
+        if !self.check(TokenKind::LParen) {
+            return Some(Vec::new());
+        }
+        self.advance();
+        let mut params = Vec::new();
+        while !self.check(TokenKind::RParen) && !self.check(TokenKind::Eof) {
+            params.push(self.expect_name()?);
+            if self.check(TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen, "expected `)` to close parameter list")?;
+        Some(params)
+    }
+
+    fn parse_call_args(&mut self) -> Option<Vec<Expr>> {
+        if !self.check(TokenKind::LParen) {
+            return Some(Vec::new());
+        }
+        self.advance();
+        let mut tokens = Vec::new();
+        let mut depth = 0usize;
+        while !self.check(TokenKind::Eof) {
+            if depth == 0 && self.check(TokenKind::RParen) {
+                break;
+            }
+            let token = self.advance().clone();
+            match token.kind {
+                TokenKind::LBracket | TokenKind::LParen => depth += 1,
+                TokenKind::RBracket | TokenKind::RParen => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            tokens.push(token);
+        }
+        self.expect(TokenKind::RParen, "expected `)` to close argument list")?;
+        if tokens.is_empty() {
+            return Some(Vec::new());
+        }
+        split_expr_list(&tokens)
+            .into_iter()
+            .map(parse_expr_tokens)
+            .collect::<Option<Vec<_>>>()
     }
 
     fn parse_stmt(&mut self) -> Option<Stmt> {
@@ -1843,8 +1894,10 @@ impl Parser {
     fn parse_call(&mut self) -> Option<CallStmt> {
         let start = self.expect_ident_text("call")?;
         let name = self.expect_name()?;
+        let args = self.parse_call_args()?;
         Some(CallStmt {
             name,
+            args,
             line: start.span.line,
             column: start.span.column,
             span: start.span,
@@ -3204,15 +3257,15 @@ score demo {
 style Custom {
   scale: C D E F G A B
 }
-fn motif {
-  note C4, 1/8
+fn motif(root, dur) {
+  note root, dur
 }
 score demo {
   voice lead {
     let root = C4
     for i in 0..2 {
       if i == 1 {
-        call motif
+        call motif(root, 1/8)
       }
     }
   }
@@ -3221,7 +3274,21 @@ score demo {
         let program = parse_source(source).unwrap();
 
         assert_eq!(program.functions.len(), 1);
+        assert_eq!(program.functions[0].params, ["root", "dur"]);
         assert_eq!(program.style.unwrap().entries.len(), 1);
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::For(for_stmt) = &voice.statements[1] else {
+            panic!("expected for");
+        };
+        let Stmt::If(if_stmt) = &for_stmt.statements[0] else {
+            panic!("expected if");
+        };
+        let Stmt::Call(call) = &if_stmt.statements[0] else {
+            panic!("expected call");
+        };
+        assert_eq!(call.args.len(), 2);
     }
 
     #[test]

@@ -111,6 +111,7 @@ impl Compiler {
         let (title, composer, tempo_bpm, meter, key) = lower::score_metadata(&self.program);
         self.check_score_key_metadata();
         self.check_function_calls();
+        self.check_function_arity();
         self.check_style_references();
         self.check_override_rules();
         self.check_expression_names();
@@ -228,6 +229,85 @@ impl Compiler {
                     )
                     .with_span(*span),
                 );
+            }
+        }
+    }
+
+    fn check_function_arity(&mut self) {
+        let statements = self.program.score.statements.clone();
+        self.check_function_arity_in_statements(&statements);
+        let functions = self.program.functions.clone();
+        for function in functions {
+            self.check_function_arity_in_statements(&function.statements);
+        }
+    }
+
+    fn check_function_arity_in_statements(&mut self, statements: &[Stmt]) {
+        for statement in statements {
+            match statement {
+                Stmt::Call(call) => {
+                    if let Some(function) = self.functions.get(&call.name) {
+                        if function.params.len() != call.args.len() {
+                            self.diagnostics.push(
+                                Diagnostic::error(
+                                    "ML_TYPE_MISMATCH",
+                                    format!(
+                                        "function `{}` expects {} arguments, got {}",
+                                        call.name,
+                                        function.params.len(),
+                                        call.args.len()
+                                    ),
+                                    call.line,
+                                    call.column,
+                                )
+                                .with_span(call.span),
+                            );
+                        }
+                    }
+                }
+                Stmt::Voice(voice) => self.check_function_arity_in_statements(&voice.statements),
+                Stmt::Ostinato(ostinato) => {
+                    self.check_function_arity_in_statements(&ostinato.statements)
+                }
+                Stmt::Sequence(sequence) => {
+                    self.check_function_arity_in_statements(&sequence.statements)
+                }
+                Stmt::Tuplet(tuplet) => self.check_function_arity_in_statements(&tuplet.statements),
+                Stmt::Transpose(transpose) => {
+                    self.check_function_arity_in_statements(&transpose.statements)
+                }
+                Stmt::Section(section) => {
+                    self.check_function_arity_in_statements(&section.statements)
+                }
+                Stmt::Ornament(ornament) => {
+                    self.check_function_arity_in_statements(&ornament.statements)
+                }
+                Stmt::NonChordTone(non_chord_tone) => {
+                    self.check_function_arity_in_statements(&non_chord_tone.statements)
+                }
+                Stmt::TuningSystem(tuning_system) => {
+                    self.check_function_arity_in_statements(&tuning_system.statements)
+                }
+                Stmt::WorldTradition(world_tradition) => {
+                    self.check_function_arity_in_statements(&world_tradition.statements)
+                }
+                Stmt::HistoricalEra(historical_era) => {
+                    self.check_function_arity_in_statements(&historical_era.statements)
+                }
+                Stmt::HarmonicFunction(harmonic_function) => {
+                    self.check_function_arity_in_statements(&harmonic_function.statements)
+                }
+                Stmt::For(for_stmt) => {
+                    self.check_function_arity_in_statements(&for_stmt.statements)
+                }
+                Stmt::If(if_stmt) => self.check_function_arity_in_statements(&if_stmt.statements),
+                Stmt::Override(override_stmt) => {
+                    self.check_function_arity_in_statements(&override_stmt.statements)
+                }
+                Stmt::WithStyle(with_style) => {
+                    self.check_function_arity_in_statements(&with_style.statements)
+                }
+                _ => {}
             }
         }
     }
@@ -503,7 +583,7 @@ impl Compiler {
         for function in functions {
             self.check_expression_names_in_statements(
                 &function.statements,
-                &mut vec![HashSet::new()],
+                &mut vec![function.params.iter().cloned().collect()],
             );
         }
     }
@@ -792,14 +872,18 @@ impl Compiler {
                 Stmt::WithStyle(with_style) => {
                     self.check_expression_names_in_statements(&with_style.statements, scopes);
                 }
+                Stmt::Call(call) => {
+                    for arg in &call.args {
+                        self.check_expression_name(arg, call.line, call.column, scopes);
+                    }
+                }
                 Stmt::Tempo(_)
                 | Stmt::Meter(_)
                 | Stmt::Key(_)
                 | Stmt::Modulate(_)
                 | Stmt::Dynamic(_)
                 | Stmt::Velocity(_)
-                | Stmt::Articulation(_)
-                | Stmt::Call(_) => {}
+                | Stmt::Articulation(_) => {}
             }
         }
     }
@@ -1042,8 +1126,22 @@ impl Compiler {
                 }
 
                 if let Some(function) = self.functions.get(&call.name).cloned() {
+                    if function.params.len() != call.args.len() {
+                        return;
+                    }
+                    let Some(args) = call
+                        .args
+                        .iter()
+                        .map(|arg| self.eval_expr(arg, call.line, call.column))
+                        .collect::<Option<Vec<_>>>()
+                    else {
+                        return;
+                    };
                     self.function_call_stack.push(call.name.clone());
                     self.push_scope();
+                    for (param, value) in function.params.iter().zip(args) {
+                        self.set_var(param, value);
+                    }
                     self.compile_statements(&function.statements, track);
                     self.pop_scope();
                     self.function_call_stack.pop();
@@ -5783,6 +5881,76 @@ score demo {
         .unwrap();
 
         assert_eq!(ir.tracks[0].events.len(), 1);
+    }
+
+    #[test]
+    fn parameterized_function_binds_call_arguments() {
+        let ir = compile_source(
+            r#"
+fn motif(root, dur) {
+  note root, dur
+  note root + M3, dur
+}
+score demo {
+  voice lead {
+    call motif(C4, 1/8)
+    call motif(G4, 1/4)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].pitch.to_string(), "C4");
+        assert_eq!(events[1].pitch.to_string(), "E4");
+        assert_eq!(events[2].pitch.to_string(), "G4");
+        assert_eq!(events[3].pitch.to_string(), "B4");
+    }
+
+    #[test]
+    fn wrong_function_argument_count_uses_stable_diagnostic_code() {
+        let diagnostics = compile_source(
+            r#"
+fn motif(root, dur) {
+  note root, dur
+}
+score demo {
+  voice lead {
+    call motif(C4)
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "function `motif` expects 2 arguments, got 1"
+        }));
+    }
+
+    #[test]
+    fn call_argument_unknown_name_uses_stable_diagnostic_code() {
+        let diagnostics = compile_source(
+            r#"
+fn motif(root) {
+  note root, 1/4
+}
+score demo {
+  voice lead {
+    call motif(missing)
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_RESOLVE_UNKNOWN_NAME"
+                && diagnostic.message == "unknown name `missing`"
+        }));
     }
 
     #[test]
