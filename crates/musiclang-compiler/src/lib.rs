@@ -10,8 +10,8 @@ use musiclang_parser::{
     parse_source, ArpeggioStmt, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt,
     DrumStmt, DynamicStmt, Expr, ExprKind, FunctionDecl, GlissandoStmt, ModulateStmt, NoteStmt,
     OstinatoStmt, OverrideStmt, PedalStmt, Program, ProgressionStmt, RestStmt, RomanStmt,
-    ScaleStmt, SequenceStmt, Stmt, StrumStmt, StyleDecl, TransposeStmt, TremoloStmt, TupletStmt,
-    VoiceDecl, WithStyleStmt,
+    ScaleStmt, ScoreMeta, SequenceStmt, Stmt, StrumStmt, StyleDecl, TransposeStmt, TremoloStmt,
+    TupletStmt, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +109,7 @@ impl Compiler {
     fn compile(mut self) -> Result<Compilation, Vec<Diagnostic>> {
         let mut tracks = Vec::new();
         let (title, composer, tempo_bpm, meter, key) = lower::score_metadata(&self.program);
+        self.check_score_key_metadata();
         self.score_key = key;
         self.check_score_style(tempo_bpm, meter);
         let statements = self.program.score.statements.clone();
@@ -179,6 +180,17 @@ impl Compiler {
         })
     }
 
+    fn check_score_key_metadata(&mut self) {
+        let metadata = self.program.score.metadata.clone();
+        for meta in metadata {
+            if let ScoreMeta::Key(key) = meta {
+                self.key_signature_or_diagnostic(
+                    &key.tonic, &key.mode, key.line, key.column, key.span,
+                );
+            }
+        }
+    }
+
     fn compile_voice(&mut self, voice: &VoiceDecl, track: &mut TrackBuilder) {
         let pending_start = self.pending_non_chord_tones.len();
         self.compile_statements(&voice.statements, track);
@@ -207,7 +219,9 @@ impl Compiler {
                 tick: track.cursor_tick(),
             }),
             Stmt::Key(key) => {
-                if let Some(signature) = key_signature(&key.tonic, &key.mode) {
+                if let Some(signature) = self.key_signature_or_diagnostic(
+                    &key.tonic, &key.mode, key.line, key.column, key.span,
+                ) {
                     self.score_key = Some(signature);
                     self.key_changes.push(KeyChangeIr {
                         key: signature,
@@ -1208,22 +1222,38 @@ impl Compiler {
         }
     }
 
-    fn compile_modulate(&mut self, modulate: &ModulateStmt) {
-        if let Some(key) = key_signature(&modulate.tonic, &modulate.mode) {
-            self.score_key = Some(key);
-        } else {
+    fn key_signature_or_diagnostic(
+        &mut self,
+        tonic: &str,
+        mode: &str,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<KeySignature> {
+        let Some(key) = key_signature(tonic, mode) else {
             self.diagnostics.push(
                 Diagnostic::error(
                     "ML_THEORY_KEY",
-                    format!(
-                        "unsupported modulation key `{} {}`",
-                        modulate.tonic, modulate.mode
-                    ),
-                    modulate.line,
-                    modulate.column,
+                    format!("unsupported key `{} {}`", tonic, mode),
+                    line,
+                    column,
                 )
-                .with_span(modulate.span),
+                .with_span(span),
             );
+            return None;
+        };
+        Some(key)
+    }
+
+    fn compile_modulate(&mut self, modulate: &ModulateStmt) {
+        if let Some(key) = self.key_signature_or_diagnostic(
+            &modulate.tonic,
+            &modulate.mode,
+            modulate.line,
+            modulate.column,
+            modulate.span,
+        ) {
+            self.score_key = Some(key);
         }
     }
 
@@ -4482,6 +4512,45 @@ score demo {
             pitches,
             vec!["C4", "E4", "G4", "G4", "B4", "D5", "D3", "F#3", "A3", "C4", "G4", "B4", "D5"]
         );
+    }
+
+    #[test]
+    fn rejects_unknown_score_key() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  key H major
+  voice lead {
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_THEORY_KEY"));
+    }
+
+    #[test]
+    fn rejects_unknown_statement_key() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    key H major
+    roman I, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_THEORY_KEY"));
     }
 
     #[test]
