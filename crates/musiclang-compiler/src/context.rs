@@ -24,7 +24,8 @@ pub(super) fn style(program: &Program) -> (StyleContext, Vec<Diagnostic>) {
                 format!("unknown style `{active_style}`"),
                 program.score.line,
                 program.score.column,
-            )],
+            )
+            .with_span(program.score.span)],
         );
     }
     program
@@ -42,12 +43,15 @@ pub(super) fn functions(program: &Program) -> (HashMap<String, FunctionDecl>, Ve
             .insert(function.name.clone(), function.clone())
             .is_some()
         {
-            diagnostics.push(Diagnostic::error(
-                "ML_RESOLVE_DUPLICATE_NAME",
-                format!("duplicate function `{}`", function.name),
-                function.line,
-                function.column,
-            ));
+            diagnostics.push(
+                Diagnostic::error(
+                    "ML_RESOLVE_DUPLICATE_NAME",
+                    format!("duplicate function `{}`", function.name),
+                    function.line,
+                    function.column,
+                )
+                .with_span(function.span),
+            );
         }
     }
     (functions, diagnostics)

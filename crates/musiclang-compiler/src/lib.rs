@@ -265,12 +265,15 @@ impl Compiler {
             }
             Stmt::Call(call) => {
                 if self.function_call_stack.contains(&call.name) {
-                    self.diagnostics.push(Diagnostic::error(
-                        "ML_RESOLVE_RECURSIVE_CALL",
-                        format!("recursive function call `{}`", call.name),
-                        call.line,
-                        call.column,
-                    ));
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_RESOLVE_RECURSIVE_CALL",
+                            format!("recursive function call `{}`", call.name),
+                            call.line,
+                            call.column,
+                        )
+                        .with_span(call.span),
+                    );
                     return;
                 }
 
@@ -281,12 +284,15 @@ impl Compiler {
                     self.pop_scope();
                     self.function_call_stack.pop();
                 } else {
-                    self.diagnostics.push(Diagnostic::error(
-                        "ML_RESOLVE_UNKNOWN_NAME",
-                        format!("unknown function `{}`", call.name),
-                        call.line,
-                        call.column,
-                    ));
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_RESOLVE_UNKNOWN_NAME",
+                            format!("unknown function `{}`", call.name),
+                            call.line,
+                            call.column,
+                        )
+                        .with_span(call.span),
+                    );
                 }
             }
             Stmt::Override(override_stmt) => self.compile_override(override_stmt, track),
@@ -295,9 +301,12 @@ impl Compiler {
     }
 
     fn compile_with_style(&mut self, with_style: &WithStyleStmt, track: &mut TrackBuilder) {
-        let Some(style) =
-            self.style_context_by_name(&with_style.style, with_style.line, with_style.column)
-        else {
+        let Some(style) = self.style_context_by_name(
+            &with_style.style,
+            with_style.line,
+            with_style.column,
+            Some(with_style.span),
+        ) else {
             return;
         };
         let previous = std::mem::replace(&mut self.style, style);
@@ -312,9 +321,15 @@ impl Compiler {
         let Some(duration) = self.eval_duration(&note.duration_expr, note.line, note.column) else {
             return;
         };
-        self.check_pitch_style(pitch, note.line, note.column);
-        self.check_rhythm_vocab(duration, note.line, note.column);
-        self.check_instrument_range(track.program, pitch, note.line, note.column);
+        self.check_pitch_style(pitch, note.line, note.column, Some(note.span));
+        self.check_rhythm_vocab(duration, note.line, note.column, Some(note.span));
+        self.check_instrument_range(
+            track.program,
+            pitch,
+            note.line,
+            note.column,
+            Some(note.span),
+        );
         track.push_note(Note::new(pitch, duration), Some(note.span));
     }
 
@@ -323,37 +338,55 @@ impl Compiler {
         for pitch_expr in &chord.pitch_exprs {
             match self.eval_expr(pitch_expr, chord.line, chord.column) {
                 Some(Value::Pitch(pitch)) => {
-                    self.check_pitch_style(pitch, chord.line, chord.column);
-                    self.check_instrument_range(track.program, pitch, chord.line, chord.column);
+                    self.check_pitch_style(pitch, chord.line, chord.column, Some(chord.span));
+                    self.check_instrument_range(
+                        track.program,
+                        pitch,
+                        chord.line,
+                        chord.column,
+                        Some(chord.span),
+                    );
                     pitches.push(pitch);
                 }
                 Some(Value::List(values)) => {
                     for value in values {
                         if let Value::Pitch(pitch) = value {
-                            self.check_pitch_style(pitch, chord.line, chord.column);
+                            self.check_pitch_style(
+                                pitch,
+                                chord.line,
+                                chord.column,
+                                Some(chord.span),
+                            );
                             self.check_instrument_range(
                                 track.program,
                                 pitch,
                                 chord.line,
                                 chord.column,
+                                Some(chord.span),
                             );
                             pitches.push(pitch);
                         } else {
-                            self.diagnostics.push(Diagnostic::error(
-                                "ML_TYPE_MISMATCH",
-                                "expected pitch expression",
-                                chord.line,
-                                chord.column,
-                            ));
+                            self.diagnostics.push(
+                                Diagnostic::error(
+                                    "ML_TYPE_MISMATCH",
+                                    "expected pitch expression",
+                                    chord.line,
+                                    chord.column,
+                                )
+                                .with_span(chord.span),
+                            );
                         }
                     }
                 }
-                Some(_) => self.diagnostics.push(Diagnostic::error(
-                    "ML_TYPE_MISMATCH",
-                    "expected pitch expression",
-                    chord.line,
-                    chord.column,
-                )),
+                Some(_) => self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected pitch expression",
+                        chord.line,
+                        chord.column,
+                    )
+                    .with_span(chord.span),
+                ),
                 None => {}
             }
         }
@@ -361,18 +394,16 @@ impl Compiler {
         else {
             return;
         };
-        self.check_chord_vocab(&pitches, chord.line, chord.column);
-        self.check_chord_quality_vocab(&pitches, chord.line, chord.column);
-        self.check_set_class_vocab(&pitches, chord.line, chord.column);
-        self.check_rhythm_vocab(duration, chord.line, chord.column);
+        self.check_chord_vocab(&pitches, chord.line, chord.column, Some(chord.span));
+        self.check_chord_quality_vocab(&pitches, chord.line, chord.column, Some(chord.span));
+        self.check_set_class_vocab(&pitches, chord.line, chord.column, Some(chord.span));
+        self.check_rhythm_vocab(duration, chord.line, chord.column, Some(chord.span));
         match Chord::new(pitches, duration) {
             Ok(compiled_chord) => track.push_chord(compiled_chord, Some(chord.span)),
-            Err(error) => self.diagnostics.push(Diagnostic::error(
-                "ML_CORE_CHORD",
-                error.to_string(),
-                chord.line,
-                chord.column,
-            )),
+            Err(error) => self.diagnostics.push(
+                Diagnostic::error("ML_CORE_CHORD", error.to_string(), chord.line, chord.column)
+                    .with_span(chord.span),
+            ),
         }
     }
 
@@ -384,18 +415,38 @@ impl Compiler {
         line: usize,
         column: usize,
     ) {
+        self.push_style_diagnostic_with_span(rule, code, message, line, column, None);
+    }
+
+    fn push_style_diagnostic_with_span(
+        &mut self,
+        rule: &'static str,
+        code: &'static str,
+        message: String,
+        line: usize,
+        column: usize,
+        span: Option<Span>,
+    ) {
         match self.style.rule_severity(rule) {
             RuleSeverity::Off => {}
-            RuleSeverity::Error => self.diagnostics.push(
-                Diagnostic::error(code, message, line, column)
+            RuleSeverity::Error => {
+                let mut diagnostic = Diagnostic::error(code, message, line, column)
                     .with_rule(rule)
-                    .with_style(self.style.name.clone()),
-            ),
-            RuleSeverity::Warning => self.diagnostics.push(
-                Diagnostic::warning(code, message, line, column)
+                    .with_style(self.style.name.clone());
+                if let Some(span) = span {
+                    diagnostic = diagnostic.with_span(span);
+                }
+                self.diagnostics.push(diagnostic);
+            }
+            RuleSeverity::Warning => {
+                let mut diagnostic = Diagnostic::warning(code, message, line, column)
                     .with_rule(rule)
-                    .with_style(self.style.name.clone()),
-            ),
+                    .with_style(self.style.name.clone());
+                if let Some(span) = span {
+                    diagnostic = diagnostic.with_span(span);
+                }
+                self.diagnostics.push(diagnostic);
+            }
         }
     }
 
@@ -1021,6 +1072,7 @@ impl Compiler {
                     override_stmt.line,
                     override_stmt.column,
                 )
+                .with_span(override_stmt.span)
                 .with_rule(override_stmt.rule.clone())
                 .with_style(self.style.name.clone()),
             );
@@ -1062,6 +1114,7 @@ impl Compiler {
                     override_stmt.line,
                     override_stmt.column,
                 )
+                .with_span(override_stmt.span)
                 .with_rule(override_stmt.rule.clone())
                 .with_style(self.style.name.clone()),
             );
@@ -1316,21 +1369,28 @@ impl Compiler {
         }
     }
 
-    fn check_pitch_style(&mut self, pitch: Pitch, line: usize, column: usize) {
+    fn check_pitch_style(&mut self, pitch: Pitch, line: usize, column: usize, span: Option<Span>) {
         if self.style.allows_pitch(pitch) || self.has_override("scale") {
             return;
         }
 
-        self.push_style_diagnostic(
+        self.push_style_diagnostic_with_span(
             "scale",
             "ML_STYLE_SCALE",
             format!("pitch {pitch} is outside active style scale"),
             line,
             column,
+            span,
         );
     }
 
-    fn check_chord_vocab(&mut self, pitches: &[Pitch], line: usize, column: usize) {
+    fn check_chord_vocab(
+        &mut self,
+        pitches: &[Pitch],
+        line: usize,
+        column: usize,
+        span: Option<Span>,
+    ) {
         if self.style.chord_vocab.is_empty() || self.has_override("chord_vocab") {
             return;
         }
@@ -1342,17 +1402,24 @@ impl Compiler {
             vocab.len() == classes.len() && vocab.iter().all(|class| classes.contains(class))
         });
         if !allowed {
-            self.push_style_diagnostic(
+            self.push_style_diagnostic_with_span(
                 "chord_vocab",
                 "ML_STYLE_CHORD_VOCAB",
                 "chord is outside active style vocabulary".to_string(),
                 line,
                 column,
+                span,
             );
         }
     }
 
-    fn check_chord_quality_vocab(&mut self, pitches: &[Pitch], line: usize, column: usize) {
+    fn check_chord_quality_vocab(
+        &mut self,
+        pitches: &[Pitch],
+        line: usize,
+        column: usize,
+        span: Option<Span>,
+    ) {
         if self.style.chord_quality_vocab.is_empty() || self.has_override("chord_quality_vocab") {
             return;
         }
@@ -1362,17 +1429,24 @@ impl Compiler {
             .iter()
             .any(|quality| chord_matches_quality(pitches, quality));
         if !allowed {
-            self.push_style_diagnostic(
+            self.push_style_diagnostic_with_span(
                 "chord_quality_vocab",
                 "ML_STYLE_CHORD_QUALITY_VOCAB",
                 "chord quality is outside active style vocabulary".to_string(),
                 line,
                 column,
+                span,
             );
         }
     }
 
-    fn check_set_class_vocab(&mut self, pitches: &[Pitch], line: usize, column: usize) {
+    fn check_set_class_vocab(
+        &mut self,
+        pitches: &[Pitch],
+        line: usize,
+        column: usize,
+        span: Option<Span>,
+    ) {
         if self.style.set_class_vocab.is_empty() || self.has_override("set_class_vocab") {
             return;
         }
@@ -1382,22 +1456,29 @@ impl Compiler {
             .iter()
             .any(|set_class| chord_matches_set_class(pitches, set_class));
         if !allowed {
-            self.push_style_diagnostic(
+            self.push_style_diagnostic_with_span(
                 "set_class_vocab",
                 "ML_STYLE_SET_CLASS_VOCAB",
                 "chord set class is outside active style vocabulary".to_string(),
                 line,
                 column,
+                span,
             );
         }
     }
 
-    fn check_rhythm_vocab(&mut self, duration: Duration, line: usize, column: usize) {
+    fn check_rhythm_vocab(
+        &mut self,
+        duration: Duration,
+        line: usize,
+        column: usize,
+        span: Option<Span>,
+    ) {
         if self.style.rhythm_vocab.is_empty() || self.has_override("rhythm_vocab") {
             return;
         }
         if !self.style.rhythm_vocab.contains(&duration) {
-            self.push_style_diagnostic(
+            self.push_style_diagnostic_with_span(
                 "rhythm_vocab",
                 "ML_STYLE_RHYTHM_VOCAB",
                 format!(
@@ -1407,6 +1488,7 @@ impl Compiler {
                 ),
                 line,
                 column,
+                span,
             );
         }
     }
@@ -1417,6 +1499,7 @@ impl Compiler {
         pitch: Pitch,
         line: usize,
         column: usize,
+        span: Option<Span>,
     ) {
         let Some(program) = program else {
             return;
@@ -1437,12 +1520,13 @@ impl Compiler {
         let high = range.high.midi_number();
         if let (Ok(pitch_midi), Ok(low), Ok(high)) = (pitch_midi, low, high) {
             if pitch_midi < low || pitch_midi > high {
-                self.push_style_diagnostic(
+                self.push_style_diagnostic_with_span(
                     "instrument_range",
                     "ML_STYLE_INSTRUMENT_RANGE",
                     format!("pitch {pitch} is outside program {program} range"),
                     line,
                     column,
+                    span,
                 );
             }
         }
@@ -1453,14 +1537,19 @@ impl Compiler {
         name: &str,
         line: usize,
         column: usize,
+        span: Option<Span>,
     ) -> Option<StyleContext> {
         let Some(style) = self.program.styles.iter().find(|style| style.name == name) else {
-            self.diagnostics.push(Diagnostic::error(
+            let mut diagnostic = Diagnostic::error(
                 "ML_STYLE_UNKNOWN_NAME",
                 format!("unknown style `{name}`"),
                 line,
                 column,
-            ));
+            );
+            if let Some(span) = span {
+                diagnostic = diagnostic.with_span(span);
+            }
+            self.diagnostics.push(diagnostic);
             return None;
         };
         let (style, diagnostics) = style_from_program(&self.program, style);
@@ -1525,7 +1614,8 @@ fn style_from_program_inner(
                 format!("style inheritance cycle at `{}`", style.name),
                 style.line,
                 style.column,
-            )],
+            )
+            .with_span(style.span)],
         );
     }
     visiting.push(style.name.clone());
@@ -1544,7 +1634,8 @@ fn style_from_program_inner(
                     format!("unknown parent style `{parent_name}`"),
                     style.line,
                     style.column,
-                )],
+                )
+                .with_span(style.span)],
             )
         }
     } else {
@@ -1803,6 +1894,7 @@ fn style_from_program_inner(
                             style.line,
                             style.column,
                         )
+                        .with_span(style.span)
                         .with_style(style.name.clone()),
                     );
                 }
@@ -1828,6 +1920,7 @@ fn validate_vocab_entries(
                     style.line,
                     style.column,
                 )
+                .with_span(style.span)
                 .with_rule(entry.key.clone())
                 .with_style(style.name.clone()),
             );
@@ -1856,6 +1949,7 @@ fn validate_builtin_theory_references(
                     style.line,
                     style.column,
                 )
+                .with_span(style.span)
                 .with_rule(entry.key.clone())
                 .with_style(style.name.clone()),
             );
@@ -1894,6 +1988,7 @@ fn validate_custom_theory_references(
                     style.line,
                     style.column,
                 )
+                .with_span(style.span)
                 .with_rule(entry.key.clone())
                 .with_style(style.name.clone()),
             );
@@ -2512,6 +2607,28 @@ score demo {
     }
 
     #[test]
+    fn style_diagnostics_include_statement_span() {
+        let source = r#"
+style Classical
+score demo {
+  voice lead {
+    note F#4, 1/4
+  }
+}
+"#;
+        let diagnostics = compile_source(source).unwrap_err();
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "ML_STYLE_SCALE")
+            .unwrap();
+        let span = diagnostic.span.unwrap();
+        let expected_start = source.find("note F#4").unwrap();
+
+        assert_eq!(span.start, expected_start);
+        assert_eq!(span.end, expected_start + "note".len());
+    }
+
+    #[test]
     fn override_allows_style_violation() {
         let ir = compile_source(
             r#"
@@ -2856,8 +2973,7 @@ score demo {
 
     #[test]
     fn duplicate_function_uses_stable_diagnostic_code() {
-        let diagnostics = compile_source(
-            r#"
+        let source = r#"
 fn motif {
   note C4, 1/4
 }
@@ -2869,11 +2985,14 @@ score demo {
     call motif
   }
 }
-"#,
-        )
-        .unwrap_err();
+"#;
+        let diagnostics = compile_source(source).unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_RESOLVE_DUPLICATE_NAME");
+        let span = diagnostics[0].span.unwrap();
+        let expected_start = source.rfind("fn motif").unwrap();
+        assert_eq!(span.start, expected_start);
+        assert_eq!(span.end, expected_start + "fn".len());
     }
 
     #[test]
@@ -2957,8 +3076,7 @@ score demo {
 
     #[test]
     fn unknown_override_rule_fails() {
-        let diagnostics = compile_source(
-            r#"
+        let source = r#"
 score demo {
   voice lead {
     override imaginary allow {
@@ -2966,12 +3084,15 @@ score demo {
     }
   }
 }
-"#,
-        )
-        .unwrap_err();
+"#;
+        let diagnostics = compile_source(source).unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_UNKNOWN_RULE");
         assert_eq!(diagnostics[0].rule.as_deref(), Some("imaginary"));
+        let span = diagnostics[0].span.unwrap();
+        let expected_start = source.find("override imaginary").unwrap();
+        assert_eq!(span.start, expected_start);
+        assert_eq!(span.end, expected_start + "override".len());
     }
 
     #[test]
