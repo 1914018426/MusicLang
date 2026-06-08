@@ -196,6 +196,8 @@ pub enum BinaryOp {
     GtEq,
     And,
     Or,
+    Mul,
+    Div,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -650,6 +652,8 @@ pub enum TokenKind {
     Pipe,
     Plus,
     Minus,
+    Star,
+    Slash,
     Eof,
 }
 
@@ -698,6 +702,8 @@ impl Lexer {
                 ':' => tokens.push(self.simple(TokenKind::Colon)),
                 '+' => tokens.push(self.simple(TokenKind::Plus)),
                 '-' => tokens.push(self.simple(TokenKind::Minus)),
+                '*' => tokens.push(self.simple(TokenKind::Star)),
+                '/' => tokens.push(self.simple(TokenKind::Slash)),
                 '|' if self.peek_next() == Some('>') => tokens.push(self.double(TokenKind::Pipe)),
                 '=' if self.peek_next() == Some('=') => tokens.push(self.double(TokenKind::EqEq)),
                 '!' if self.peek_next() == Some('=') => tokens.push(self.double(TokenKind::NotEq)),
@@ -2510,6 +2516,26 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
             span,
         ));
     }
+    if let Some(index) = find_top_level_operator(tokens, TokenKind::Star) {
+        return Some(Expr::new(
+            ExprKind::Binary {
+                op: BinaryOp::Mul,
+                left: Box::new(parse_expr_tokens(&tokens[..index])?),
+                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
+            },
+            span,
+        ));
+    }
+    if let Some(index) = find_top_level_operator(tokens, TokenKind::Slash) {
+        return Some(Expr::new(
+            ExprKind::Binary {
+                op: BinaryOp::Div,
+                left: Box::new(parse_expr_tokens(&tokens[..index])?),
+                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
+            },
+            span,
+        ));
+    }
     if let Some(index) = find_last_top_level_operator(tokens, TokenKind::Dot) {
         let target = Box::new(parse_expr_tokens(&tokens[..index])?);
         let suffix = &tokens[index + 1..];
@@ -2876,6 +2902,8 @@ fn expr_to_source(expr: &Expr) -> String {
                 BinaryOp::GtEq => ">=",
                 BinaryOp::And => "and",
                 BinaryOp::Or => "or",
+                BinaryOp::Mul => "*",
+                BinaryOp::Div => "/",
             };
             format!("{} {op} {}", expr_to_source(left), expr_to_source(right))
         }
@@ -3800,6 +3828,40 @@ score demo {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn parses_integer_arithmetic_expression() {
+        let program = parse_source(
+            r#"
+fn add(i) = i + 2
+fn sub(i) = i - 2
+fn mul(i) = i * 2
+fn div(i) = i / 2
+score demo {
+  voice lead {
+    note C4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let operators = program
+            .functions
+            .iter()
+            .map(
+                |function| match function.body_expr().map(|expr| &expr.kind) {
+                    Some(ExprKind::Binary { op, .. }) => *op,
+                    _ => panic!("expected binary expression"),
+                },
+            )
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            operators,
+            [BinaryOp::Add, BinaryOp::Sub, BinaryOp::Mul, BinaryOp::Div]
+        );
     }
 
     #[test]

@@ -3874,6 +3874,17 @@ impl Compiler {
         span: Span,
     ) -> Option<Value> {
         match (op, left, right) {
+            (BinaryOp::Add, Value::Int(left), Value::Int(right)) => Some(Value::Int(left + right)),
+            (BinaryOp::Sub, Value::Int(left), Value::Int(right)) => Some(Value::Int(left - right)),
+            (BinaryOp::Mul, Value::Int(left), Value::Int(right)) => Some(Value::Int(left * right)),
+            (BinaryOp::Div, Value::Int(_), Value::Int(0)) => {
+                self.diagnostics.push(
+                    Diagnostic::error("ML_EVAL_UNSUPPORTED_OP", "division by zero", line, column)
+                        .with_span(span),
+                );
+                None
+            }
+            (BinaryOp::Div, Value::Int(left), Value::Int(right)) => Some(Value::Int(left / right)),
             (BinaryOp::Add, Value::Pitch(pitch), Value::Interval(interval)) => {
                 match pitch + interval {
                     Ok(pitch) => Some(Value::Pitch(pitch)),
@@ -6995,6 +7006,46 @@ score demo {
         assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
         assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "E4");
         assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "G4");
+    }
+
+    #[test]
+    fn integer_arithmetic_shapes_phrase_predicates() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [{p:root, d:1/8}, {p:root |> transpose(M2), d:1/8}, {p:root |> transpose(M3), d:1/8}, {p:root |> transpose(P5), d:1/8}]
+fn mark(i, event) = {p:event.p, d:event.d, keep:i * 2 + 1 >= 5 - 2 and i / 2 == 1}
+fn keep(event) = event.keep == true
+score demo {
+  voice lead {
+    play riff(C4) |> mapi(mark) |> filter(keep)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 2);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "E4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "G4");
+    }
+
+    #[test]
+    fn integer_division_by_zero_reports_eval_diagnostic() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(i) = i / 0
+score demo {
+  voice lead {
+    note C4, 1/8
+    let x = bad(1)
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_EVAL_UNSUPPORTED_OP" && diagnostic.message == "division by zero"
+        }));
     }
 
     #[test]
