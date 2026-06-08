@@ -876,20 +876,23 @@ impl Compiler {
         {
             return;
         }
-        if self
-            .style
-            .rhythm_concepts
-            .iter()
-            .any(|concept| concept == "ostinato")
-            && !tracks.iter().any(track_has_repeated_duration_cell)
-        {
-            self.push_style_diagnostic(
-                "rhythm_concept",
-                "ML_STYLE_RHYTHM_CONCEPT",
-                "score rhythm does not satisfy required ostinato concept".to_string(),
-                self.program.score.line,
-                self.program.score.column,
-            );
+        for concept in self.style.rhythm_concepts.clone() {
+            let valid = match concept.as_str() {
+                "ostinato" => tracks.iter().any(track_has_repeated_duration_cell),
+                "syncopation" => tracks.iter().any(track_has_syncopation),
+                "hemiola" => tracks.iter().any(track_has_hemiola),
+                _ => true,
+            };
+            if !valid {
+                self.push_style_diagnostic(
+                    "rhythm_concept",
+                    "ML_STYLE_RHYTHM_CONCEPT",
+                    format!("score rhythm does not satisfy required {concept} concept"),
+                    self.program.score.line,
+                    self.program.score.column,
+                );
+                return;
+            }
         }
     }
 
@@ -1968,6 +1971,22 @@ fn track_has_repeated_duration_cell(track: &TrackIr) -> bool {
                 .count()
                 >= 2
         })
+}
+
+fn track_has_syncopation(track: &TrackIr) -> bool {
+    track
+        .events
+        .iter()
+        .any(|event| event.start_tick % DEFAULT_TICKS_PER_QUARTER != 0)
+}
+
+fn track_has_hemiola(track: &TrackIr) -> bool {
+    track.events.windows(3).any(|events| {
+        events[0].duration_ticks == events[1].duration_ticks
+            && events[1].duration_ticks == events[2].duration_ticks
+            && events.iter().map(|event| event.duration_ticks).sum::<u32>()
+                == DEFAULT_TICKS_PER_QUARTER * 2
+    })
 }
 
 fn harmonic_functions(tracks: &[TrackIr]) -> Vec<String> {
@@ -3293,6 +3312,92 @@ score demo style Patterned {
     note D4, 1/8
     note E4, 1/16
     note F4, 1/2
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_RHYTHM_CONCEPT");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("rhythm_concept"));
+    }
+
+    #[test]
+    fn rhythm_concept_syncopation_accepts_offbeat_attack() {
+        let ir = compile_source(
+            r#"
+style Syncopated {
+  rhythm_concept: syncopation
+}
+score demo style Syncopated {
+  voice lead {
+    note C4, 1/8
+    note D4, 1/8
+    note E4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 3);
+    }
+
+    #[test]
+    fn rhythm_concept_syncopation_rejects_onbeat_attacks() {
+        let diagnostics = compile_source(
+            r#"
+style Syncopated {
+  rhythm_concept: syncopation
+}
+score demo style Syncopated {
+  voice lead {
+    note C4, 1/4
+    note D4, 1/4
+    note E4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_RHYTHM_CONCEPT");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("rhythm_concept"));
+    }
+
+    #[test]
+    fn rhythm_concept_hemiola_accepts_three_in_two_pattern() {
+        let ir = compile_source(
+            r#"
+style CrossRhythm {
+  rhythm_concept: hemiola
+}
+score demo style CrossRhythm {
+  voice lead {
+    note C4, 1/6
+    note D4, 1/6
+    note E4, 1/6
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 3);
+    }
+
+    #[test]
+    fn rhythm_concept_hemiola_rejects_plain_quarters() {
+        let diagnostics = compile_source(
+            r#"
+style CrossRhythm {
+  rhythm_concept: hemiola
+}
+score demo style CrossRhythm {
+  voice lead {
+    note C4, 1/4
+    note D4, 1/4
+    note E4, 1/4
   }
 }
 "#,

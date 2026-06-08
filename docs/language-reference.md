@@ -74,7 +74,7 @@ style Sparse {
   meter_catalog: 3/4 6/8
   tempo_range: 60..120
   rhythm_vocab: 1/4 1/8 1/16
-  rhythm_concept: ostinato
+  rhythm_concept: ostinato syncopation hemiola
   dynamic_vocab: p mp mf f
   articulation_vocab: staccato tenuto accent
   ornament: trill mordent turn
