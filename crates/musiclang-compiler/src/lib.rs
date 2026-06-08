@@ -188,6 +188,16 @@ struct Compiler {
     override_traces: Vec<OverrideTrace>,
     section_labels: Vec<String>,
     markers: Vec<MarkerIr>,
+    pending_non_chord_tones: Vec<PendingNonChordTone>,
+}
+
+struct PendingNonChordTone {
+    kind: String,
+    previous_event_index: Option<usize>,
+    event_start: usize,
+    event_end: usize,
+    line: usize,
+    column: usize,
 }
 
 impl Compiler {
@@ -205,6 +215,7 @@ impl Compiler {
             override_traces: Vec::new(),
             section_labels: Vec::new(),
             markers: Vec::new(),
+            pending_non_chord_tones: Vec::new(),
         }
     }
 
@@ -269,7 +280,9 @@ impl Compiler {
     }
 
     fn compile_voice(&mut self, voice: &VoiceDecl, track: &mut TrackBuilder) {
+        let pending_start = self.pending_non_chord_tones.len();
         self.compile_statements(&voice.statements, track);
+        self.check_pending_non_chord_tones(track, pending_start);
         self.check_melodic_leap(track, voice.line, voice.column);
     }
 
@@ -320,7 +333,17 @@ impl Compiler {
                     non_chord_tone.line,
                     non_chord_tone.column,
                 );
+                let previous_event_index = track.event_count().checked_sub(1);
+                let event_start = track.event_count();
                 self.compile_statements(&non_chord_tone.statements, track);
+                self.pending_non_chord_tones.push(PendingNonChordTone {
+                    kind: non_chord_tone.kind.clone(),
+                    previous_event_index,
+                    event_start,
+                    event_end: track.event_count(),
+                    line: non_chord_tone.line,
+                    column: non_chord_tone.column,
+                });
             }
             Stmt::TuningSystem(tuning_system) => {
                 self.check_tuning_system(
@@ -625,6 +648,46 @@ impl Compiler {
                 line,
                 column,
             );
+        }
+    }
+
+    fn check_pending_non_chord_tones(&mut self, track: &TrackBuilder, pending_start: usize) {
+        let pending = self.pending_non_chord_tones.split_off(pending_start);
+        for non_chord_tone in pending {
+            if self.style.non_chord_tones.is_empty()
+                || self.has_override("non_chord_tone")
+                || self.has_score_override("non_chord_tone")
+                || !self
+                    .style
+                    .non_chord_tones
+                    .iter()
+                    .any(|allowed| allowed == &non_chord_tone.kind)
+            {
+                continue;
+            }
+            let previous = non_chord_tone
+                .previous_event_index
+                .and_then(|index| track.events().get(index));
+            let tones = &track.events()[non_chord_tone.event_start..non_chord_tone.event_end];
+            let next = track.events().get(non_chord_tone.event_end);
+            let message = match non_chord_tone.kind.as_str() {
+                "passing_tone" if !events_form_passing_tone(previous, tones, next) => Some(
+                    "passing tone must connect surrounding tones by stepwise motion in one direction",
+                ),
+                "neighbor_tone" if !events_form_neighbor_tone(previous, tones, next) => Some(
+                    "neighbor tone must step away from and return to the same surrounding pitch",
+                ),
+                _ => None,
+            };
+            if let Some(message) = message {
+                self.push_style_diagnostic(
+                    "non_chord_tone",
+                    "ML_STYLE_NON_CHORD_TONE",
+                    message.to_string(),
+                    non_chord_tone.line,
+                    non_chord_tone.column,
+                );
+            }
         }
     }
 
@@ -2097,6 +2160,46 @@ fn events_form_turn(events: &[NoteEventIr]) -> bool {
 fn pitch_classes_are_neighbors(first: PitchClass, second: PitchClass) -> bool {
     let distance = (first.semitone() - second.semitone()).abs();
     distance == 1 || distance == 2 || distance == 10 || distance == 11
+}
+
+fn events_form_passing_tone(
+    previous: Option<&NoteEventIr>,
+    tones: &[NoteEventIr],
+    next: Option<&NoteEventIr>,
+) -> bool {
+    let (Some(previous), [tone], Some(next)) = (previous, tones, next) else {
+        return false;
+    };
+    let Ok(previous_pitch) = previous.pitch.midi_number().map(i16::from) else {
+        return false;
+    };
+    let Ok(tone_pitch) = tone.pitch.midi_number().map(i16::from) else {
+        return false;
+    };
+    let Ok(next_pitch) = next.pitch.midi_number().map(i16::from) else {
+        return false;
+    };
+    let first_step = tone_pitch - previous_pitch;
+    let second_step = next_pitch - tone_pitch;
+    first_step.signum() == second_step.signum()
+        && pitch_distance_is_step(first_step)
+        && pitch_distance_is_step(second_step)
+}
+
+fn events_form_neighbor_tone(
+    previous: Option<&NoteEventIr>,
+    tones: &[NoteEventIr],
+    next: Option<&NoteEventIr>,
+) -> bool {
+    let (Some(previous), [tone], Some(next)) = (previous, tones, next) else {
+        return false;
+    };
+    previous.pitch == next.pitch
+        && pitch_classes_are_neighbors(previous.pitch.class(), tone.pitch.class())
+}
+
+fn pitch_distance_is_step(distance: i16) -> bool {
+    matches!(distance.abs(), 1 | 2)
 }
 
 fn harmonic_functions(tracks: &[TrackIr]) -> Vec<String> {
@@ -3835,6 +3938,77 @@ score demo style Ornamented {
         .unwrap();
 
         assert_eq!(ir.tracks[0].events.len(), 3);
+    }
+
+    #[test]
+    fn non_chord_tone_passing_tone_rejects_leap() {
+        let diagnostics = compile_source(
+            r#"
+style Ornamented {
+  non_chord_tone: passing_tone
+}
+score demo style Ornamented {
+  voice lead {
+    note C4, 1/8
+    non_chord_tone passing_tone {
+      note E4, 1/8
+    }
+    note F4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_NON_CHORD_TONE");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("non_chord_tone"));
+    }
+
+    #[test]
+    fn non_chord_tone_neighbor_tone_accepts_return() {
+        let ir = compile_source(
+            r#"
+style Ornamented {
+  non_chord_tone: neighbor_tone
+}
+score demo style Ornamented {
+  voice lead {
+    note C4, 1/8
+    non_chord_tone neighbor_tone {
+      note D4, 1/8
+    }
+    note C4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 3);
+    }
+
+    #[test]
+    fn non_chord_tone_neighbor_tone_rejects_non_return() {
+        let diagnostics = compile_source(
+            r#"
+style Ornamented {
+  non_chord_tone: neighbor_tone
+}
+score demo style Ornamented {
+  voice lead {
+    note C4, 1/8
+    non_chord_tone neighbor_tone {
+      note D4, 1/8
+    }
+    note E4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_NON_CHORD_TONE");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("non_chord_tone"));
     }
 
     #[test]
