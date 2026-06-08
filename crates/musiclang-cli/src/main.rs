@@ -59,6 +59,9 @@ enum Command {
 
         #[arg(long)]
         json: bool,
+
+        #[arg(long)]
+        strict: bool,
     },
     Theory {
         #[arg(long)]
@@ -93,7 +96,11 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Diagnose { input, json } => diagnose_file(&input, json),
         Command::Ast { input } => ast_file(&input),
         Command::Ir { input } => ir_file(&input),
-        Command::Analyze { input, json } => analyze_file(&input, json),
+        Command::Analyze {
+            input,
+            json,
+            strict,
+        } => analyze_file(&input, json, strict),
         Command::Theory { domain, find } => theory(domain.as_deref(), find.as_deref()),
         Command::Styles => styles(),
         Command::Repl => repl(),
@@ -319,7 +326,7 @@ struct ScoreAnalysis {
     warning_count: usize,
 }
 
-fn analyze_file(input: &str, json: bool) -> Result<(), String> {
+fn analyze_file(input: &str, json: bool, strict: bool) -> Result<(), String> {
     let source =
         fs::read_to_string(input).map_err(|error| format!("failed to read {input}: {error}"))?;
     let compilation =
@@ -329,6 +336,9 @@ fn analyze_file(input: &str, json: bool) -> Result<(), String> {
         print_analysis_json(&analysis);
     } else {
         print_analysis(&analysis);
+    }
+    if strict {
+        enforce_analysis_quality(&analysis)?;
     }
     Ok(())
 }
@@ -457,6 +467,30 @@ fn analyze_score(
         override_count: ir.overrides.len(),
         diagnostic_count: diagnostics.len(),
         warning_count,
+    }
+}
+
+fn enforce_analysis_quality(analysis: &ScoreAnalysis) -> Result<(), String> {
+    let mut failures = Vec::new();
+    if analysis.repeated_bar_ratio_percent > 50 {
+        failures.push(format!(
+            "repeated_bar_ratio_percent {} exceeds 50",
+            analysis.repeated_bar_ratio_percent
+        ));
+    }
+    if analysis.longest_repeated_bar_run > 4 {
+        failures.push(format!(
+            "longest_repeated_bar_run {} exceeds 4",
+            analysis.longest_repeated_bar_run
+        ));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "analysis quality gate failed: {}",
+            failures.join("; ")
+        ))
     }
 }
 

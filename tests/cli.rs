@@ -884,6 +884,53 @@ score repetitive {
 }
 
 #[test]
+fn music_analyze_strict_rejects_repeated_arrangement() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/analyze-strict-repetition.music");
+    fs::write(
+        &input_path,
+        r#"
+score repetitive {
+  tempo 120
+  meter 4/4
+  voice lead {
+    note C4, 1/4
+    note E4, 1/4
+    note G4, 1/4
+    note E4, 1/4
+    note C4, 1/4
+    note E4, 1/4
+    note G4, 1/4
+    note E4, 1/4
+    note C4, 1/4
+    note E4, 1/4
+    note G4, 1/4
+    note E4, 1/4
+    note C4, 1/4
+    note E4, 1/4
+    note G4, 1/4
+    note E4, 1/4
+  }
+}
+"#,
+    )
+    .unwrap();
+    let output = run_music(&["analyze", &input_path, "--strict"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("analysis quality gate failed"));
+    assert!(stderr.contains("repeated_bar_ratio_percent 75 exceeds 50"));
+}
+
+#[test]
+fn music_analyze_strict_accepts_demo() {
+    let output = run_music(&["analyze", "examples/demo_jazz_complete.music", "--strict"]);
+
+    assert!(output.status.success());
+}
+
+#[test]
 fn music_analyze_json_is_machine_readable() {
     let input_path = write_analyze_metadata_fixture();
     let output = run_music(&["analyze", &input_path, "--json"]);
