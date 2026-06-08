@@ -1661,6 +1661,7 @@ fn style_from_program_inner(
                     .split_whitespace()
                     .map(ToString::to_string)
                     .collect();
+                validate_vocab_entries(style, entry, TheoryDomain::Rhythms, &mut diagnostics);
             }
             "dynamic_vocab" => {
                 context.dynamic_vocab = entry
@@ -1745,9 +1746,16 @@ fn style_from_program_inner(
                     .split_whitespace()
                     .map(ToString::to_string)
                     .collect();
+                validate_vocab_entries(
+                    style,
+                    entry,
+                    TheoryDomain::ContrapuntalMotions,
+                    &mut diagnostics,
+                );
             }
             "cadence" => {
                 context.cadence = Some(entry.value.trim().to_string());
+                validate_vocab_entries(style, entry, TheoryDomain::Cadences, &mut diagnostics);
             }
             "harmonic_progression" => {
                 context.harmonic_progression = entry
@@ -1755,12 +1763,20 @@ fn style_from_program_inner(
                     .split_whitespace()
                     .map(ToString::to_string)
                     .collect();
+                validate_vocab_entries(
+                    style,
+                    entry,
+                    TheoryDomain::HarmonicFunctions,
+                    &mut diagnostics,
+                );
             }
             "texture" => {
                 context.texture = Some(entry.value.trim().to_string());
+                validate_vocab_entries(style, entry, TheoryDomain::Textures, &mut diagnostics);
             }
             "form" => {
                 context.form = Some(entry.value.trim().to_string());
+                validate_vocab_entries(style, entry, TheoryDomain::Forms, &mut diagnostics);
             }
             "meter" => {
                 if let Some((numerator, denominator)) = parse_meter(&entry.value) {
@@ -1776,6 +1792,7 @@ fn style_from_program_inner(
                     .split_whitespace()
                     .map(ToString::to_string)
                     .collect();
+                validate_vocab_entries(style, entry, TheoryDomain::Meters, &mut diagnostics);
             }
             "tempo_range" => {
                 if let Some((min, max)) = entry.value.split_once("..") {
@@ -2639,6 +2656,36 @@ score demo {
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_UNKNOWN_THEORY_ENTRY");
         assert_eq!(diagnostics[0].rule.as_deref(), Some("harmonic_functions"));
+    }
+
+    #[test]
+    fn executed_style_rule_inputs_validate_theory_entries() {
+        for key in [
+            "rhythm_concept",
+            "contrapuntal_motion",
+            "cadence",
+            "harmonic_progression",
+            "texture",
+            "form",
+            "meter_catalog",
+        ] {
+            let source = format!(
+                r#"
+style TheoryRich {{
+  {key}: imaginary_entry
+}}
+score demo {{
+  voice lead {{
+    note C4, 1/4
+  }}
+}}
+"#
+            );
+            let diagnostics = compile_source(&source).unwrap_err();
+
+            assert_eq!(diagnostics[0].code, "ML_STYLE_UNKNOWN_THEORY_ENTRY");
+            assert_eq!(diagnostics[0].rule.as_deref(), Some(key));
+        }
     }
 
     #[test]
