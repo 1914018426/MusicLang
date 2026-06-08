@@ -160,6 +160,7 @@ mod stylecheck {
                 | "tuning_system"
                 | "world_tradition"
                 | "historical_era"
+                | "harmonic_function"
                 | "max_melodic_leap"
                 | "contrapuntal_motion"
                 | "cadence"
@@ -332,6 +333,14 @@ impl Compiler {
                     historical_era.column,
                 );
                 self.compile_statements(&historical_era.statements, track);
+            }
+            Stmt::HarmonicFunction(harmonic_function) => {
+                self.check_harmonic_function(
+                    &harmonic_function.kind,
+                    harmonic_function.line,
+                    harmonic_function.column,
+                );
+                self.compile_statements(&harmonic_function.statements, track);
             }
             Stmt::For(for_stmt) => {
                 for value in for_stmt.start..for_stmt.end {
@@ -615,6 +624,29 @@ impl Compiler {
                 "historical_era",
                 "ML_STYLE_HISTORICAL_ERA",
                 format!("historical era `{kind}` is outside active style vocabulary"),
+                line,
+                column,
+            );
+        }
+    }
+
+    fn check_harmonic_function(&mut self, kind: &str, line: usize, column: usize) {
+        if self.style.harmonic_functions.is_empty()
+            || self.has_override("harmonic_function")
+            || self.has_score_override("harmonic_function")
+        {
+            return;
+        }
+        if !self
+            .style
+            .harmonic_functions
+            .iter()
+            .any(|allowed| allowed == kind)
+        {
+            self.push_style_diagnostic(
+                "harmonic_function",
+                "ML_STYLE_HARMONIC_FUNCTION",
+                format!("harmonic function `{kind}` is outside active style vocabulary"),
                 line,
                 column,
             );
@@ -1659,6 +1691,19 @@ fn style_from_program_inner(
                     .map(ToString::to_string)
                     .collect();
                 validate_vocab_entries(style, entry, TheoryDomain::StyleEras, &mut diagnostics);
+            }
+            "harmonic_function" => {
+                context.harmonic_functions = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_vocab_entries(
+                    style,
+                    entry,
+                    TheoryDomain::HarmonicFunctions,
+                    &mut diagnostics,
+                );
             }
             "max_melodic_leap" => {
                 context.max_melodic_leap = entry.value.trim().parse::<Interval>().ok();
@@ -3068,6 +3113,49 @@ score demo style PeriodPractice {
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_HISTORICAL_ERA");
         assert_eq!(diagnostics[0].rule.as_deref(), Some("historical_era"));
+    }
+
+    #[test]
+    fn harmonic_function_accepts_catalog_entry() {
+        let ir = compile_source(
+            r#"
+style FunctionalPractice {
+  harmonic_function: tonic
+}
+score demo style FunctionalPractice {
+  voice lead {
+    harmonic_function tonic {
+      note D4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
+    }
+
+    #[test]
+    fn harmonic_function_rejects_unlisted_entry() {
+        let diagnostics = compile_source(
+            r#"
+style FunctionalPractice {
+  harmonic_function: tonic
+}
+score demo style FunctionalPractice {
+  voice lead {
+    harmonic_function dominant {
+      note D4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_HARMONIC_FUNCTION");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("harmonic_function"));
     }
 
     #[test]

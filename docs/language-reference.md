@@ -38,6 +38,7 @@ score demo style Classical {
 - `tuning_system kind { ... }` for explicit tuning-system annotations such as `equal_temperament_12` or `just_intonation`
 - `world_tradition kind { ... }` for explicit world-tradition annotations such as `maqam` or `hindustani_raga`
 - `historical_era kind { ... }` for explicit style-era annotations such as `baroque`, `classical`, or `jazz`
+- `harmonic_function kind { ... }` for explicit harmonic-function annotations such as `tonic`, `predominant`, or `dominant`
 - `note pitch_expr, duration_expr`
 - `chord [pitch_expr, ...], duration_expr`
 - `let name = expr`
@@ -79,6 +80,7 @@ style Sparse {
   tuning_system: equal_temperament_12 just_intonation
   world_tradition: maqam hindustani_raga
   historical_era: baroque classical jazz
+  harmonic_function: tonic predominant dominant
   max_melodic_leap: P5
   contrapuntal_motion: contrary oblique similar
   cadence: authentic
@@ -140,6 +142,7 @@ Stable diagnostic codes include:
 - `ML_STYLE_TUNING_SYSTEM`
 - `ML_STYLE_WORLD_TRADITION`
 - `ML_STYLE_HISTORICAL_ERA`
+- `ML_STYLE_HARMONIC_FUNCTION`
 - `ML_STYLE_MAX_MELODIC_LEAP`
 - `ML_STYLE_CONTRAPUNTAL_MOTION`
 - `ML_STYLE_INSTRUMENT_RANGE`

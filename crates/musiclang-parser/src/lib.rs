@@ -64,6 +64,7 @@ pub enum Stmt {
     TuningSystem(TuningSystemStmt),
     WorldTradition(WorldTraditionStmt),
     HistoricalEra(HistoricalEraStmt),
+    HarmonicFunction(HarmonicFunctionStmt),
     For(ForStmt),
     If(IfStmt),
     Let(LetStmt),
@@ -220,6 +221,15 @@ pub struct WorldTraditionStmt {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoricalEraStmt {
+    pub kind: String,
+    pub statements: Vec<Stmt>,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarmonicFunctionStmt {
     pub kind: String,
     pub statements: Vec<Stmt>,
     pub line: usize,
@@ -682,6 +692,9 @@ impl Parser {
         if self.check_ident("historical_era") {
             return self.parse_historical_era().map(Stmt::HistoricalEra);
         }
+        if self.check_ident("harmonic_function") {
+            return self.parse_harmonic_function().map(Stmt::HarmonicFunction);
+        }
         if self.check_ident("for") {
             return self.parse_for().map(Stmt::For);
         }
@@ -924,6 +937,19 @@ impl Parser {
         })
     }
 
+    fn parse_harmonic_function(&mut self) -> Option<HarmonicFunctionStmt> {
+        let start = self.expect_ident_text("harmonic_function")?;
+        let kind = self.expect_name()?;
+        let statements = self.parse_required_block()?;
+        Some(HarmonicFunctionStmt {
+            kind,
+            statements,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
     fn parse_for(&mut self) -> Option<ForStmt> {
         let start = self.expect_ident_text("for")?;
         let variable = self.expect_name()?;
@@ -1100,6 +1126,7 @@ impl Parser {
                 | "tuning_system"
                 | "world_tradition"
                 | "historical_era"
+                | "harmonic_function"
                 | "for"
                 | "if"
                 | "let"
@@ -1703,6 +1730,29 @@ score demo {
 
         assert_eq!(historical_era.kind, "baroque");
         assert_eq!(historical_era.statements.len(), 1);
+    }
+
+    #[test]
+    fn parses_harmonic_function_statement() {
+        let source = r#"
+score demo {
+  voice lead {
+    harmonic_function tonic {
+      note D4, 1/8
+    }
+  }
+}
+"#;
+        let program = parse_source(source).unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::HarmonicFunction(harmonic_function) = &voice.statements[0] else {
+            panic!("expected harmonic function");
+        };
+
+        assert_eq!(harmonic_function.kind, "tonic");
+        assert_eq!(harmonic_function.statements.len(), 1);
     }
 
     #[test]
