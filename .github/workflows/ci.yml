@@ -13,3 +13,7 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - run: cargo run -q -p musiclang-cli -- analyze examples/demo_jazz_complete.music --strict
+      - run: cargo run -q -p musiclang-cli -- export examples/demo_jazz_complete.music --format midi -o /tmp/musiclang-ci-demo.mid
+      - run: cargo run -q -p musiclang-cli -- export examples/demo_jazz_complete.music --format musicxml -o /tmp/musiclang-ci-demo.musicxml
+      - run: cargo run -q -p musiclang-cli -- export examples/demo_jazz_complete.music --format wav -o /tmp/musiclang-ci-demo.wav
