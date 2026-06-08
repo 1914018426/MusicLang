@@ -130,6 +130,7 @@ struct ProjectManifest {
     source: String,
     output: String,
     format: String,
+    strict: bool,
 }
 
 impl Default for ProjectManifest {
@@ -139,6 +140,7 @@ impl Default for ProjectManifest {
             source: "src/main.music".to_string(),
             output: "build/main.mid".to_string(),
             format: "midi".to_string(),
+            strict: false,
         }
     }
 }
@@ -154,7 +156,7 @@ fn new_project(name: &str) -> Result<(), String> {
         .map_err(|error| format!("failed to create build: {error}"))?;
     fs::write(
         root.join("music.toml"),
-        format!("name = \"{name}\"\nsource = \"src/main.music\"\noutput = \"build/{name}.mid\"\nformat = \"midi\"\n"),
+        format!("name = \"{name}\"\nsource = \"src/main.music\"\noutput = \"build/{name}.mid\"\nformat = \"midi\"\nstrict = false\n"),
     )
     .map_err(|error| format!("failed to write music.toml: {error}"))?;
     fs::write(
@@ -178,7 +180,12 @@ fn build_project(manifest: Option<&str>, strict: bool) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create output dir: {error}"))?;
     }
-    export_file_to(&input, Some(&output), &project.format, strict)?;
+    export_file_to(
+        &input,
+        Some(&output),
+        &project.format,
+        strict || project.strict,
+    )?;
     println!("built {}", project.name);
     Ok(())
 }
@@ -195,6 +202,7 @@ fn parse_manifest(source: &str) -> ProjectManifest {
             "source" => manifest.source = value,
             "output" => manifest.output = value,
             "format" => manifest.format = value,
+            "strict" => manifest.strict = value == "true",
             _ => {}
         }
     }

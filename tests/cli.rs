@@ -149,6 +149,8 @@ fn music_new_and_build_create_project_output() {
     assert!(fs::metadata(format!("{project}/music.toml"))
         .unwrap()
         .is_file());
+    let manifest = fs::read_to_string(format!("{project}/music.toml")).unwrap();
+    assert!(manifest.contains("strict = false"));
     let source = fs::read_to_string(format!("{project}/src/main.music")).unwrap();
     assert!(source.contains("instrument violin"));
     assert!(source.contains("channel 0"));
@@ -207,6 +209,45 @@ score warning_only style WarningScale {
     assert!(!strict_output.status.success());
     assert!(!std::path::Path::new(&format!("{project}/build/out.mid")).exists());
     let stderr = String::from_utf8_lossy(&strict_output.stderr);
+    assert!(stderr.contains("ML_STYLE_SCALE"));
+    assert!(stderr.contains("warning"));
+}
+
+#[test]
+fn music_build_manifest_strict_rejects_warning_only_diagnostics() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let project = format!("{workspace}/target/music-cli-manifest-strict-build-project");
+    let _ = fs::remove_dir_all(&project);
+    fs::create_dir_all(format!("{project}/src")).unwrap();
+    fs::write(
+        format!("{project}/music.toml"),
+        "name = \"manifest-strict-build\"\nsource = \"src/main.music\"\noutput = \"build/out.mid\"\nformat = \"midi\"\nstrict = true\n",
+    )
+    .unwrap();
+    fs::write(
+        format!("{project}/src/main.music"),
+        r#"
+style WarningScale {
+  scale: C major
+  severity_scale: warning
+}
+
+score warning_only style WarningScale {
+  key C major
+  voice lead {
+    note C4, 1/4
+    note F#4, 1/4
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music_in(&["build"], &project);
+
+    assert!(!output.status.success());
+    assert!(!std::path::Path::new(&format!("{project}/build/out.mid")).exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("ML_STYLE_SCALE"));
     assert!(stderr.contains("warning"));
 }

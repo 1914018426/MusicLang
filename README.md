@@ -48,7 +48,7 @@ cd demo_song
 music build
 ```
 
-A MusicLang project contains `music.toml`, `src/main.music`, and build outputs under `build/`.
+A MusicLang project contains `music.toml`, `src/main.music`, and build outputs under `build/`. Set `strict = true` in `music.toml` when project builds must reject every diagnostic without requiring `music build --strict`.
 
 ## CLI quickstart
 
