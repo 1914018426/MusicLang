@@ -159,6 +159,28 @@ fn hover_at(documents: &HashMap<String, String>, params: &HoverParams) -> Option
             range: None,
         });
     }
+    if local_function_names(source)
+        .iter()
+        .any(|function| function == &word)
+    {
+        return Some(Hover {
+            contents: HoverContents::Scalar(MarkedString::String(format!(
+                "fn `{word}`: local MusicLang function"
+            ))),
+            range: None,
+        });
+    }
+    if local_variable_names(source)
+        .iter()
+        .any(|variable| variable == &word)
+    {
+        return Some(Hover {
+            contents: HoverContents::Scalar(MarkedString::String(format!(
+                "let `{word}`: local MusicLang value"
+            ))),
+            range: None,
+        });
+    }
 
     let text = match word.as_str() {
         "score" => "score block: top-level musical work",
@@ -273,17 +295,49 @@ fn completion_items(
                     ..CompletionItem::default()
                 }),
         );
+        items.extend(
+            local_function_names(source)
+                .into_iter()
+                .map(|label| CompletionItem {
+                    label,
+                    kind: Some(CompletionItemKind::FUNCTION),
+                    detail: Some("MusicLang function".to_string()),
+                    ..CompletionItem::default()
+                }),
+        );
+        items.extend(
+            local_variable_names(source)
+                .into_iter()
+                .map(|label| CompletionItem {
+                    label,
+                    kind: Some(CompletionItemKind::VARIABLE),
+                    detail: Some("MusicLang value".to_string()),
+                    ..CompletionItem::default()
+                }),
+        );
     }
 
     CompletionResponse::Array(items)
 }
 
 fn local_style_names(source: &str) -> Vec<String> {
+    local_declaration_names(source, "style")
+}
+
+fn local_function_names(source: &str) -> Vec<String> {
+    local_declaration_names(source, "fn")
+}
+
+fn local_variable_names(source: &str) -> Vec<String> {
+    local_declaration_names(source, "let")
+}
+
+fn local_declaration_names(source: &str, keyword: &str) -> Vec<String> {
     source
         .lines()
         .filter_map(|line| {
             let mut words = line.split_whitespace();
-            if words.next()? == "style" {
+            if words.next()? == keyword {
                 return Some(words.next()?.trim_end_matches('{').to_string());
             }
             None
@@ -403,6 +457,37 @@ mod tests {
     }
 
     #[test]
+    fn completion_includes_local_functions_and_variables() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
+        let mut documents = HashMap::new();
+        documents.insert(
+            uri.to_string(),
+            "fn motif {\n  note C4, 1/4\n}\nscore demo {\n  voice lead {\n    let d = duration 1/4\n    call motif\n  }\n}".to_string(),
+        );
+        let CompletionResponse::Array(items) = completion_items(
+            &documents,
+            &CompletionParams {
+                text_document_position: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: Position::new(6, 10),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            },
+        ) else {
+            panic!("expected completion array");
+        };
+
+        assert!(items
+            .iter()
+            .any(|item| item.label == "motif" && item.kind == Some(CompletionItemKind::FUNCTION)));
+        assert!(items
+            .iter()
+            .any(|item| item.label == "d" && item.kind == Some(CompletionItemKind::VARIABLE)));
+    }
+
+    #[test]
     fn hover_describes_style_rule() {
         let uri = Uri::from_str("file:///demo.music").unwrap();
         let mut documents = HashMap::new();
@@ -451,6 +536,47 @@ mod tests {
         assert!(matches!(
             hover.contents,
             HoverContents::Scalar(MarkedString::String(value)) if value.contains("local MusicLang style")
+        ));
+    }
+
+    #[test]
+    fn hover_describes_local_function_and_variable() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
+        let mut documents = HashMap::new();
+        documents.insert(
+            uri.to_string(),
+            "fn motif {\n  note C4, 1/4\n}\nscore demo {\n  voice lead {\n    let d = duration 1/4\n    call motif\n    note C4, d\n  }\n}".to_string(),
+        );
+        let function_hover = hover_at(
+            &documents,
+            &HoverParams {
+                text_document_position_params: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                    position: Position::new(6, 10),
+                },
+                work_done_progress_params: Default::default(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            function_hover.contents,
+            HoverContents::Scalar(MarkedString::String(value)) if value.contains("local MusicLang function")
+        ));
+
+        let variable_hover = hover_at(
+            &documents,
+            &HoverParams {
+                text_document_position_params: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: Position::new(7, 14),
+                },
+                work_done_progress_params: Default::default(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            variable_hover.contents,
+            HoverContents::Scalar(MarkedString::String(value)) if value.contains("local MusicLang value")
         ));
     }
 
