@@ -194,6 +194,8 @@ pub enum BinaryOp {
     LtEq,
     Gt,
     GtEq,
+    And,
+    Or,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2448,6 +2450,26 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
             span,
         ));
     }
+    if let Some(index) = find_last_top_level_ident(tokens, "or") {
+        return Some(Expr::new(
+            ExprKind::Binary {
+                op: BinaryOp::Or,
+                left: Box::new(parse_expr_tokens(&tokens[..index])?),
+                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
+            },
+            span,
+        ));
+    }
+    if let Some(index) = find_last_top_level_ident(tokens, "and") {
+        return Some(Expr::new(
+            ExprKind::Binary {
+                op: BinaryOp::And,
+                left: Box::new(parse_expr_tokens(&tokens[..index])?),
+                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
+            },
+            span,
+        ));
+    }
     if let Some((index, op)) = find_top_level_binary_operator(
         tokens,
         &[
@@ -2589,8 +2611,8 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
 
 fn parse_conditional(tokens: &[Token]) -> Option<Expr> {
     let span = expr_span(tokens);
-    let then_index = find_top_level_ident(tokens, "then")?;
-    let else_index = find_top_level_ident(tokens, "else")?;
+    let then_index = find_conditional_then(tokens)?;
+    let else_index = find_conditional_else(tokens, then_index)?;
     if then_index == 0 || else_index <= then_index + 1 || else_index + 1 >= tokens.len() {
         return None;
     }
@@ -2604,19 +2626,55 @@ fn parse_conditional(tokens: &[Token]) -> Option<Expr> {
     ))
 }
 
-fn find_top_level_ident(tokens: &[Token], text: &str) -> Option<usize> {
+fn find_conditional_then(tokens: &[Token]) -> Option<usize> {
     let mut depth = 0usize;
+    for (index, token) in tokens.iter().enumerate().skip(1) {
+        match token.kind {
+            TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+            TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                depth = depth.saturating_sub(1)
+            }
+            TokenKind::Ident if depth == 0 && token.text == "then" => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_conditional_else(tokens: &[Token], then_index: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut nested_if_count = 0usize;
+    for (index, token) in tokens.iter().enumerate().skip(then_index + 1) {
+        match token.kind {
+            TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+            TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                depth = depth.saturating_sub(1)
+            }
+            TokenKind::Ident if depth == 0 && token.text == "if" => nested_if_count += 1,
+            TokenKind::Ident if depth == 0 && token.text == "else" && nested_if_count > 0 => {
+                nested_if_count -= 1
+            }
+            TokenKind::Ident if depth == 0 && token.text == "else" => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_last_top_level_ident(tokens: &[Token], text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut found = None;
     for (index, token) in tokens.iter().enumerate() {
         match token.kind {
             TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
             TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
                 depth = depth.saturating_sub(1)
             }
-            TokenKind::Ident if depth == 0 && token.text == text => return Some(index),
+            TokenKind::Ident if depth == 0 && token.text == text => found = Some(index),
             _ => {}
         }
     }
-    None
+    found
 }
 
 fn find_top_level_binary_operator(
@@ -2816,6 +2874,8 @@ fn expr_to_source(expr: &Expr) -> String {
                 BinaryOp::LtEq => "<=",
                 BinaryOp::Gt => ">",
                 BinaryOp::GtEq => ">=",
+                BinaryOp::And => "and",
+                BinaryOp::Or => "or",
             };
             format!("{} {op} {}", expr_to_source(left), expr_to_source(right))
         }
@@ -3686,6 +3746,59 @@ score demo {
         assert!(matches!(
             program.functions[0].body_expr().map(|expr| &expr.kind),
             Some(ExprKind::Conditional { .. })
+        ));
+    }
+
+    #[test]
+    fn parses_nested_conditional_expression() {
+        let program = parse_source(
+            r#"
+fn keep(event) = if event.a == true then if event.b == true then true else false else event.c == true
+score demo {
+  voice lead {
+    note C4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let Some(ExprKind::Conditional { then_branch, .. }) =
+            program.functions[0].body_expr().map(|expr| &expr.kind)
+        else {
+            panic!("expected conditional expression");
+        };
+
+        assert!(matches!(then_branch.kind, ExprKind::Conditional { .. }));
+    }
+
+    #[test]
+    fn parses_boolean_composition_expression() {
+        let program = parse_source(
+            r#"
+fn keep(event) = event.a == true and event.b == true or event.c == true
+score demo {
+  voice lead {
+    note C4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let Some(ExprKind::Binary { op, left, .. }) =
+            program.functions[0].body_expr().map(|expr| &expr.kind)
+        else {
+            panic!("expected binary expression");
+        };
+
+        assert_eq!(*op, BinaryOp::Or);
+        assert!(matches!(
+            left.kind,
+            ExprKind::Binary {
+                op: BinaryOp::And,
+                ..
+            }
         ));
     }
 

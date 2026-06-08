@@ -3926,6 +3926,12 @@ impl Compiler {
             (BinaryOp::GtEq, Value::Int(left), Value::Int(right)) => {
                 Some(Value::Bool(left >= right))
             }
+            (BinaryOp::And, Value::Bool(left), Value::Bool(right)) => {
+                Some(Value::Bool(left && right))
+            }
+            (BinaryOp::Or, Value::Bool(left), Value::Bool(right)) => {
+                Some(Value::Bool(left || right))
+            }
             _ => {
                 self.diagnostics.push(
                     Diagnostic::error(
@@ -6967,6 +6973,28 @@ score demo {
         assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "E4");
         assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "G4");
         assert_eq!(ir.tracks[0].events[14].pitch.to_string(), "G4");
+    }
+
+    #[test]
+    fn boolean_composition_and_nested_conditionals_shape_phrase_predicates() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [{p:root, d:1/8, accent:true}, {p:root |> transpose(M2), d:1/8, accent:false}, {p:root |> transpose(M3), d:1/8, accent:true}, {p:root |> transpose(P5), d:1/8, accent:false}]
+fn mark(i, event) = {p:event.p, d:event.d, accent:event.accent, early:i < 2, late:i >= 2}
+fn keep(event) = if event.accent == true then event.early == true or event.late == true else event.late == true and event.early != true
+score demo {
+  voice lead {
+    play riff(C4) |> mapi(mark) |> filter(keep)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 3);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "E4");
+        assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "G4");
     }
 
     #[test]
