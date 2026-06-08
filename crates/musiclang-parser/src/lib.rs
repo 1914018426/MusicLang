@@ -71,6 +71,7 @@ pub enum Stmt {
     Chord(ChordStmt),
     Roman(RomanStmt),
     Progression(ProgressionStmt),
+    Cadence(CadenceStmt),
     Dynamic(DynamicStmt),
     Velocity(VelocityStmt),
     Articulation(ArticulationStmt),
@@ -202,6 +203,16 @@ pub struct RomanStmt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProgressionStmt {
     pub symbols: Vec<String>,
+    pub duration: String,
+    pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CadenceStmt {
+    pub kind: String,
     pub duration: String,
     pub duration_expr: Expr,
     pub line: usize,
@@ -768,6 +779,9 @@ impl Parser {
         if self.check_ident("progression") {
             return self.parse_progression().map(Stmt::Progression);
         }
+        if self.check_ident("cadence") {
+            return self.parse_cadence().map(Stmt::Cadence);
+        }
         if self.check_ident("dynamic") {
             return self.parse_dynamic().map(Stmt::Dynamic);
         }
@@ -993,6 +1007,21 @@ impl Parser {
         let duration_expr = self.parse_expr_until_stmt_end()?;
         Some(ProgressionStmt {
             symbols,
+            duration: expr_to_source(&duration_expr),
+            duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_cadence(&mut self) -> Option<CadenceStmt> {
+        let start = self.expect_ident_text("cadence")?;
+        let kind = self.expect_name()?;
+        self.expect(TokenKind::Comma, "expected `,` after cadence kind")?;
+        let duration_expr = self.parse_expr_until_stmt_end()?;
+        Some(CadenceStmt {
+            kind,
             duration: expr_to_source(&duration_expr),
             duration_expr,
             line: start.span.line,
@@ -1358,6 +1387,7 @@ impl Parser {
                 | "chord"
                 | "roman"
                 | "progression"
+                | "cadence"
                 | "dynamic"
                 | "velocity"
                 | "articulation"
@@ -1856,6 +1886,30 @@ score demo {
 
         assert_eq!(progression.symbols, ["I", "vi", "ii", "V7", "I"]);
         assert_eq!(progression.duration, "1/4");
+    }
+
+    #[test]
+    fn parses_cadence_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    cadence authentic, 1/2
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Cadence(cadence) = &voice.statements[0] else {
+            panic!("expected cadence");
+        };
+
+        assert_eq!(cadence.kind, "authentic");
+        assert_eq!(cadence.duration, "1/2");
     }
 
     #[test]

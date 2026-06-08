@@ -7,9 +7,9 @@ use musiclang_core::{
     DEFAULT_TICKS_PER_QUARTER,
 };
 use musiclang_parser::{
-    parse_source, ArticulationStmt, BinaryOp, ChordStmt, DynamicStmt, Expr, ExprKind, FunctionDecl,
-    NoteStmt, OverrideStmt, Program, ProgressionStmt, RomanStmt, Stmt, StyleDecl, VoiceDecl,
-    WithStyleStmt,
+    parse_source, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DynamicStmt, Expr, ExprKind,
+    FunctionDecl, NoteStmt, OverrideStmt, Program, ProgressionStmt, RomanStmt, Stmt, StyleDecl,
+    VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,6 +172,7 @@ impl Compiler {
             Stmt::Chord(chord) => self.compile_chord(chord, track),
             Stmt::Roman(roman) => self.compile_roman(roman, track),
             Stmt::Progression(progression) => self.compile_progression(progression, track),
+            Stmt::Cadence(cadence) => self.compile_cadence(cadence, track),
             Stmt::Dynamic(dynamic) => {
                 self.check_dynamic_vocab(dynamic);
                 if let Some(velocity) = dynamic_velocity(&dynamic.mark) {
@@ -463,6 +464,36 @@ impl Compiler {
                 progression.line,
                 progression.column,
                 progression.span,
+                track,
+            );
+        }
+    }
+
+    fn compile_cadence(&mut self, cadence: &CadenceStmt, track: &mut TrackBuilder) {
+        let Some(duration) =
+            self.eval_duration(&cadence.duration_expr, cadence.line, cadence.column)
+        else {
+            return;
+        };
+        let Some(symbols) = cadence_symbols(&cadence.kind) else {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_THEORY_CADENCE",
+                    format!("unsupported cadence `{}`", cadence.kind),
+                    cadence.line,
+                    cadence.column,
+                )
+                .with_span(cadence.span),
+            );
+            return;
+        };
+        for symbol in symbols {
+            self.compile_roman_symbol(
+                symbol,
+                duration,
+                cadence.line,
+                cadence.column,
+                cadence.span,
                 track,
             );
         }
@@ -2495,6 +2526,17 @@ struct ParsedRoman {
     inversion: usize,
 }
 
+fn cadence_symbols(kind: &str) -> Option<&'static [&'static str]> {
+    match kind {
+        "authentic" | "perfect_authentic" | "pac" => Some(&["V7", "I"]),
+        "imperfect_authentic" | "iac" => Some(&["V", "I6"]),
+        "plagal" => Some(&["IV", "I"]),
+        "half" => Some(&["I", "V"]),
+        "deceptive" => Some(&["V7", "vi"]),
+        _ => None,
+    }
+}
+
 fn roman_chord_pitches(symbol: &str, key: KeySignature) -> Option<Vec<Pitch>> {
     let (symbol, applied_target) = symbol
         .split_once('/')
@@ -3023,6 +3065,57 @@ score demo {
         assert_eq!(ir.tracks[0].events[6].start_tick, 960);
         assert_eq!(ir.tracks[0].events[9].start_tick, 1440);
         assert_eq!(ir.tracks[0].events[13].start_tick, 1920);
+    }
+
+    #[test]
+    fn compiles_named_cadence_against_score_key() {
+        let ir = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    cadence authentic, 1/2
+    cadence deceptive, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let pitches = ir.tracks[0]
+            .events
+            .iter()
+            .map(|event| event.pitch.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pitches,
+            vec![
+                "G3", "B3", "D4", "F4", "C4", "E4", "G4", "G3", "B3", "D4", "F4", "A3", "C4", "E4"
+            ]
+        );
+        assert_eq!(ir.tracks[0].events[0].start_tick, 0);
+        assert_eq!(ir.tracks[0].events[4].start_tick, 960);
+        assert_eq!(ir.tracks[0].events[7].start_tick, 1920);
+        assert_eq!(ir.tracks[0].events[11].start_tick, 2400);
+    }
+
+    #[test]
+    fn rejects_unknown_cadence_kind() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    cadence backdoor, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_THEORY_CADENCE"));
     }
 
     #[test]
