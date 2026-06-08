@@ -128,13 +128,9 @@ fn publish_diagnostics(
 }
 
 fn to_lsp_diagnostic(diagnostic: musiclang_core::Diagnostic) -> Diagnostic {
-    let line = diagnostic.line.saturating_sub(1) as u32;
-    let column = diagnostic.column.saturating_sub(1) as u32;
+    let range = diagnostic_range(&diagnostic);
     Diagnostic {
-        range: Range {
-            start: Position::new(line, column),
-            end: Position::new(line, column + 1),
-        },
+        range,
         severity: Some(match diagnostic.severity {
             Severity::Error => DiagnosticSeverity::ERROR,
             Severity::Warning => DiagnosticSeverity::WARNING,
@@ -143,6 +139,25 @@ fn to_lsp_diagnostic(diagnostic: musiclang_core::Diagnostic) -> Diagnostic {
         source: Some("musiclang".to_string()),
         message: diagnostic.message,
         ..Diagnostic::default()
+    }
+}
+
+fn diagnostic_range(diagnostic: &musiclang_core::Diagnostic) -> Range {
+    let Some(span) = diagnostic.span else {
+        let line = diagnostic.line.saturating_sub(1) as u32;
+        let column = diagnostic.column.saturating_sub(1) as u32;
+        return Range {
+            start: Position::new(line, column),
+            end: Position::new(line, column + 1),
+        };
+    };
+
+    let line = span.line.saturating_sub(1) as u32;
+    let column = span.column.saturating_sub(1) as u32;
+    let width = span.end.saturating_sub(span.start).max(1) as u32;
+    Range {
+        start: Position::new(line, column),
+        end: Position::new(line, column + width),
     }
 }
 
@@ -590,8 +605,38 @@ mod tests {
         ));
 
         assert_eq!(diagnostic.range.start, Position::new(1, 3));
+        assert_eq!(diagnostic.range.end, Position::new(1, 4));
         assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::ERROR));
         assert_eq!(diagnostic.source.as_deref(), Some("musiclang"));
+    }
+
+    #[test]
+    fn converts_span_width_to_lsp_range() {
+        let span = musiclang_core::Span {
+            source_id: musiclang_core::SourceId(0),
+            start: 12,
+            end: 17,
+            line: 3,
+            column: 8,
+        };
+        let diagnostic = to_lsp_diagnostic(
+            musiclang_core::Diagnostic::error("ML_TEST", "example diagnostic", 1, 1)
+                .with_span(span),
+        );
+
+        assert_eq!(diagnostic.range.start, Position::new(2, 7));
+        assert_eq!(diagnostic.range.end, Position::new(2, 12));
+    }
+
+    #[test]
+    fn converts_missing_span_with_line_column_fallback() {
+        let mut diagnostic =
+            musiclang_core::Diagnostic::error("ML_TEST", "example diagnostic", 4, 2);
+        diagnostic.span = None;
+        let diagnostic = to_lsp_diagnostic(diagnostic);
+
+        assert_eq!(diagnostic.range.start, Position::new(3, 1));
+        assert_eq!(diagnostic.range.end, Position::new(3, 2));
     }
 
     #[test]
