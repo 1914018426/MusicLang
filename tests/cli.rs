@@ -165,3 +165,54 @@ fn music_diagnose_reports_ok_for_valid_override() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
     assert!(output.stderr.is_empty());
 }
+
+#[test]
+fn music_check_reports_unknown_function_as_resolve_error() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/unknown-function.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  voice lead {
+    call missing
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["check", &input_path]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ML_RESOLVE_UNKNOWN_NAME"));
+    assert!(stderr.contains("unknown function `missing`"));
+}
+
+#[test]
+fn music_diagnose_json_reports_recursive_call() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/recursive-call.music");
+    fs::write(
+        &input_path,
+        r#"
+fn motif {
+  call motif
+}
+score demo {
+  voice lead {
+    call motif
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["diagnose", &input_path, "--json"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"code\":\"ML_RESOLVE_RECURSIVE_CALL\""));
+    assert!(stdout.contains("recursive function call `motif`"));
+}

@@ -282,7 +282,7 @@ impl Compiler {
                     self.function_call_stack.pop();
                 } else {
                     self.diagnostics.push(Diagnostic::error(
-                        "ML_COMPILE_CALL",
+                        "ML_RESOLVE_UNKNOWN_NAME",
                         format!("unknown function `{}`", call.name),
                         call.line,
                         call.column,
