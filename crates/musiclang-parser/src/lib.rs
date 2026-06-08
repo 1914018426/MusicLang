@@ -68,6 +68,7 @@ pub struct TextMetaDecl {
 pub enum Stmt {
     Voice(VoiceDecl),
     Note(NoteStmt),
+    Degree(DegreeStmt),
     Pedal(PedalStmt),
     Ostinato(OstinatoStmt),
     Sequence(SequenceStmt),
@@ -175,6 +176,17 @@ pub struct NoteStmt {
     pub pitch: String,
     pub duration: String,
     pub pitch_expr: Expr,
+    pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DegreeStmt {
+    pub degree: String,
+    pub octave: i32,
+    pub duration: String,
     pub duration_expr: Expr,
     pub line: usize,
     pub column: usize,
@@ -818,6 +830,9 @@ impl Parser {
         if self.check_ident("note") {
             return self.parse_note().map(Stmt::Note);
         }
+        if self.check_ident("degree") {
+            return self.parse_degree().map(Stmt::Degree);
+        }
         if self.check_ident("pedal") {
             return self.parse_pedal().map(Stmt::Pedal);
         }
@@ -995,6 +1010,23 @@ impl Parser {
             pitch: expr_to_source(&pitch_expr),
             duration: expr_to_source(&duration_expr),
             pitch_expr,
+            duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_degree(&mut self) -> Option<DegreeStmt> {
+        let start = self.expect_ident_text("degree")?;
+        let degree = self.expect_scale_degree()?;
+        let octave = self.expect_number()?;
+        self.expect(TokenKind::Comma, "expected `,` after scale degree octave")?;
+        let duration_expr = self.parse_expr_until_stmt_end()?;
+        Some(DegreeStmt {
+            degree,
+            octave,
+            duration: expr_to_source(&duration_expr),
             duration_expr,
             line: start.span.line,
             column: start.span.column,
@@ -1551,6 +1583,7 @@ impl Parser {
             self.peek().text.as_str(),
             "voice"
                 | "note"
+                | "degree"
                 | "pedal"
                 | "ostinato"
                 | "sequence"
@@ -1595,6 +1628,20 @@ impl Parser {
 
     fn expect_name(&mut self) -> Option<String> {
         self.expect_name_token().map(|token| token.text)
+    }
+
+    fn expect_scale_degree(&mut self) -> Option<String> {
+        let token = self.peek().clone();
+        if matches!(
+            token.kind,
+            TokenKind::Ident | TokenKind::Pitch | TokenKind::Interval | TokenKind::Number
+        ) {
+            self.advance();
+            Some(token.text)
+        } else {
+            self.push_token_diagnostic("ML_PARSE_DEGREE", "expected scale degree", &token);
+            None
+        }
     }
 
     fn expect_name_token(&mut self) -> Option<Token> {
@@ -2033,6 +2080,31 @@ score demo {
         assert_eq!(pedal.pitch, "C3");
         assert_eq!(pedal.count, 4);
         assert_eq!(pedal.duration, "1/4");
+    }
+
+    #[test]
+    fn parses_scale_degree_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    degree b3 4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Degree(degree) = &voice.statements[0] else {
+            panic!("expected degree");
+        };
+
+        assert_eq!(degree.degree, "b3");
+        assert_eq!(degree.octave, 4);
+        assert_eq!(degree.duration, "1/8");
     }
 
     #[test]

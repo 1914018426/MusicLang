@@ -7,9 +7,9 @@ use musiclang_core::{
     DEFAULT_TICKS_PER_QUARTER,
 };
 use musiclang_parser::{
-    parse_source, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DynamicStmt, Expr, ExprKind,
-    FunctionDecl, ModulateStmt, NoteStmt, OstinatoStmt, OverrideStmt, PedalStmt, Program,
-    ProgressionStmt, RomanStmt, SequenceStmt, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
+    parse_source, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt, DynamicStmt,
+    Expr, ExprKind, FunctionDecl, ModulateStmt, NoteStmt, OstinatoStmt, OverrideStmt, PedalStmt,
+    Program, ProgressionStmt, RomanStmt, SequenceStmt, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,6 +171,7 @@ impl Compiler {
         match statement {
             Stmt::Voice(voice) => self.compile_voice(voice, track),
             Stmt::Note(note) => self.compile_note(note, track),
+            Stmt::Degree(degree) => self.compile_degree(degree, track),
             Stmt::Pedal(pedal) => self.compile_pedal(pedal, track),
             Stmt::Ostinato(ostinato) => self.compile_ostinato(ostinato, track),
             Stmt::Sequence(sequence) => self.compile_sequence(sequence, track),
@@ -347,6 +348,77 @@ impl Compiler {
             Some(note.span),
         );
         track.push_note(Note::new(pitch, duration), Some(note.span));
+    }
+
+    fn compile_degree(&mut self, degree: &DegreeStmt, track: &mut TrackBuilder) {
+        let Some(pitch) = self.scale_degree_pitch(degree) else {
+            return;
+        };
+        let Some(duration) = self.eval_duration(&degree.duration_expr, degree.line, degree.column)
+        else {
+            return;
+        };
+        self.check_pitch_style(pitch, degree.line, degree.column, Some(degree.span));
+        self.check_rhythm_vocab(duration, degree.line, degree.column, Some(degree.span));
+        self.check_instrument_range(
+            track.program,
+            pitch,
+            degree.line,
+            degree.column,
+            Some(degree.span),
+        );
+        track.push_note(Note::new(pitch, duration), Some(degree.span));
+    }
+
+    fn scale_degree_pitch(&mut self, degree: &DegreeStmt) -> Option<Pitch> {
+        let Some(key) = self.score_key else {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_THEORY_DEGREE",
+                    "scale degree requires score key metadata",
+                    degree.line,
+                    degree.column,
+                )
+                .with_span(degree.span),
+            );
+            return None;
+        };
+        let Some((index, accidental)) = parse_scale_degree(&degree.degree) else {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_THEORY_DEGREE",
+                    format!("unsupported scale degree `{}`", degree.degree),
+                    degree.line,
+                    degree.column,
+                )
+                .with_span(degree.span),
+            );
+            return None;
+        };
+        let scale = if key.is_minor {
+            [0, 2, 3, 5, 7, 8, 10]
+        } else {
+            [0, 2, 4, 5, 7, 9, 11]
+        };
+        let semitone = key_tonic_semitone(key) + scale[index] + accidental;
+        let pitch_class = PitchClass::from_semitone(semitone);
+        let octave = degree.octave.clamp(i8::MIN as i32, i8::MAX as i32) as i8;
+        let pitch = match Pitch::new(pitch_class, octave) {
+            Ok(pitch) => pitch,
+            Err(error) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_CORE_PITCH",
+                        error.to_string(),
+                        degree.line,
+                        degree.column,
+                    )
+                    .with_span(degree.span),
+                );
+                return None;
+            }
+        };
+        self.apply_pitch_transpose(pitch, degree.line, degree.column, degree.span)
     }
 
     fn compile_pedal(&mut self, pedal: &PedalStmt, track: &mut TrackBuilder) {
@@ -2766,6 +2838,23 @@ fn cadence_symbols(kind: &str) -> Option<&'static [&'static str]> {
     }
 }
 
+fn parse_scale_degree(value: &str) -> Option<(usize, i16)> {
+    let mut body = value.trim();
+    let mut accidental = 0;
+    while let Some(stripped) = body.strip_prefix('b') {
+        accidental -= 1;
+        body = stripped;
+    }
+    while let Some(stripped) = body.strip_prefix('#') {
+        accidental += 1;
+        body = stripped;
+    }
+    let degree = body.parse::<usize>().ok()?;
+    (1..=7)
+        .contains(&degree)
+        .then_some((degree - 1, accidental))
+}
+
 fn roman_chord_pitches(symbol: &str, key: KeySignature) -> Option<Vec<Pitch>> {
     let (symbol, applied_target) = symbol
         .split_once('/')
@@ -3228,6 +3317,72 @@ score demo {
         assert!(diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "ML_THEORY_PEDAL"));
+    }
+
+    #[test]
+    fn compiles_scale_degrees_against_active_key() {
+        let ir = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    degree 1 4, 1/8
+    degree 3 4, 1/8
+    degree b3 4, 1/8
+    modulate G major
+    degree 1 4, 1/8
+    sequence 2 by M2 {
+      degree 2 4, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let pitches = ir.tracks[0]
+            .events
+            .iter()
+            .map(|event| event.pitch.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(pitches, vec!["C4", "E4", "D#4", "G4", "A4", "B4"]);
+    }
+
+    #[test]
+    fn rejects_scale_degree_without_key() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice lead {
+    degree 1 4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_THEORY_DEGREE"));
+    }
+
+    #[test]
+    fn rejects_invalid_scale_degree() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    degree 8 4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_THEORY_DEGREE"));
     }
 
     #[test]

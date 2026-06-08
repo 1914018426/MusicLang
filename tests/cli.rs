@@ -202,6 +202,36 @@ score demo {
 }
 
 #[test]
+fn music_ir_expands_scale_degree_notes() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/scale-degree.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  key C major
+  voice lead {
+    degree 1 4, 1/8
+    degree b3 4, 1/8
+    modulate G major
+    degree 1 4, 1/8
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["ir", &input_path]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("class: C"));
+    assert!(stdout.contains("class: Ds"));
+    assert!(stdout.contains("class: G"));
+    assert!(stdout.contains("duration_ticks: 240"));
+}
+
+#[test]
 fn music_ir_expands_ostinato_block() {
     let workspace = env!("CARGO_MANIFEST_DIR");
     let input_path = format!("{workspace}/target/ostinato.music");

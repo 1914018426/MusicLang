@@ -3,6 +3,7 @@ score demo {
   voice lead {
     note C4, 1/4
     note E4, 1/4
+    degree b3 4, 1/8
     pedal C3, 2, 1/4
     ostinato 2 {
       note C3, 1/8
