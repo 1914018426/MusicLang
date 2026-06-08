@@ -136,6 +136,11 @@ pub enum ExprKind {
         target: Box<Expr>,
         key: String,
     },
+    MethodCall {
+        target: Box<Expr>,
+        method: String,
+        args: Vec<Expr>,
+    },
     Call {
         callee: String,
         args: Vec<Expr>,
@@ -2327,19 +2332,35 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
         return None;
     }
     let span = expr_span(tokens);
-    if let Some(index) = find_top_level_operator(tokens, TokenKind::Dot) {
-        let key = tokens[index + 1..]
+    if let Some(index) = find_last_top_level_operator(tokens, TokenKind::Dot) {
+        let target = Box::new(parse_expr_tokens(&tokens[..index])?);
+        let suffix = &tokens[index + 1..];
+        if suffix.len() >= 3
+            && suffix[0].kind == TokenKind::Ident
+            && suffix[1].kind == TokenKind::LParen
+            && suffix.last()?.kind == TokenKind::RParen
+        {
+            return split_expr_list(&suffix[2..suffix.len() - 1])
+                .into_iter()
+                .map(parse_expr_tokens)
+                .collect::<Option<Vec<_>>>()
+                .map(|args| {
+                    Expr::new(
+                        ExprKind::MethodCall {
+                            target,
+                            method: suffix[0].text.clone(),
+                            args,
+                        },
+                        span,
+                    )
+                });
+        }
+        let key = suffix
             .iter()
             .map(|token| token.text.as_str())
             .collect::<Vec<_>>()
             .join("");
-        return Some(Expr::new(
-            ExprKind::Access {
-                target: Box::new(parse_expr_tokens(&tokens[..index])?),
-                key,
-            },
-            span,
-        ));
+        return Some(Expr::new(ExprKind::Access { target, key }, span));
     }
     if tokens.first()?.kind == TokenKind::LBracket && tokens.last()?.kind == TokenKind::RBracket {
         return split_expr_list(&tokens[1..tokens.len() - 1])
@@ -2455,6 +2476,22 @@ fn find_top_level_operator(tokens: &[Token], kind: TokenKind) -> Option<usize> {
     None
 }
 
+fn find_last_top_level_operator(tokens: &[Token], kind: TokenKind) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut found = None;
+    for (index, token) in tokens.iter().enumerate() {
+        match token.kind {
+            TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+            TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                depth = depth.saturating_sub(1)
+            }
+            _ if depth == 0 && token.kind == kind => found = Some(index),
+            _ => {}
+        }
+    }
+    found
+}
+
 fn split_expr_list(tokens: &[Token]) -> Vec<&[Token]> {
     let mut parts = Vec::new();
     let mut depth = 0usize;
@@ -2555,6 +2592,19 @@ fn expr_to_source(expr: &Expr) -> String {
                 .join(", ")
         ),
         ExprKind::Access { target, key } => format!("{}.{}", expr_to_source(target), key),
+        ExprKind::MethodCall {
+            target,
+            method,
+            args,
+        } => format!(
+            "{}.{}({})",
+            expr_to_source(target),
+            method,
+            args.iter()
+                .map(expr_to_source)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         ExprKind::Call { callee, args } => format!(
             "{}({})",
             callee,
@@ -3383,7 +3433,7 @@ score demo {
         let program = parse_source(
             r#"
 fn motif(cfg, pair) {
-  note cfg.root, pair.1
+  note cfg.root.transpose(M3), pair.1
 }
 score demo {
   voice lead {
@@ -3397,11 +3447,17 @@ score demo {
         let Stmt::Note(note) = &program.functions[0].statements[0] else {
             panic!("expected note");
         };
-        let ExprKind::Access { target, key } = &note.pitch_expr.kind else {
-            panic!("expected access");
+        let ExprKind::MethodCall {
+            target,
+            method,
+            args,
+        } = &note.pitch_expr.kind
+        else {
+            panic!("expected method call");
         };
-        assert_eq!(key, "root");
-        assert!(matches!(target.kind, ExprKind::Ident(_)));
+        assert_eq!(method, "transpose");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(target.kind, ExprKind::Access { .. }));
         let Stmt::Voice(voice) = &program.score.statements[0] else {
             panic!("expected voice");
         };

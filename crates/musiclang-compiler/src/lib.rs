@@ -946,6 +946,12 @@ impl Compiler {
             ExprKind::Access { target, .. } => {
                 self.check_expression_name(target, line, column, scopes);
             }
+            ExprKind::MethodCall { target, args, .. } => {
+                self.check_expression_name(target, line, column, scopes);
+                for arg in args {
+                    self.check_expression_name(arg, line, column, scopes);
+                }
+            }
             ExprKind::Call { args, .. } => {
                 for arg in args {
                     self.check_expression_name(arg, line, column, scopes);
@@ -2924,6 +2930,20 @@ impl Compiler {
             ExprKind::Access { target, key } => {
                 let target = self.eval_expr(target, line, column)?;
                 self.eval_access(target, key, line, column, expr.span)
+            }
+            ExprKind::MethodCall {
+                target,
+                method,
+                args,
+            } => {
+                let mut values = Vec::with_capacity(args.len() + 1);
+                values.push(self.eval_expr(target, line, column)?);
+                values.extend(
+                    args.iter()
+                        .map(|arg| self.eval_expr(arg, line, column))
+                        .collect::<Option<Vec<_>>>()?,
+                );
+                self.eval_call(method, values, line, column, expr.span)
             }
             ExprKind::Call { callee, args } => {
                 let args = args
@@ -5986,7 +6006,7 @@ score demo {
         let ir = compile_source(
             r#"
 fn hit(cfg) {
-  note cfg.root, cfg.dur
+  note cfg.root.transpose(M3), cfg.dur
 }
 score demo {
   voice lead {
@@ -5999,8 +6019,8 @@ score demo {
         .unwrap();
 
         assert_eq!(ir.tracks[0].events.len(), 2);
-        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
-        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "E4");
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "E4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "G#4");
     }
 
     #[test]
