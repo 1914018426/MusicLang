@@ -54,9 +54,12 @@ A MusicLang project contains `music.toml`, `src/main.music`, and build outputs u
 
 ```bash
 music check examples/minimal.music
+music check examples/demo_jazz_complete.music --strict
+music analyze examples/demo_jazz_complete.music --strict
 music export examples/minimal.music --format midi -o /tmp/musiclang-minimal.mid
 music export examples/minimal.music --format musicxml -o /tmp/musiclang-minimal.musicxml
 music export examples/minimal.music --format wav -o /tmp/musiclang-minimal.wav
+music export examples/demo_jazz_complete.music --format wav -o /tmp/musiclang-jazz.wav --strict
 music diagnose examples/style_violation.music --json
 music ast examples/minimal.music
 music ir examples/minimal.music
@@ -66,6 +69,10 @@ music theory --domain dynamics
 music theory --domain harmonic_functions
 music theory --find maqam
 ```
+
+`--strict` is the quality gate for publishable/listening material. It rejects every diagnostic, including warning-only style diagnostics, and `music analyze --strict` also rejects excessive repeated bars. CI runs strict analysis and strict MIDI/MusicXML/WAV export smoke tests for the complete Jazz demo.
+
+Listening demos are expected to pass without diagnostic suppression: no `override` for cleanup, no `severity_*: off`, no warnings, and no uncontrolled repeated-bar padding.
 
 Run the REPL:
 

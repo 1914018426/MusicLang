@@ -116,10 +116,14 @@ MusicLang includes a broad theory catalog used by style declarations and the `mu
 ```bash
 music new demo_song
 music build
+music build --strict
 music check input.music
+music check input.music --strict
+music analyze input.music --strict
 music export input.music --format midi -o output.mid
 music export input.music --format musicxml -o output.musicxml
 music export input.music --format wav -o output.wav
+music export input.music --format wav -o output.wav --strict
 music diagnose input.music --json
 music ast input.music
 music ir input.music
@@ -131,9 +135,11 @@ music theory --find maqam
 music repl
 ```
 
+`check --strict`, `build --strict`, and `export --strict` reject any compiler diagnostic before accepting or writing output. `analyze --strict` applies the same zero-diagnostic requirement and also enforces listening-quality repetition thresholds.
+
 ## Diagnostics
 
-`severity_<rule>: warning` diagnostics are non-blocking but still reported by `diagnose`, REPL diagnostics, and LSP publishDiagnostics.
+`severity_<rule>: warning` diagnostics are non-blocking for non-strict compilation and export, but still reported by `diagnose`, REPL diagnostics, and LSP publishDiagnostics. Strict commands treat warnings as failed quality gates.
 
 Stable diagnostic codes include:
 
