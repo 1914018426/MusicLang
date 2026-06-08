@@ -108,42 +108,109 @@ pub fn render_wav(score: &ScoreIr) -> io::Result<Vec<u8>> {
         60.0 / f32::from(score.tempo_bpm.max(1)) / score.ticks_per_quarter as f32;
     let sample_count =
         ((total_ticks as f32 * seconds_per_tick + 0.25) * sample_rate as f32) as usize;
-    let mut samples = vec![0.0f32; sample_count.max(1)];
+    let mut samples = vec![(0.0f32, 0.0f32); sample_count.max(1)];
 
     for track in &score.tracks {
+        let volume = f32::from(track.volume.unwrap_or(100).min(127)) / 127.0;
+        let pan = f32::from(track.pan.unwrap_or(64).min(127)) / 127.0;
+        let left_gain = (1.0 - pan).sqrt() * volume;
+        let right_gain = pan.sqrt() * volume;
         for event in &track.events {
             let midi = event.pitch.midi_number().map_err(io::Error::other)?;
-            let frequency = 440.0 * 2f32.powf((f32::from(midi) - 69.0) / 12.0);
             let start = (event.start_tick as f32 * seconds_per_tick * sample_rate as f32) as usize;
             let len =
                 (event.duration_ticks as f32 * seconds_per_tick * sample_rate as f32) as usize;
             for i in 0..len.min(samples.len().saturating_sub(start)) {
-                let t = i as f32 / sample_rate as f32;
-                let envelope = 1.0 - (i as f32 / len.max(1) as f32);
-                samples[start + i] += (TAU * frequency * t).sin() * 0.18 * envelope;
+                let sample = if track.channel == 9 {
+                    drum_sample(midi, i, len.max(1), sample_rate)
+                } else {
+                    pitched_sample(midi, track.program, i, len.max(1), sample_rate)
+                } * f32::from(event.velocity.min(127))
+                    / 127.0;
+                samples[start + i].0 += sample * left_gain;
+                samples[start + i].1 += sample * right_gain;
             }
         }
     }
 
     let mut bytes = Vec::new();
-    let data_len = samples.len() as u32 * 2;
+    let data_len = samples.len() as u32 * 4;
     bytes.extend_from_slice(b"RIFF");
     bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
     bytes.extend_from_slice(b"WAVEfmt ");
     bytes.extend_from_slice(&16u32.to_le_bytes());
     bytes.extend_from_slice(&1u16.to_le_bytes());
-    bytes.extend_from_slice(&1u16.to_le_bytes());
-    bytes.extend_from_slice(&sample_rate.to_le_bytes());
-    bytes.extend_from_slice(&(sample_rate * 2).to_le_bytes());
     bytes.extend_from_slice(&2u16.to_le_bytes());
+    bytes.extend_from_slice(&sample_rate.to_le_bytes());
+    bytes.extend_from_slice(&(sample_rate * 4).to_le_bytes());
+    bytes.extend_from_slice(&4u16.to_le_bytes());
     bytes.extend_from_slice(&16u16.to_le_bytes());
     bytes.extend_from_slice(b"data");
     bytes.extend_from_slice(&data_len.to_le_bytes());
-    for sample in samples {
-        let value = (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16;
-        bytes.extend_from_slice(&value.to_le_bytes());
+    for (left, right) in samples {
+        let left = (left.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16;
+        let right = (right.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16;
+        bytes.extend_from_slice(&left.to_le_bytes());
+        bytes.extend_from_slice(&right.to_le_bytes());
     }
     Ok(bytes)
+}
+
+fn pitched_sample(
+    midi: u8,
+    program: Option<u8>,
+    index: usize,
+    len: usize,
+    sample_rate: u32,
+) -> f32 {
+    let frequency = 440.0 * 2f32.powf((f32::from(midi) - 69.0) / 12.0);
+    let t = index as f32 / sample_rate as f32;
+    let phase = TAU * frequency * t;
+    let envelope = melodic_envelope(index, len);
+    let sample = match program.unwrap_or(0) {
+        0..=7 => phase.sin() * 0.16 + (phase * 2.0).sin() * 0.04,
+        24..=31 => guitar_wave(phase) * 0.14,
+        32..=39 => phase.sin() * 0.18 + (phase * 0.5).sin() * 0.08,
+        40..=55 => phase.sin() * 0.12 + (phase * 1.01).sin() * 0.08,
+        56..=71 => brass_wave(phase) * 0.16,
+        72..=79 => phase.sin() * 0.12 + (phase * 3.0).sin() * 0.02,
+        88..=95 => phase.sin() * 0.10 + (phase * 0.501).sin() * 0.08,
+        _ => phase.sin() * 0.16,
+    };
+    sample * envelope
+}
+
+fn drum_sample(midi: u8, index: usize, len: usize, sample_rate: u32) -> f32 {
+    let t = index as f32 / sample_rate as f32;
+    let envelope = (1.0 - index as f32 / len as f32).max(0.0).powf(4.0);
+    let noise = deterministic_noise(index as u32 ^ (u32::from(midi) * 8191));
+    match midi {
+        35 | 36 => (TAU * (80.0 - 45.0 * t.min(1.0)) * t).sin() * envelope * 0.55,
+        37..=39 => (noise * 0.42 + (TAU * 190.0 * t).sin() * 0.16) * envelope,
+        42 | 44 | 46 => noise * envelope.powf(0.55) * 0.26,
+        49 | 51 => noise * envelope.powf(0.35) * 0.34,
+        45 | 47 | 50 => (TAU * 150.0 * t).sin() * envelope * 0.35,
+        _ => noise * envelope * 0.22,
+    }
+}
+
+fn melodic_envelope(index: usize, len: usize) -> f32 {
+    let attack = (index as f32 / (len as f32 * 0.05).max(1.0)).min(1.0);
+    let release = (1.0 - index as f32 / len as f32).max(0.0);
+    attack * release.powf(0.8)
+}
+
+fn guitar_wave(phase: f32) -> f32 {
+    (phase.sin() + (phase * 2.0).sin() * 0.35 + (phase * 3.0).sin() * 0.16) * 0.7
+}
+
+fn brass_wave(phase: f32) -> f32 {
+    (phase.sin() + (phase * 2.0).sin() * 0.28 + (phase * 3.0).sin() * 0.12).tanh()
+}
+
+fn deterministic_noise(seed: u32) -> f32 {
+    let value = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    ((value >> 16) as f32 / 32_768.0) * 2.0 - 1.0
 }
 
 fn pitch_step(class: PitchClass) -> &'static str {
@@ -246,5 +313,34 @@ mod tests {
 
         assert!(wav.starts_with(b"RIFF"));
         assert_eq!(&wav[8..12], b"WAVE");
+        assert_eq!(u16::from_le_bytes([wav[22], wav[23]]), 2);
+        assert_eq!(u16::from_le_bytes([wav[32], wav[33]]), 4);
+    }
+
+    #[test]
+    fn wav_rendering_applies_pan() {
+        let mut left_score = score();
+        left_score.tracks[0].pan = Some(0);
+        let left = render_wav(&left_score).unwrap();
+        let mut right_score = score();
+        right_score.tracks[0].pan = Some(127);
+        let right = render_wav(&right_score).unwrap();
+
+        let left_energy = channel_energy(&left, 0);
+        let right_energy = channel_energy(&right, 1);
+
+        assert!(left_energy > channel_energy(&left, 1) * 4.0);
+        assert!(right_energy > channel_energy(&right, 0) * 4.0);
+    }
+
+    fn channel_energy(wav: &[u8], channel: usize) -> f64 {
+        wav[44..]
+            .chunks_exact(4)
+            .map(|frame| {
+                let offset = channel * 2;
+                let sample = i16::from_le_bytes([frame[offset], frame[offset + 1]]) as f64;
+                sample.abs()
+            })
+            .sum()
     }
 }
