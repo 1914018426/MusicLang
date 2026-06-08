@@ -181,26 +181,38 @@ mod tests {
 
         assert!(bytes.starts_with(b"MThd"));
         assert!(matches!(
-            smf.tracks[1][0].kind,
-            TrackEventKind::Meta(MetaMessage::TrackName(b"lead"))
+            smf.header.timing,
+            Timing::Metrical(ticks) if ticks.as_int() == DEFAULT_TICKS_PER_QUARTER as u16
         ));
+        assert!(smf.tracks[0].iter().any(|event| matches!(
+            event.kind,
+            TrackEventKind::Meta(MetaMessage::Tempo(value)) if value.as_int() == 666_666
+        )));
+        assert!(smf.tracks[0].iter().any(|event| matches!(
+            event.kind,
+            TrackEventKind::Meta(MetaMessage::TimeSignature(3, 2, 24, 8))
+        )));
         assert!(smf.tracks[0].iter().any(|event| matches!(
             event.kind,
             TrackEventKind::Meta(MetaMessage::KeySignature(-1, false))
         )));
+        assert!(matches!(
+            smf.tracks[1][0].kind,
+            TrackEventKind::Meta(MetaMessage::TrackName(b"lead"))
+        ));
         assert!(smf.tracks[1].iter().any(|event| matches!(
             event.kind,
             TrackEventKind::Midi {
-                message: MidiMessage::ProgramChange { .. },
-                ..
-            }
+                channel,
+                message: MidiMessage::ProgramChange { program },
+            } if channel.as_int() == 2 && program.as_int() == 40
         )));
         assert!(smf.tracks[1].iter().any(|event| matches!(
             event.kind,
             TrackEventKind::Midi {
+                channel,
                 message: MidiMessage::NoteOn { vel, .. },
-                ..
-            } if vel.as_int() == 96
+            } if channel.as_int() == 2 && vel.as_int() == 96
         )));
     }
 }
