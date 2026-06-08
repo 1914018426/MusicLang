@@ -44,6 +44,7 @@ struct Compiler {
     program: Program,
     style: StyleContext,
     functions: HashMap<String, FunctionDecl>,
+    function_call_stack: Vec<String>,
     variables: Vec<HashMap<String, Value>>,
     diagnostics: Vec<Diagnostic>,
     override_rules: Vec<String>,
@@ -72,6 +73,7 @@ impl Compiler {
             program,
             style,
             functions,
+            function_call_stack: Vec::new(),
             variables: vec![HashMap::new()],
             diagnostics,
             override_rules: Vec::new(),
@@ -262,10 +264,22 @@ impl Compiler {
                 }
             }
             Stmt::Call(call) => {
+                if self.function_call_stack.contains(&call.name) {
+                    self.diagnostics.push(Diagnostic::error(
+                        "ML_RESOLVE_RECURSIVE_CALL",
+                        format!("recursive function call `{}`", call.name),
+                        call.line,
+                        call.column,
+                    ));
+                    return;
+                }
+
                 if let Some(function) = self.functions.get(&call.name).cloned() {
+                    self.function_call_stack.push(call.name.clone());
                     self.push_scope();
                     self.compile_statements(&function.statements, track);
                     self.pop_scope();
+                    self.function_call_stack.pop();
                 } else {
                     self.diagnostics.push(Diagnostic::error(
                         "ML_COMPILE_CALL",
@@ -2860,6 +2874,47 @@ score demo {
         .unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_RESOLVE_DUPLICATE_NAME");
+    }
+
+    #[test]
+    fn recursive_call_uses_stable_diagnostic_code() {
+        let diagnostics = compile_source(
+            r#"
+fn motif {
+  call motif
+}
+score demo {
+  voice lead {
+    call motif
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_RESOLVE_RECURSIVE_CALL");
+    }
+
+    #[test]
+    fn indirect_recursive_call_uses_stable_diagnostic_code() {
+        let diagnostics = compile_source(
+            r#"
+fn first {
+  call second
+}
+fn second {
+  call first
+}
+score demo {
+  voice lead {
+    call first
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_RESOLVE_RECURSIVE_CALL");
     }
 
     #[test]
