@@ -213,8 +213,9 @@ fn music_ir_expands_roman_numeral_chord() {
 score demo {
   key C major
   voice lead {
-    roman V65, 1/2
+    roman V65/V, 1/2
     roman bVII, 1/4
+    roman viidim/V, 1/4
   }
 }
 "#,
@@ -225,8 +226,8 @@ score demo {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("class: G"));
-    assert!(stdout.contains("class: B"));
+    assert!(stdout.contains("class: Fs"));
+    assert!(stdout.contains("class: As"));
     assert!(stdout.contains("class: D"));
     assert!(stdout.contains("class: F"));
     assert!(stdout.contains("duration_ticks: 960"));

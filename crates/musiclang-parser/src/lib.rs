@@ -1761,7 +1761,7 @@ score demo {
 score demo {
   key C major
   voice lead {
-    roman V65, 1/2
+    roman V65/V, 1/2
   }
 }
 "#,
@@ -1774,7 +1774,7 @@ score demo {
             panic!("expected roman numeral chord");
         };
 
-        assert_eq!(roman.symbol, "V65");
+        assert_eq!(roman.symbol, "V65/V");
         assert_eq!(roman.duration, "1/2");
     }
 

@@ -2462,19 +2462,31 @@ struct ParsedRoman {
 }
 
 fn roman_chord_pitches(symbol: &str, key: KeySignature) -> Option<Vec<Pitch>> {
-    let parsed = parse_roman_symbol(symbol)?;
-    let tonic = key_tonic_semitone(key);
-    let scale = if key.is_minor {
-        [0, 2, 3, 5, 7, 8, 10]
+    let (symbol, applied_target) = symbol
+        .split_once('/')
+        .map_or((symbol, None), |(symbol, target)| (symbol, Some(target)));
+    let tonic = if let Some(target) = applied_target {
+        let target = parse_roman_symbol(target)?;
+        roman_root_semitone(&target, key_tonic_semitone(key), key.is_minor)
     } else {
-        [0, 2, 4, 5, 7, 9, 11]
+        key_tonic_semitone(key)
     };
-    let root_class = PitchClass::from_semitone(tonic + scale[parsed.degree] + parsed.accidental);
+    let parsed = parse_roman_symbol(symbol)?;
+    let root_class = PitchClass::from_semitone(roman_root_semitone(&parsed, tonic, false));
     let root_octave = if parsed.degree >= 4 { 3 } else { 4 };
     let root = Pitch::new(root_class, root_octave).ok()?;
     let mut pitches = expand_chord_quality(root, parsed.quality)?;
     invert_chord(&mut pitches, parsed.inversion)?;
     Some(pitches)
+}
+
+fn roman_root_semitone(parsed: &ParsedRoman, tonic: i16, is_minor: bool) -> i16 {
+    let scale = if is_minor {
+        [0, 2, 3, 5, 7, 8, 10]
+    } else {
+        [0, 2, 4, 5, 7, 9, 11]
+    };
+    tonic + scale[parsed.degree] + parsed.accidental
 }
 
 fn parse_roman_symbol(symbol: &str) -> Option<ParsedRoman> {
@@ -2499,6 +2511,9 @@ fn parse_roman_symbol(symbol: &str) -> Option<ParsedRoman> {
         }
     }
 
+    let (body, diminished_suffix) = body
+        .strip_suffix("dim")
+        .map_or((body, false), |body| (body, true));
     let normalized = body.trim_end_matches('°').trim_end_matches('+');
     let upper = normalized.to_ascii_uppercase();
     let degree = match upper.as_str() {
@@ -2511,7 +2526,7 @@ fn parse_roman_symbol(symbol: &str) -> Option<ParsedRoman> {
         "VII" => 6,
         _ => return None,
     };
-    let quality = if body.ends_with('°') {
+    let quality = if diminished_suffix || body.ends_with('°') {
         "diminished"
     } else if body.ends_with('+') {
         "augmented"
@@ -2921,6 +2936,8 @@ score demo {
     roman I6, 1/4
     roman V65, 1/2
     roman bVII, 1/4
+    roman V/V, 1/4
+    roman viidim/V, 1/4
   }
 }
 "#,
@@ -2934,7 +2951,10 @@ score demo {
             .collect::<Vec<_>>();
         assert_eq!(
             pitches,
-            vec!["C4", "E4", "G4", "E4", "G4", "C5", "B3", "D4", "F4", "G4", "A#3", "D4", "F4"]
+            vec![
+                "C4", "E4", "G4", "E4", "G4", "C5", "B3", "D4", "F4", "G4", "A#3", "D4", "F4",
+                "D3", "F#3", "A3", "F#3", "A3", "C4"
+            ]
         );
     }
 

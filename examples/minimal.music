@@ -5,7 +5,8 @@ score demo {
     note E4, 1/4
     chord [C4, E4, G4], 1/2
     chord D3 minor, 1/2
-    roman V65, 1/2
+    roman V65/V, 1/2
     roman bVII, 1/4
+    roman viidim/V, 1/4
   }
 }
