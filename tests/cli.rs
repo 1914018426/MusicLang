@@ -105,3 +105,63 @@ fn music_new_and_build_create_project_output() {
         .unwrap()
         .starts_with(b"MThd"));
 }
+
+#[test]
+fn music_diagnose_detects_style_violation() {
+    let output = run_music(&["diagnose", "examples/style_violation.music"]);
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ML_STYLE_SCALE"));
+    assert!(stderr.contains("pitch"));
+}
+
+#[test]
+fn music_diagnose_json_machine_readable() {
+    let output = run_music(&["diagnose", "examples/style_violation.music", "--json"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"code\":\"ML_STYLE_SCALE\""));
+    assert!(stdout.contains("\"severity\""));
+    assert!(stdout.contains("\"line\""));
+}
+
+#[test]
+fn music_export_midi_produces_valid_file() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let output_path = format!("{workspace}/target/test-export.mid");
+    let _ = fs::remove_file(&output_path);
+
+    let output = run_music(&[
+        "export",
+        "examples/minimal.music",
+        "--format",
+        "midi",
+        "-o",
+        &output_path,
+    ]);
+
+    assert!(output.status.success());
+    assert!(output.stdout.iter().any(|&b| b == b'\n'));
+    let bytes = fs::read(&output_path).unwrap();
+    assert!(bytes.starts_with(b"MThd"));
+}
+
+#[test]
+fn music_check_reports_error_on_violation() {
+    let output = run_music(&["check", "examples/style_violation.music"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ML_STYLE_SCALE"));
+}
+
+#[test]
+fn music_diagnose_reports_ok_for_valid_override() {
+    let output = run_music(&["diagnose", "examples/override.music"]);
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+    assert!(output.stderr.is_empty());
+}
