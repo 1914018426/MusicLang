@@ -1082,7 +1082,16 @@ impl Compiler {
             }
             ExprKind::Pipe { value, call } => {
                 self.check_expression_name(value, line, column, scopes);
-                self.check_expression_name(call, line, column, scopes);
+                match &call.kind {
+                    ExprKind::Call { callee, args } if callee == "map" && args.len() == 1 => {
+                        self.check_function_reference_name(&args[0], line, column);
+                    }
+                    _ => self.check_expression_name(call, line, column, scopes),
+                }
+            }
+            ExprKind::Call { callee, args } if callee == "map" && args.len() == 2 => {
+                self.check_expression_name(&args[0], line, column, scopes);
+                self.check_function_reference_name(&args[1], line, column);
             }
             ExprKind::Call { args, .. } => {
                 for arg in args {
@@ -1099,6 +1108,38 @@ impl Compiler {
             | ExprKind::IntervalLiteral(_)
             | ExprKind::DurationLiteral(_)
             | ExprKind::StringLiteral(_) => {}
+        }
+    }
+
+    fn check_function_reference_name(&mut self, expr: &Expr, line: usize, column: usize) {
+        match &expr.kind {
+            ExprKind::Ident(name)
+                if self
+                    .functions
+                    .get(name)
+                    .and_then(|function| function.body_expr())
+                    .is_some() => {}
+            ExprKind::StringLiteral(name)
+                if self
+                    .functions
+                    .get(name)
+                    .and_then(|function| function.body_expr())
+                    .is_some() => {}
+            ExprKind::Ident(name) | ExprKind::StringLiteral(name) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_RESOLVE_UNKNOWN_NAME",
+                        format!("unknown function `{name}`"),
+                        line,
+                        column,
+                    )
+                    .with_span(expr.span),
+                );
+            }
+            _ => self.diagnostics.push(
+                Diagnostic::error("ML_TYPE_MISMATCH", "expected function name", line, column)
+                    .with_span(expr.span),
+            ),
         }
     }
 
@@ -3164,6 +3205,11 @@ impl Compiler {
                 self.eval_pipe(value, call, line, column, expr.span)
             }
             ExprKind::Call { callee, args } => {
+                if callee == "map" && args.len() == 2 {
+                    let value = self.eval_expr(&args[0], line, column)?;
+                    let function_name = self.expr_function_name(&args[1], line, column)?;
+                    return self.eval_map_value(value, &function_name, line, column, expr.span);
+                }
                 let args = args
                     .iter()
                     .map(|arg| self.eval_expr(arg, line, column))
@@ -3174,6 +3220,40 @@ impl Compiler {
                 let left = self.eval_expr(left, line, column)?;
                 let right = self.eval_expr(right, line, column)?;
                 self.eval_binary(*op, left, right, line, column, expr.span)
+            }
+        }
+    }
+
+    fn expr_function_name(&mut self, expr: &Expr, line: usize, column: usize) -> Option<String> {
+        match &expr.kind {
+            ExprKind::Ident(name)
+                if self
+                    .functions
+                    .get(name)
+                    .and_then(|function| function.body_expr())
+                    .is_some() =>
+            {
+                Some(name.clone())
+            }
+            ExprKind::StringLiteral(name) => Some(name.clone()),
+            ExprKind::Ident(name) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_RESOLVE_UNKNOWN_NAME",
+                        format!("unknown function `{name}`"),
+                        line,
+                        column,
+                    )
+                    .with_span(expr.span),
+                );
+                None
+            }
+            _ => {
+                self.diagnostics.push(
+                    Diagnostic::error("ML_TYPE_MISMATCH", "expected function name", line, column)
+                        .with_span(expr.span),
+                );
+                None
             }
         }
     }
@@ -3235,6 +3315,10 @@ impl Compiler {
     ) -> Option<Value> {
         match &call.kind {
             ExprKind::Call { callee, args } => {
+                if callee == "map" && args.len() == 1 {
+                    let function_name = self.expr_function_name(&args[0], line, column)?;
+                    return self.eval_map_value(value, &function_name, line, column, span);
+                }
                 let mut values = Vec::with_capacity(args.len() + 1);
                 values.push(value);
                 values.extend(
@@ -3441,6 +3525,40 @@ impl Compiler {
         Value::List(values)
     }
 
+    fn eval_map_value(
+        &mut self,
+        value: Value,
+        function_name: &str,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        match value {
+            Value::List(values) => values
+                .into_iter()
+                .map(|value| self.eval_map_value(value, function_name, line, column, span))
+                .collect::<Option<Vec<_>>>()
+                .map(Value::List),
+            value => {
+                match self.eval_user_function_call(function_name, &[value], line, column, span) {
+                    Some(value) => value,
+                    None => {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "ML_RESOLVE_UNKNOWN_NAME",
+                                format!("unknown function `{function_name}`"),
+                                line,
+                                column,
+                            )
+                            .with_span(span),
+                        );
+                        None
+                    }
+                }
+            }
+        }
+    }
+
     fn eval_call(
         &mut self,
         callee: &str,
@@ -3454,6 +3572,9 @@ impl Compiler {
         }
         match (callee, args.as_slice()) {
             ("cat" | "concat", _) => Some(self.eval_concat_values(args)),
+            ("map", [value, Value::String(function_name)]) => {
+                self.eval_map_value(value.clone(), function_name, line, column, span)
+            }
             ("transpose", [value, Value::Interval(interval)]) => {
                 self.eval_transpose_value(value.clone(), *interval, line, column, span)
             }
@@ -6494,6 +6615,28 @@ score demo {
         assert_eq!(ir.tracks[0].events.len(), 2);
         assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "E4");
         assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "B4");
+    }
+
+    #[test]
+    fn maps_phrase_values_through_expression_function() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [(root, 1/8), {p:root |> transpose(M3), d:1/4}]
+fn lift(event) = event |> transpose(P5)
+score demo {
+  voice lead {
+    play riff(C4) |> map(lift)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 2);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "G4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "B4");
+        assert_eq!(ir.tracks[0].events[0].duration_ticks, 240);
+        assert_eq!(ir.tracks[0].events[1].duration_ticks, 480);
     }
 
     #[test]
