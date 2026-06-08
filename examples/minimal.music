@@ -23,6 +23,8 @@ score demo {
     chord D3 minor inv 1, 1/2
     arpeggio [C4, E4, G4], 1/8
     arpeggio D3 minor inv 1, 1/16
+    strum [C4, E4, G4], 1/2 by 1/32
+    strum C4 dominant7 inv 2, 1/2 by 1/64
     progression I vi ii V7 I, 1/4
     cadence authentic, 1/2
     modulate G major

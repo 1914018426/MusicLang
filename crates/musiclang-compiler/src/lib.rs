@@ -10,7 +10,7 @@ use musiclang_parser::{
     parse_source, ArpeggioStmt, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt,
     DynamicStmt, Expr, ExprKind, FunctionDecl, ModulateStmt, NoteStmt, OstinatoStmt, OverrideStmt,
     PedalStmt, Program, ProgressionStmt, RestStmt, RomanStmt, ScaleStmt, SequenceStmt, Stmt,
-    StyleDecl, TransposeStmt, VoiceDecl, WithStyleStmt,
+    StrumStmt, StyleDecl, TransposeStmt, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +189,7 @@ impl Compiler {
             Stmt::Transpose(transpose) => self.compile_transpose(transpose, track),
             Stmt::Chord(chord) => self.compile_chord(chord, track),
             Stmt::Arpeggio(arpeggio) => self.compile_arpeggio(arpeggio, track),
+            Stmt::Strum(strum) => self.compile_strum(strum, track),
             Stmt::Roman(roman) => self.compile_roman(roman, track),
             Stmt::Progression(progression) => self.compile_progression(progression, track),
             Stmt::Cadence(cadence) => self.compile_cadence(cadence, track),
@@ -751,6 +752,35 @@ impl Compiler {
         for pitch in pitches {
             track.push_note(Note::new(pitch, duration), Some(arpeggio.span));
         }
+    }
+
+    fn compile_strum(&mut self, strum: &StrumStmt, track: &mut TrackBuilder) {
+        let context = ChordPitchContext {
+            line: strum.line,
+            column: strum.column,
+            span: strum.span,
+            program: track.program,
+        };
+        let pitches = self.collect_chord_pitches(
+            strum.root_expr.as_ref(),
+            strum.quality.as_deref(),
+            strum.inversion,
+            &strum.pitch_exprs,
+            context,
+        );
+        let Some(duration) = self.eval_duration(&strum.duration_expr, strum.line, strum.column)
+        else {
+            return;
+        };
+        let Some(offset) = self.eval_duration(&strum.offset_expr, strum.line, strum.column) else {
+            return;
+        };
+        self.check_chord_vocab(&pitches, strum.line, strum.column, Some(strum.span));
+        self.check_chord_quality_vocab(&pitches, strum.line, strum.column, Some(strum.span));
+        self.check_set_class_vocab(&pitches, strum.line, strum.column, Some(strum.span));
+        self.check_rhythm_vocab(duration, strum.line, strum.column, Some(strum.span));
+        self.check_rhythm_vocab(offset, strum.line, strum.column, Some(strum.span));
+        track.push_strum(&pitches, duration, offset, Some(strum.span));
     }
 
     fn collect_chord_pitches(
@@ -3452,6 +3482,28 @@ impl TrackBuilder {
             self.events.push(NoteEventIr {
                 pitch: *pitch,
                 start_tick: self.cursor_tick,
+                duration_ticks,
+                velocity: self.velocity,
+                articulation: self.articulation.clone(),
+                source_span,
+            });
+        }
+        self.cursor_tick += duration_ticks;
+    }
+
+    fn push_strum(
+        &mut self,
+        pitches: &[Pitch],
+        duration: Duration,
+        offset: Duration,
+        source_span: Option<Span>,
+    ) {
+        let duration_ticks = duration.ticks(DEFAULT_TICKS_PER_QUARTER);
+        let offset_ticks = offset.ticks(DEFAULT_TICKS_PER_QUARTER);
+        for (index, pitch) in pitches.iter().enumerate() {
+            self.events.push(NoteEventIr {
+                pitch: *pitch,
+                start_tick: self.cursor_tick + offset_ticks * index as u32,
                 duration_ticks,
                 velocity: self.velocity,
                 articulation: self.articulation.clone(),
@@ -6755,6 +6807,53 @@ score demo {
             ir.tracks[0].events[2].articulation.as_deref(),
             Some("staccato")
         );
+    }
+
+    #[test]
+    fn strum_emits_staggered_overlapping_notes() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice guitar {
+    strum [C4, E4, G4], 1/2 by 1/32
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].pitch.class(), PitchClass::C);
+        assert_eq!(events[1].pitch.class(), PitchClass::E);
+        assert_eq!(events[2].pitch.class(), PitchClass::G);
+        assert_eq!(events[0].start_tick, 0);
+        assert_eq!(events[1].start_tick, 60);
+        assert_eq!(events[2].start_tick, 120);
+        assert_eq!(events[0].duration_ticks, 960);
+    }
+
+    #[test]
+    fn named_strum_supports_inversion() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice guitar {
+    strum C4 dominant7 inv 2, 1/2 by 1/64
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].pitch.to_string(), "G4");
+        assert_eq!(events[1].pitch.to_string(), "A#4");
+        assert_eq!(events[2].pitch.to_string(), "C5");
+        assert_eq!(events[3].pitch.to_string(), "E5");
+        assert_eq!(events[1].start_tick, 30);
+        assert_eq!(events[3].start_tick, 90);
     }
 
     #[test]

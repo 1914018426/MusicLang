@@ -77,6 +77,7 @@ pub enum Stmt {
     Transpose(TransposeStmt),
     Chord(ChordStmt),
     Arpeggio(ArpeggioStmt),
+    Strum(StrumStmt),
     Roman(RomanStmt),
     Progression(ProgressionStmt),
     Cadence(CadenceStmt),
@@ -286,6 +287,22 @@ pub struct ArpeggioStmt {
     pub quality: Option<String>,
     pub inversion: Option<usize>,
     pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrumStmt {
+    pub pitches: Vec<String>,
+    pub duration: String,
+    pub offset: String,
+    pub pitch_exprs: Vec<Expr>,
+    pub root_expr: Option<Expr>,
+    pub quality: Option<String>,
+    pub inversion: Option<usize>,
+    pub duration_expr: Expr,
+    pub offset_expr: Expr,
     pub line: usize,
     pub column: usize,
     pub span: Span,
@@ -907,6 +924,9 @@ impl Parser {
         if self.check_ident("arpeggio") {
             return self.parse_arpeggio().map(Stmt::Arpeggio);
         }
+        if self.check_ident("strum") {
+            return self.parse_strum().map(Stmt::Strum);
+        }
         if self.check_ident("roman") {
             return self.parse_roman().map(Stmt::Roman);
         }
@@ -1289,6 +1309,59 @@ impl Parser {
             quality: Some(quality),
             inversion,
             duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_strum(&mut self) -> Option<StrumStmt> {
+        let start = self.expect_ident_text("strum")?;
+        if self.check(TokenKind::LBracket) {
+            self.advance();
+            let mut pitch_exprs = Vec::new();
+            while !self.check(TokenKind::RBracket) && !self.check(TokenKind::Eof) {
+                pitch_exprs.push(self.parse_expr_until(&[TokenKind::Comma, TokenKind::RBracket])?);
+                if self.check(TokenKind::Comma) {
+                    self.advance();
+                }
+            }
+            self.expect(TokenKind::RBracket, "expected `]` after strum pitches")?;
+            self.expect(TokenKind::Comma, "expected `,` after strum pitches")?;
+            let duration_expr = self.parse_expr_until_keyword("by")?;
+            self.expect_ident_text("by")?;
+            let offset_expr = self.parse_expr_until_stmt_end()?;
+            return Some(StrumStmt {
+                pitches: pitch_exprs.iter().map(expr_to_source).collect(),
+                duration: expr_to_source(&duration_expr),
+                offset: expr_to_source(&offset_expr),
+                pitch_exprs,
+                root_expr: None,
+                quality: None,
+                inversion: None,
+                duration_expr,
+                offset_expr,
+                line: start.span.line,
+                column: start.span.column,
+                span: start.span,
+            });
+        }
+
+        let (root_expr, quality, inversion) = self.parse_named_chord_head()?;
+        self.expect(TokenKind::Comma, "expected `,` after strum quality")?;
+        let duration_expr = self.parse_expr_until_keyword("by")?;
+        self.expect_ident_text("by")?;
+        let offset_expr = self.parse_expr_until_stmt_end()?;
+        Some(StrumStmt {
+            pitches: Vec::new(),
+            duration: expr_to_source(&duration_expr),
+            offset: expr_to_source(&offset_expr),
+            pitch_exprs: Vec::new(),
+            root_expr: Some(root_expr),
+            quality: Some(quality),
+            inversion,
+            duration_expr,
+            offset_expr,
             line: start.span.line,
             column: start.span.column,
             span: start.span,
@@ -1761,6 +1834,7 @@ impl Parser {
                 | "transpose"
                 | "chord"
                 | "arpeggio"
+                | "strum"
                 | "roman"
                 | "progression"
                 | "cadence"
@@ -2435,6 +2509,37 @@ score demo {
         assert_eq!(named.quality.as_deref(), Some("minor"));
         assert_eq!(named.inversion, Some(1));
         assert_eq!(named.duration, "1/16");
+    }
+
+    #[test]
+    fn parses_strum_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice guitar {
+    strum [C4, E4, G4], 1/2 by 1/32
+    strum C4 dominant7 inv 2, 1/2 by 1/64
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Strum(bracket) = &voice.statements[0] else {
+            panic!("expected strum");
+        };
+        let Stmt::Strum(named) = &voice.statements[1] else {
+            panic!("expected named strum");
+        };
+
+        assert_eq!(bracket.pitches, ["C4", "E4", "G4"]);
+        assert_eq!(bracket.duration, "1/2");
+        assert_eq!(bracket.offset, "1/32");
+        assert_eq!(named.quality.as_deref(), Some("dominant7"));
+        assert_eq!(named.inversion, Some(2));
+        assert_eq!(named.offset, "1/64");
     }
 
     #[test]
