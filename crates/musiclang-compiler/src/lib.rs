@@ -4492,6 +4492,86 @@ score demo style ClassicalCadence {
     }
 
     #[test]
+    fn cadence_rule_accepts_plagal_cadence() {
+        let ir = compile_source(
+            r#"
+style ClassicalCadence {
+  cadence: plagal
+}
+score demo style ClassicalCadence {
+  voice chordal {
+    chord [F4, A4, C5], 1/4
+    chord [C4, E4, G4], 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 6);
+    }
+
+    #[test]
+    fn cadence_rule_rejects_plagal_without_subdominant() {
+        let diagnostics = compile_source(
+            r#"
+style ClassicalCadence {
+  cadence: plagal
+}
+score demo style ClassicalCadence {
+  voice chordal {
+    chord [G4, B4, D5], 1/4
+    chord [C4, E4, G4], 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_CADENCE");
+    }
+
+    #[test]
+    fn cadence_rule_accepts_deceptive_cadence() {
+        let ir = compile_source(
+            r#"
+style ClassicalCadence {
+  cadence: deceptive
+}
+score demo style ClassicalCadence {
+  voice chordal {
+    chord [G4, B4, D5], 1/4
+    chord [A4, C5, E5], 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 6);
+    }
+
+    #[test]
+    fn cadence_rule_rejects_deceptive_without_submediant() {
+        let diagnostics = compile_source(
+            r#"
+style ClassicalCadence {
+  cadence: deceptive
+}
+score demo style ClassicalCadence {
+  voice chordal {
+    chord [G4, B4, D5], 1/4
+    chord [C4, E4, G4], 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_CADENCE");
+    }
+
+    #[test]
     fn cadence_rule_accepts_half_cadence() {
         let ir = compile_source(
             r#"

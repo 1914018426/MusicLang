@@ -85,7 +85,7 @@ style Sparse {
   harmonic_function: tonic predominant dominant secondary_dominant submediant
   max_melodic_leap: P5
   contrapuntal_motion: contrary oblique similar
-  cadence: authentic
+  cadence: deceptive
   harmonic_progression: tonic predominant dominant tonic
   texture: homophony
   form: ternary
