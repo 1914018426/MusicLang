@@ -856,6 +856,7 @@ impl Compiler {
                     >= 2
             }
             "homophony" | "homophonic" => tracks_share_attack_grid(tracks),
+            "heterophony" | "heterophonic" => tracks_are_heterophonic(tracks),
             _ => true,
         };
         if !valid {
@@ -1949,6 +1950,20 @@ fn tracks_share_attack_grid(tracks: &[TrackIr]) -> bool {
     };
     let first_grid = attack_grid(first);
     non_empty.all(|track| attack_grid(track) == first_grid)
+}
+
+fn tracks_are_heterophonic(tracks: &[TrackIr]) -> bool {
+    let non_empty = tracks
+        .iter()
+        .filter(|track| !track.events.is_empty())
+        .collect::<Vec<_>>();
+    let Some(first) = non_empty.first() else {
+        return false;
+    };
+    non_empty.len() >= 2
+        && non_empty.iter().all(|track| {
+            attack_grid(track) == attack_grid(first) && track.events.len() == first.events.len()
+        })
 }
 
 fn attack_grid(track: &TrackIr) -> Vec<u32> {
@@ -3806,6 +3821,77 @@ score demo style Hymn {
         .unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_TEXTURE");
+    }
+
+    #[test]
+    fn texture_heterophony_accepts_shared_melodic_grid() {
+        let ir = compile_source(
+            r#"
+style SharedMelody {
+  texture: heterophony
+  severity_voice_crossing: off
+}
+score demo style SharedMelody {
+  voice a {
+    note C4, 1/4
+    note D4, 1/4
+  }
+  voice b {
+    note C4, 1/4
+    note E4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks.len(), 2);
+    }
+
+    #[test]
+    fn texture_heterophony_rejects_single_voice() {
+        let diagnostics = compile_source(
+            r#"
+style SharedMelody {
+  texture: heterophony
+}
+score demo style SharedMelody {
+  voice a {
+    note C4, 1/4
+    note D4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_TEXTURE");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("texture"));
+    }
+
+    #[test]
+    fn texture_heterophony_rejects_different_event_counts() {
+        let diagnostics = compile_source(
+            r#"
+style SharedMelody {
+  texture: heterophony
+  severity_voice_crossing: off
+}
+score demo style SharedMelody {
+  voice a {
+    note C4, 1/4
+    note D4, 1/4
+  }
+  voice b {
+    note C4, 1/2
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_TEXTURE");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("texture"));
     }
 
     #[test]

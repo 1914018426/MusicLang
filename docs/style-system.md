@@ -69,7 +69,7 @@ style Chamber extends Classical {
 - `voice_crossing`: an upper voice must not cross below a lower voice at the same tick.
 - `cadence`: final sonorities must satisfy configured cadence patterns (`authentic`, `plagal`, `deceptive`, `half`).
 - `harmonic_progression`: sonorities must contain the configured functional progression (`tonic`, `predominant`, `dominant`, `submediant`).
-- `texture`: compiled tracks must satisfy configured texture (`monophony`, `polyphony`, `homophony`).
+- `texture`: compiled tracks must satisfy configured texture (`monophony`, `polyphony`, `homophony`, `heterophony`).
 - `form`: explicit `section` labels must match the configured entry from the `forms` theory catalog, such as `binary`, `ternary`, `sonata`, or `rondo`.
 
 Unknown override rules fail with `ML_STYLE_UNKNOWN_RULE`.
