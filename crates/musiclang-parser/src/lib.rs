@@ -69,6 +69,7 @@ pub enum Stmt {
     Voice(VoiceDecl),
     Note(NoteStmt),
     Pedal(PedalStmt),
+    Ostinato(OstinatoStmt),
     Chord(ChordStmt),
     Roman(RomanStmt),
     Progression(ProgressionStmt),
@@ -187,6 +188,16 @@ pub struct PedalStmt {
     pub pitch_expr: Expr,
     pub count_expr: Expr,
     pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OstinatoStmt {
+    pub count: i32,
+    pub count_expr: Expr,
+    pub statements: Vec<Stmt>,
     pub line: usize,
     pub column: usize,
     pub span: Span,
@@ -797,6 +808,9 @@ impl Parser {
         if self.check_ident("pedal") {
             return self.parse_pedal().map(Stmt::Pedal);
         }
+        if self.check_ident("ostinato") {
+            return self.parse_ostinato().map(Stmt::Ostinato);
+        }
         if self.check_ident("chord") {
             return self.parse_chord().map(Stmt::Chord);
         }
@@ -990,6 +1004,24 @@ impl Parser {
             pitch_expr,
             count_expr,
             duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_ostinato(&mut self) -> Option<OstinatoStmt> {
+        let start = self.expect_ident_text("ostinato")?;
+        let count_expr = self.parse_expr_until(&[TokenKind::LBrace])?;
+        let count = match count_expr.kind {
+            ExprKind::Int(value) => value,
+            _ => 0,
+        };
+        let statements = self.parse_required_block()?;
+        Some(OstinatoStmt {
+            count,
+            count_expr,
+            statements,
             line: start.span.line,
             column: start.span.column,
             span: start.span,
@@ -1459,6 +1491,7 @@ impl Parser {
             "voice"
                 | "note"
                 | "pedal"
+                | "ostinato"
                 | "chord"
                 | "roman"
                 | "progression"
@@ -1938,6 +1971,33 @@ score demo {
         assert_eq!(pedal.pitch, "C3");
         assert_eq!(pedal.count, 4);
         assert_eq!(pedal.duration, "1/4");
+    }
+
+    #[test]
+    fn parses_ostinato_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice bass {
+    ostinato 3 {
+      note C3, 1/8
+      note G3, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Ostinato(ostinato) = &voice.statements[0] else {
+            panic!("expected ostinato");
+        };
+
+        assert_eq!(ostinato.count, 3);
+        assert_eq!(ostinato.statements.len(), 2);
+        assert!(matches!(ostinato.statements[0], Stmt::Note(_)));
     }
 
     #[test]

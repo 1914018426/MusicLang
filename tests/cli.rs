@@ -202,6 +202,35 @@ score demo {
 }
 
 #[test]
+fn music_ir_expands_ostinato_block() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/ostinato.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  voice bass {
+    ostinato 3 {
+      note C3, 1/8
+      note G3, 1/8
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["ir", &input_path]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("class: C"));
+    assert!(stdout.contains("class: G"));
+    assert!(stdout.contains("start_tick: 1200"));
+    assert!(stdout.contains("duration_ticks: 240"));
+}
+
+#[test]
 fn music_ir_expands_named_chord_quality() {
     let workspace = env!("CARGO_MANIFEST_DIR");
     let input_path = format!("{workspace}/target/named-chord.music");

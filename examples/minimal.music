@@ -4,6 +4,10 @@ score demo {
     note C4, 1/4
     note E4, 1/4
     pedal C3, 2, 1/4
+    ostinato 2 {
+      note C3, 1/8
+      note G3, 1/8
+    }
     chord [C4, E4, G4], 1/2
     chord D3 minor, 1/2
     progression I vi ii V7 I, 1/4

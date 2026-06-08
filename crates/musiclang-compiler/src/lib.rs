@@ -8,8 +8,8 @@ use musiclang_core::{
 };
 use musiclang_parser::{
     parse_source, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DynamicStmt, Expr, ExprKind,
-    FunctionDecl, ModulateStmt, NoteStmt, OverrideStmt, PedalStmt, Program, ProgressionStmt,
-    RomanStmt, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
+    FunctionDecl, ModulateStmt, NoteStmt, OstinatoStmt, OverrideStmt, PedalStmt, Program,
+    ProgressionStmt, RomanStmt, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,6 +170,7 @@ impl Compiler {
             Stmt::Voice(voice) => self.compile_voice(voice, track),
             Stmt::Note(note) => self.compile_note(note, track),
             Stmt::Pedal(pedal) => self.compile_pedal(pedal, track),
+            Stmt::Ostinato(ostinato) => self.compile_ostinato(ostinato, track),
             Stmt::Chord(chord) => self.compile_chord(chord, track),
             Stmt::Roman(roman) => self.compile_roman(roman, track),
             Stmt::Progression(progression) => self.compile_progression(progression, track),
@@ -394,6 +395,46 @@ impl Compiler {
                         pedal.column,
                     )
                     .with_span(pedal.span),
+                );
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn compile_ostinato(&mut self, ostinato: &OstinatoStmt, track: &mut TrackBuilder) {
+        let Some(count) = self.eval_ostinato_count(ostinato) else {
+            return;
+        };
+        for _ in 0..count {
+            self.compile_statements(&ostinato.statements, track);
+        }
+    }
+
+    fn eval_ostinato_count(&mut self, ostinato: &OstinatoStmt) -> Option<usize> {
+        match self.eval_expr(&ostinato.count_expr, ostinato.line, ostinato.column) {
+            Some(Value::Int(value)) if value > 0 => Some(value as usize),
+            Some(Value::Int(_)) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_THEORY_OSTINATO",
+                        "ostinato count must be positive",
+                        ostinato.line,
+                        ostinato.column,
+                    )
+                    .with_span(ostinato.span),
+                );
+                None
+            }
+            Some(_) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected integer ostinato count",
+                        ostinato.line,
+                        ostinato.column,
+                    )
+                    .with_span(ostinato.span),
                 );
                 None
             }
@@ -3076,6 +3117,54 @@ score demo {
         assert!(diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "ML_THEORY_PEDAL"));
+    }
+
+    #[test]
+    fn expands_ostinato_block_to_repeated_events() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice bass {
+    ostinato 3 {
+      note C3, 1/8
+      note G3, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let track = &ir.tracks[0];
+        let pitches = track
+            .events
+            .iter()
+            .map(|event| event.pitch.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(pitches, vec!["C3", "G3", "C3", "G3", "C3", "G3"]);
+        assert_eq!(track.events[0].start_tick, 0);
+        assert_eq!(track.events[1].start_tick, 240);
+        assert_eq!(track.events[5].start_tick, 1200);
+    }
+
+    #[test]
+    fn rejects_non_positive_ostinato_count() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice bass {
+    ostinato 0 {
+      note C3, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_THEORY_OSTINATO"));
     }
 
     #[test]
