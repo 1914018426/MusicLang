@@ -751,7 +751,14 @@ impl Compiler {
                     );
                 }
                 Stmt::For(for_stmt) => {
-                    scopes.push(HashSet::from([for_stmt.variable.clone()]));
+                    scopes.push(HashSet::new());
+                    self.check_duplicate_binding(
+                        &for_stmt.variable,
+                        for_stmt.line,
+                        for_stmt.column,
+                        for_stmt.span,
+                        scopes,
+                    );
                     self.check_expression_names_in_statements(&for_stmt.statements, scopes);
                     scopes.pop();
                 }
@@ -771,9 +778,13 @@ impl Compiler {
                         let_stmt.column,
                         scopes,
                     );
-                    if let Some(scope) = scopes.last_mut() {
-                        scope.insert(let_stmt.name.clone());
-                    }
+                    self.check_duplicate_binding(
+                        &let_stmt.name,
+                        let_stmt.line,
+                        let_stmt.column,
+                        let_stmt.span,
+                        scopes,
+                    );
                 }
                 Stmt::Override(override_stmt) => {
                     self.check_expression_names_in_statements(&override_stmt.statements, scopes);
@@ -790,6 +801,30 @@ impl Compiler {
                 | Stmt::Articulation(_)
                 | Stmt::Call(_) => {}
             }
+        }
+    }
+
+    fn check_duplicate_binding(
+        &mut self,
+        name: &str,
+        line: usize,
+        column: usize,
+        span: Span,
+        scopes: &mut [HashSet<String>],
+    ) {
+        let Some(scope) = scopes.last_mut() else {
+            return;
+        };
+        if !scope.insert(name.to_string()) {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_RESOLVE_DUPLICATE_NAME",
+                    format!("duplicate binding `{name}`"),
+                    line,
+                    column,
+                )
+                .with_span(span),
+            );
         }
     }
 
@@ -5688,6 +5723,66 @@ score demo {
         .unwrap();
 
         assert_eq!(ir.tracks[0].events.len(), 2);
+    }
+
+    #[test]
+    fn duplicate_let_binding_uses_stable_diagnostic_code() {
+        let source = r#"
+score demo {
+  voice lead {
+    let d = duration 1/4
+    let d = duration 1/8
+    note C4, d
+  }
+}
+"#;
+        let diagnostics = compile_source(source).unwrap_err();
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_RESOLVE_DUPLICATE_NAME"
+                && diagnostic.message == "duplicate binding `d`"
+        }));
+    }
+
+    #[test]
+    fn unexecuted_branch_duplicate_let_binding_fails() {
+        let source = r#"
+score demo {
+  voice lead {
+    if false == true {
+      let d = duration 1/4
+      let d = duration 1/8
+    }
+    note C4, 1/4
+  }
+}
+"#;
+        let diagnostics = compile_source(source).unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_RESOLVE_DUPLICATE_NAME"));
+    }
+
+    #[test]
+    fn nested_for_scope_can_shadow_outer_binding() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    let i = 1
+    for i in 0..2 {
+      if i == 1 {
+        note C4, 1/4
+      }
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
     }
 
     #[test]
