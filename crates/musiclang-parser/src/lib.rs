@@ -70,6 +70,7 @@ pub enum Stmt {
     Note(NoteStmt),
     Chord(ChordStmt),
     Roman(RomanStmt),
+    Progression(ProgressionStmt),
     Dynamic(DynamicStmt),
     Velocity(VelocityStmt),
     Articulation(ArticulationStmt),
@@ -191,6 +192,16 @@ pub struct ChordStmt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RomanStmt {
     pub symbol: String,
+    pub duration: String,
+    pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgressionStmt {
+    pub symbols: Vec<String>,
     pub duration: String,
     pub duration_expr: Expr,
     pub line: usize,
@@ -754,6 +765,9 @@ impl Parser {
         if self.check_ident("roman") {
             return self.parse_roman().map(Stmt::Roman);
         }
+        if self.check_ident("progression") {
+            return self.parse_progression().map(Stmt::Progression);
+        }
         if self.check_ident("dynamic") {
             return self.parse_dynamic().map(Stmt::Dynamic);
         }
@@ -964,6 +978,21 @@ impl Parser {
         let duration_expr = self.parse_expr_until_stmt_end()?;
         Some(RomanStmt {
             symbol,
+            duration: expr_to_source(&duration_expr),
+            duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_progression(&mut self) -> Option<ProgressionStmt> {
+        let start = self.expect_ident_text("progression")?;
+        let symbols = self.parse_progression_symbols()?;
+        self.expect(TokenKind::Comma, "expected `,` after harmonic progression")?;
+        let duration_expr = self.parse_expr_until_stmt_end()?;
+        Some(ProgressionStmt {
+            symbols,
             duration: expr_to_source(&duration_expr),
             duration_expr,
             line: start.span.line,
@@ -1272,6 +1301,32 @@ impl Parser {
             })
     }
 
+    fn parse_progression_symbols(&mut self) -> Option<Vec<String>> {
+        let mut symbols = Vec::new();
+        while !self.check(TokenKind::Eof) && !self.check(TokenKind::Comma) {
+            let token = self.advance().clone();
+            if matches!(
+                token.kind,
+                TokenKind::Ident | TokenKind::Pitch | TokenKind::Interval | TokenKind::Duration
+            ) {
+                symbols.push(token.text);
+            } else {
+                self.push_token_diagnostic("ML_PARSE_NAME", "expected roman numeral", &token);
+                return None;
+            }
+        }
+        if symbols.is_empty() {
+            let token = self.peek().clone();
+            self.push_token_diagnostic(
+                "ML_PARSE_PROGRESSION",
+                "expected at least one roman numeral",
+                &token,
+            );
+            return None;
+        }
+        Some(symbols)
+    }
+
     fn parse_expr_until_stmt_end(&mut self) -> Option<Expr> {
         let mut tokens = Vec::new();
         let mut depth = 0usize;
@@ -1302,6 +1357,7 @@ impl Parser {
                 | "note"
                 | "chord"
                 | "roman"
+                | "progression"
                 | "dynamic"
                 | "velocity"
                 | "articulation"
@@ -1776,6 +1832,30 @@ score demo {
 
         assert_eq!(roman.symbol, "V65/V");
         assert_eq!(roman.duration, "1/2");
+    }
+
+    #[test]
+    fn parses_harmonic_progression() {
+        let program = parse_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    progression I vi ii V7 I, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Progression(progression) = &voice.statements[0] else {
+            panic!("expected harmonic progression");
+        };
+
+        assert_eq!(progression.symbols, ["I", "vi", "ii", "V7", "I"]);
+        assert_eq!(progression.duration, "1/4");
     }
 
     #[test]

@@ -8,7 +8,8 @@ use musiclang_core::{
 };
 use musiclang_parser::{
     parse_source, ArticulationStmt, BinaryOp, ChordStmt, DynamicStmt, Expr, ExprKind, FunctionDecl,
-    NoteStmt, OverrideStmt, Program, RomanStmt, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
+    NoteStmt, OverrideStmt, Program, ProgressionStmt, RomanStmt, Stmt, StyleDecl, VoiceDecl,
+    WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,6 +171,7 @@ impl Compiler {
             Stmt::Note(note) => self.compile_note(note, track),
             Stmt::Chord(chord) => self.compile_chord(chord, track),
             Stmt::Roman(roman) => self.compile_roman(roman, track),
+            Stmt::Progression(progression) => self.compile_progression(progression, track),
             Stmt::Dynamic(dynamic) => {
                 self.check_dynamic_vocab(dynamic);
                 if let Some(velocity) = dynamic_velocity(&dynamic.mark) {
@@ -432,53 +434,85 @@ impl Compiler {
     }
 
     fn compile_roman(&mut self, roman: &RomanStmt, track: &mut TrackBuilder) {
+        let Some(duration) = self.eval_duration(&roman.duration_expr, roman.line, roman.column)
+        else {
+            return;
+        };
+        self.compile_roman_symbol(
+            &roman.symbol,
+            duration,
+            roman.line,
+            roman.column,
+            roman.span,
+            track,
+        );
+    }
+
+    fn compile_progression(&mut self, progression: &ProgressionStmt, track: &mut TrackBuilder) {
+        let Some(duration) = self.eval_duration(
+            &progression.duration_expr,
+            progression.line,
+            progression.column,
+        ) else {
+            return;
+        };
+        for symbol in &progression.symbols {
+            self.compile_roman_symbol(
+                symbol,
+                duration,
+                progression.line,
+                progression.column,
+                progression.span,
+                track,
+            );
+        }
+    }
+
+    fn compile_roman_symbol(
+        &mut self,
+        symbol: &str,
+        duration: Duration,
+        line: usize,
+        column: usize,
+        span: Span,
+        track: &mut TrackBuilder,
+    ) {
         let Some(key) = self.score_key else {
             self.diagnostics.push(
                 Diagnostic::error(
                     "ML_THEORY_ROMAN_KEY",
                     "roman numeral chord requires score key metadata",
-                    roman.line,
-                    roman.column,
+                    line,
+                    column,
                 )
-                .with_span(roman.span),
+                .with_span(span),
             );
             return;
         };
-        let Some(pitches) = roman_chord_pitches(&roman.symbol, key) else {
+        let Some(pitches) = roman_chord_pitches(symbol, key) else {
             self.diagnostics.push(
                 Diagnostic::error(
                     "ML_THEORY_ROMAN_NUMERAL",
-                    format!("unsupported roman numeral chord `{}`", roman.symbol),
-                    roman.line,
-                    roman.column,
+                    format!("unsupported roman numeral chord `{symbol}`"),
+                    line,
+                    column,
                 )
-                .with_span(roman.span),
+                .with_span(span),
             );
-            return;
-        };
-        let Some(duration) = self.eval_duration(&roman.duration_expr, roman.line, roman.column)
-        else {
             return;
         };
         for pitch in &pitches {
-            self.check_pitch_style(*pitch, roman.line, roman.column, Some(roman.span));
-            self.check_instrument_range(
-                track.program,
-                *pitch,
-                roman.line,
-                roman.column,
-                Some(roman.span),
-            );
+            self.check_pitch_style(*pitch, line, column, Some(span));
+            self.check_instrument_range(track.program, *pitch, line, column, Some(span));
         }
-        self.check_chord_vocab(&pitches, roman.line, roman.column, Some(roman.span));
-        self.check_chord_quality_vocab(&pitches, roman.line, roman.column, Some(roman.span));
-        self.check_set_class_vocab(&pitches, roman.line, roman.column, Some(roman.span));
-        self.check_rhythm_vocab(duration, roman.line, roman.column, Some(roman.span));
+        self.check_chord_vocab(&pitches, line, column, Some(span));
+        self.check_chord_quality_vocab(&pitches, line, column, Some(span));
+        self.check_set_class_vocab(&pitches, line, column, Some(span));
+        self.check_rhythm_vocab(duration, line, column, Some(span));
         match Chord::new(pitches, duration) {
-            Ok(compiled_chord) => track.push_chord(compiled_chord, Some(roman.span)),
+            Ok(compiled_chord) => track.push_chord(compiled_chord, Some(span)),
             Err(error) => self.diagnostics.push(
-                Diagnostic::error("ML_CORE_CHORD", error.to_string(), roman.line, roman.column)
-                    .with_span(roman.span),
+                Diagnostic::error("ML_CORE_CHORD", error.to_string(), line, column).with_span(span),
             ),
         }
     }
@@ -2956,6 +2990,39 @@ score demo {
                 "D3", "F#3", "A3", "F#3", "A3", "C4"
             ]
         );
+    }
+
+    #[test]
+    fn compiles_harmonic_progression_against_score_key() {
+        let ir = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    progression I vi ii V7 I, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let pitches = ir.tracks[0]
+            .events
+            .iter()
+            .map(|event| event.pitch.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pitches,
+            vec![
+                "C4", "E4", "G4", "A3", "C4", "E4", "D4", "F4", "A4", "G3", "B3", "D4", "F4", "C4",
+                "E4", "G4"
+            ]
+        );
+        assert_eq!(ir.tracks[0].events[0].start_tick, 0);
+        assert_eq!(ir.tracks[0].events[3].start_tick, 480);
+        assert_eq!(ir.tracks[0].events[6].start_tick, 960);
+        assert_eq!(ir.tracks[0].events[9].start_tick, 1440);
+        assert_eq!(ir.tracks[0].events[13].start_tick, 1920);
     }
 
     #[test]
