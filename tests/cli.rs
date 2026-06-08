@@ -282,11 +282,17 @@ fn music_analyze_summarizes_score() {
     assert!(stdout.contains("key: D minor"));
     assert!(stdout.contains("tracks: 2"));
     assert!(stdout.contains("events: 3"));
+    assert!(stdout.contains("duration_ticks: 960"));
+    assert!(stdout.contains("bar_ticks: 1440"));
+    assert!(stdout.contains("duration_bars: 1"));
+    assert!(stdout.contains("density_per_bar: 3"));
+    assert!(stdout.contains("max_simultaneous_events: 2"));
+    assert!(stdout.contains("texture: polyphonic"));
     assert!(stdout.contains("pitch_range: D3..G4"));
     assert!(stdout.contains("pitch_classes: C,D,G"));
     assert!(stdout.contains("roman_roots: bvii,i,iv"));
-    assert!(stdout.contains("track lead: events=2, range=C4..G4"));
-    assert!(stdout.contains("track bass: events=1, range=D3..D3"));
+    assert!(stdout.contains("track lead: events=2, density_per_bar=2, range=C4..G4"));
+    assert!(stdout.contains("track bass: events=1, density_per_bar=1, range=D3..D3"));
 }
 
 #[test]
@@ -303,12 +309,18 @@ fn music_analyze_json_is_machine_readable() {
     assert!(stdout.contains("\"key\":{\"tonic\":\"D\",\"mode\":\"minor\",\"fifths\":-1}"));
     assert!(stdout.contains("\"track_count\":2"));
     assert!(stdout.contains("\"event_count\":3"));
+    assert!(stdout.contains("\"duration_ticks\":960"));
+    assert!(stdout.contains("\"bar_ticks\":1440"));
+    assert!(stdout.contains("\"duration_bars\":1"));
+    assert!(stdout.contains("\"density_per_bar\":3"));
+    assert!(stdout.contains("\"max_simultaneous_events\":2"));
+    assert!(stdout.contains("\"texture\":\"polyphonic\""));
     assert!(stdout.contains("\"pitch_min\":\"D3\""));
     assert!(stdout.contains("\"pitch_max\":\"G4\""));
     assert!(stdout.contains("\"pitch_classes\":[\"C\",\"D\",\"G\"]"));
     assert!(stdout.contains("\"roman_roots\":[\"bvii\",\"i\",\"iv\"]"));
     assert!(stdout.contains(
-        "\"tracks\":[{\"name\":\"lead\",\"event_count\":2,\"pitch_min\":\"C4\",\"pitch_max\":\"G4\"},{\"name\":\"bass\",\"event_count\":1,\"pitch_min\":\"D3\",\"pitch_max\":\"D3\"}]"
+        "\"tracks\":[{\"name\":\"lead\",\"event_count\":2,\"density_per_bar\":2,\"pitch_min\":\"C4\",\"pitch_max\":\"G4\"},{\"name\":\"bass\",\"event_count\":1,\"density_per_bar\":1,\"pitch_min\":\"D3\",\"pitch_max\":\"D3\"}]"
     ));
 }
 

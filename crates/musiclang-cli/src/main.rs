@@ -275,6 +275,7 @@ fn ir_file(input: &str) -> Result<(), String> {
 struct TrackAnalysis {
     name: String,
     event_count: usize,
+    density_per_bar: u32,
     pitch_min: Option<String>,
     pitch_max: Option<String>,
 }
@@ -289,6 +290,11 @@ struct ScoreAnalysis {
     track_count: usize,
     event_count: usize,
     duration_ticks: u32,
+    bar_ticks: u32,
+    duration_bars: u32,
+    density_per_bar: u32,
+    max_simultaneous_events: usize,
+    texture: String,
     pitch_min: Option<String>,
     pitch_max: Option<String>,
     pitch_classes: Vec<String>,
@@ -327,6 +333,13 @@ fn analyze_score(
         .map(|event| event.start_tick + event.duration_ticks)
         .max()
         .unwrap_or(0);
+    let meter = ir.meter.unwrap_or_default();
+    let bar_ticks =
+        ir.ticks_per_quarter * u32::from(meter.numerator) * 4 / u32::from(meter.denominator);
+    let duration_bars = duration_ticks.div_ceil(bar_ticks.max(1));
+    let score_density_per_bar = density_per_bar(events.len(), duration_bars);
+    let max_simultaneous_events = max_simultaneous_events(&events);
+    let texture = classify_texture(ir.tracks.len(), max_simultaneous_events).to_string();
     let pitch_min = events
         .iter()
         .filter_map(|event| event.pitch.midi_number().ok())
@@ -392,6 +405,7 @@ fn analyze_score(
             TrackAnalysis {
                 name: track.name.clone(),
                 event_count: track.events.len(),
+                density_per_bar: density_per_bar(track.events.len(), duration_bars),
                 pitch_min,
                 pitch_max,
             }
@@ -410,6 +424,11 @@ fn analyze_score(
         track_count: ir.tracks.len(),
         event_count: events.len(),
         duration_ticks,
+        bar_ticks,
+        duration_bars,
+        density_per_bar: score_density_per_bar,
+        max_simultaneous_events,
+        texture,
         pitch_min,
         pitch_max,
         pitch_classes,
@@ -436,6 +455,14 @@ fn print_analysis(analysis: &ScoreAnalysis) {
     println!("tracks: {}", analysis.track_count);
     println!("events: {}", analysis.event_count);
     println!("duration_ticks: {}", analysis.duration_ticks);
+    println!("bar_ticks: {}", analysis.bar_ticks);
+    println!("duration_bars: {}", analysis.duration_bars);
+    println!("density_per_bar: {}", analysis.density_per_bar);
+    println!(
+        "max_simultaneous_events: {}",
+        analysis.max_simultaneous_events
+    );
+    println!("texture: {}", analysis.texture);
     if let (Some(low), Some(high)) = (&analysis.pitch_min, &analysis.pitch_max) {
         println!("pitch_range: {low}..{high}");
     }
@@ -448,13 +475,13 @@ fn print_analysis(analysis: &ScoreAnalysis) {
     for track in &analysis.tracks {
         if let (Some(low), Some(high)) = (&track.pitch_min, &track.pitch_max) {
             println!(
-                "track {}: events={}, range={}..{}",
-                track.name, track.event_count, low, high
+                "track {}: events={}, density_per_bar={}, range={}..{}",
+                track.name, track.event_count, track.density_per_bar, low, high
             );
         } else {
             println!(
-                "track {}: events={}, range=none",
-                track.name, track.event_count
+                "track {}: events={}, density_per_bar={}, range=none",
+                track.name, track.event_count, track.density_per_bar
             );
         }
     }
@@ -465,7 +492,7 @@ fn print_analysis(analysis: &ScoreAnalysis) {
 
 fn print_analysis_json(analysis: &ScoreAnalysis) {
     print!(
-        "{{\"title\":\"{}\",\"composer\":{},\"tempo_bpm\":{},\"meter\":{},\"key\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"pitch_min\":{},\"pitch_max\":{},\"pitch_classes\":{},\"roman_roots\":{},\"tracks\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
+        "{{\"title\":\"{}\",\"composer\":{},\"tempo_bpm\":{},\"meter\":{},\"key\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"bar_ticks\":{},\"duration_bars\":{},\"density_per_bar\":{},\"max_simultaneous_events\":{},\"texture\":\"{}\",\"pitch_min\":{},\"pitch_max\":{},\"pitch_classes\":{},\"roman_roots\":{},\"tracks\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
         json_escape(&analysis.title),
         json_option(analysis.composer.as_deref()),
         analysis.tempo_bpm,
@@ -474,6 +501,11 @@ fn print_analysis_json(analysis: &ScoreAnalysis) {
         analysis.track_count,
         analysis.event_count,
         analysis.duration_ticks,
+        analysis.bar_ticks,
+        analysis.duration_bars,
+        analysis.density_per_bar,
+        analysis.max_simultaneous_events,
+        json_escape(&analysis.texture),
         json_option(analysis.pitch_min.as_deref()),
         json_option(analysis.pitch_max.as_deref()),
         json_string_array(&analysis.pitch_classes),
@@ -484,6 +516,38 @@ fn print_analysis_json(analysis: &ScoreAnalysis) {
         analysis.warning_count,
     );
     println!();
+}
+
+fn density_per_bar(event_count: usize, duration_bars: u32) -> u32 {
+    if duration_bars == 0 {
+        0
+    } else {
+        (event_count as u32).div_ceil(duration_bars)
+    }
+}
+
+fn max_simultaneous_events(events: &[&musiclang_core::NoteEventIr]) -> usize {
+    events
+        .iter()
+        .map(|event| {
+            events
+                .iter()
+                .filter(|candidate| candidate.start_tick == event.start_tick)
+                .count()
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+fn classify_texture(track_count: usize, max_simultaneous_events: usize) -> &'static str {
+    match (track_count, max_simultaneous_events) {
+        (0, _) => "empty",
+        (1, 0 | 1) => "monophonic",
+        (1, _) => "chordal",
+        (_, 0 | 1) => "heterophonic",
+        (_, 2) => "polyphonic",
+        _ => "dense_polyphonic",
+    }
 }
 
 fn json_meter(meter: Option<musiclang_core::Meter>) -> String {
@@ -523,9 +587,10 @@ fn json_track_analysis(tracks: &[TrackAnalysis]) -> String {
         .iter()
         .map(|track| {
             format!(
-                "{{\"name\":\"{}\",\"event_count\":{},\"pitch_min\":{},\"pitch_max\":{}}}",
+                "{{\"name\":\"{}\",\"event_count\":{},\"density_per_bar\":{},\"pitch_min\":{},\"pitch_max\":{}}}",
                 json_escape(&track.name),
                 track.event_count,
+                track.density_per_bar,
                 json_option(track.pitch_min.as_deref()),
                 json_option(track.pitch_max.as_deref())
             )
