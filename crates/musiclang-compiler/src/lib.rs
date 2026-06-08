@@ -43,6 +43,10 @@ mod stylecheck;
 
 use eval::Value;
 
+fn is_phrase_function_transform(callee: &str) -> bool {
+    matches!(callee, "map" | "filter")
+}
+
 struct Compiler {
     program: Program,
     style: StyleContext,
@@ -1083,13 +1087,17 @@ impl Compiler {
             ExprKind::Pipe { value, call } => {
                 self.check_expression_name(value, line, column, scopes);
                 match &call.kind {
-                    ExprKind::Call { callee, args } if callee == "map" && args.len() == 1 => {
+                    ExprKind::Call { callee, args }
+                        if is_phrase_function_transform(callee) && args.len() == 1 =>
+                    {
                         self.check_function_reference_name(&args[0], line, column);
                     }
                     _ => self.check_expression_name(call, line, column, scopes),
                 }
             }
-            ExprKind::Call { callee, args } if callee == "map" && args.len() == 2 => {
+            ExprKind::Call { callee, args }
+                if is_phrase_function_transform(callee) && args.len() == 2 =>
+            {
                 self.check_expression_name(&args[0], line, column, scopes);
                 self.check_function_reference_name(&args[1], line, column);
             }
@@ -3205,10 +3213,17 @@ impl Compiler {
                 self.eval_pipe(value, call, line, column, expr.span)
             }
             ExprKind::Call { callee, args } => {
-                if callee == "map" && args.len() == 2 {
+                if is_phrase_function_transform(callee) && args.len() == 2 {
                     let value = self.eval_expr(&args[0], line, column)?;
                     let function_name = self.expr_function_name(&args[1], line, column)?;
-                    return self.eval_map_value(value, &function_name, line, column, expr.span);
+                    return self.eval_phrase_function_transform(
+                        callee,
+                        value,
+                        &function_name,
+                        line,
+                        column,
+                        expr.span,
+                    );
                 }
                 let args = args
                     .iter()
@@ -3315,9 +3330,16 @@ impl Compiler {
     ) -> Option<Value> {
         match &call.kind {
             ExprKind::Call { callee, args } => {
-                if callee == "map" && args.len() == 1 {
+                if is_phrase_function_transform(callee) && args.len() == 1 {
                     let function_name = self.expr_function_name(&args[0], line, column)?;
-                    return self.eval_map_value(value, &function_name, line, column, span);
+                    return self.eval_phrase_function_transform(
+                        callee,
+                        value,
+                        &function_name,
+                        line,
+                        column,
+                        span,
+                    );
                 }
                 let mut values = Vec::with_capacity(args.len() + 1);
                 values.push(value);
@@ -3525,6 +3547,22 @@ impl Compiler {
         Value::List(values)
     }
 
+    fn eval_phrase_function_transform(
+        &mut self,
+        transform: &str,
+        value: Value,
+        function_name: &str,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        match transform {
+            "map" => self.eval_map_value(value, function_name, line, column, span),
+            "filter" => self.eval_filter_value(value, function_name, line, column, span),
+            _ => None,
+        }
+    }
+
     fn eval_map_value(
         &mut self,
         value: Value,
@@ -3540,21 +3578,103 @@ impl Compiler {
                 .collect::<Option<Vec<_>>>()
                 .map(Value::List),
             value => {
-                match self.eval_user_function_call(function_name, &[value], line, column, span) {
-                    Some(value) => value,
-                    None => {
-                        self.diagnostics.push(
-                            Diagnostic::error(
-                                "ML_RESOLVE_UNKNOWN_NAME",
-                                format!("unknown function `{function_name}`"),
-                                line,
-                                column,
-                            )
-                            .with_span(span),
-                        );
-                        None
+                self.eval_user_function_call_or_unknown(function_name, value, line, column, span)
+            }
+        }
+    }
+
+    fn eval_filter_value(
+        &mut self,
+        value: Value,
+        function_name: &str,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        match value {
+            Value::List(values) => {
+                let mut kept = Vec::new();
+                for value in values {
+                    match value {
+                        Value::List(_) => kept.push(self.eval_filter_value(
+                            value,
+                            function_name,
+                            line,
+                            column,
+                            span,
+                        )?),
+                        value => match self.eval_user_function_call_or_unknown(
+                            function_name,
+                            value.clone(),
+                            line,
+                            column,
+                            span,
+                        )? {
+                            Value::Bool(true) => kept.push(value),
+                            Value::Bool(false) => {}
+                            _ => {
+                                self.diagnostics.push(
+                                    Diagnostic::error(
+                                        "ML_TYPE_MISMATCH",
+                                        "expected filter predicate to return bool",
+                                        line,
+                                        column,
+                                    )
+                                    .with_span(span),
+                                );
+                                return None;
+                            }
+                        },
                     }
                 }
+                Some(Value::List(kept))
+            }
+            value => match self.eval_user_function_call_or_unknown(
+                function_name,
+                value.clone(),
+                line,
+                column,
+                span,
+            )? {
+                Value::Bool(true) => Some(value),
+                Value::Bool(false) => Some(Value::List(Vec::new())),
+                _ => {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_TYPE_MISMATCH",
+                            "expected filter predicate to return bool",
+                            line,
+                            column,
+                        )
+                        .with_span(span),
+                    );
+                    None
+                }
+            },
+        }
+    }
+
+    fn eval_user_function_call_or_unknown(
+        &mut self,
+        function_name: &str,
+        value: Value,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        match self.eval_user_function_call(function_name, &[value], line, column, span) {
+            Some(value) => value,
+            None => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_RESOLVE_UNKNOWN_NAME",
+                        format!("unknown function `{function_name}`"),
+                        line,
+                        column,
+                    )
+                    .with_span(span),
+                );
+                None
             }
         }
     }
@@ -3574,6 +3694,9 @@ impl Compiler {
             ("cat" | "concat", _) => Some(self.eval_concat_values(args)),
             ("map", [value, Value::String(function_name)]) => {
                 self.eval_map_value(value.clone(), function_name, line, column, span)
+            }
+            ("filter", [value, Value::String(function_name)]) => {
+                self.eval_filter_value(value.clone(), function_name, line, column, span)
             }
             ("transpose", [value, Value::Interval(interval)]) => {
                 self.eval_transpose_value(value.clone(), *interval, line, column, span)
@@ -6635,6 +6758,28 @@ score demo {
         assert_eq!(ir.tracks[0].events.len(), 2);
         assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "G4");
         assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "B4");
+        assert_eq!(ir.tracks[0].events[0].duration_ticks, 240);
+        assert_eq!(ir.tracks[0].events[1].duration_ticks, 480);
+    }
+
+    #[test]
+    fn filters_phrase_values_through_expression_function() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [{p:root, d:1/8, keep:true}, {p:root |> transpose(M3), d:1/8, keep:false}, {p:root |> transpose(P5), d:1/4, keep:true}]
+fn keep(event) = (event.keep) == true
+score demo {
+  voice lead {
+    play riff(C4) |> filter(keep)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 2);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "G4");
         assert_eq!(ir.tracks[0].events[0].duration_ticks, 240);
         assert_eq!(ir.tracks[0].events[1].duration_ticks, 480);
     }
