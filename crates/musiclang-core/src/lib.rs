@@ -1599,6 +1599,7 @@ pub struct StyleContext {
     pub historical_eras: Vec<String>,
     pub harmonic_functions: Vec<String>,
     pub max_melodic_leap: Option<Interval>,
+    pub max_voice_spacing: Option<Interval>,
     pub contrapuntal_motion: Vec<String>,
     pub cadences: Vec<String>,
     pub harmonic_progression: Vec<String>,
@@ -1688,6 +1689,7 @@ impl StyleContext {
             historical_eras: Vec::new(),
             harmonic_functions: Vec::new(),
             max_melodic_leap: None,
+            max_voice_spacing: None,
             contrapuntal_motion: Vec::new(),
             cadences: Vec::new(),
             harmonic_progression: Vec::new(),
@@ -1732,6 +1734,7 @@ impl StyleContext {
             Duration::new(1, 16).expect("valid duration"),
         ];
         style.max_melodic_leap = Some(Interval::new(12));
+        style.max_voice_spacing = Some(Interval::new(12));
         style.contrapuntal_motion = vec![
             "contrary".to_string(),
             "oblique".to_string(),

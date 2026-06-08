@@ -28,6 +28,7 @@ pub(super) fn known_rule(rule: &str) -> bool {
             | "harmonic_function"
             | "max_melodic_leap"
             | "contrapuntal_motion"
+            | "voice_spacing"
             | "cadence"
             | "harmonic_progression"
             | "texture"

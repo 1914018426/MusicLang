@@ -757,6 +757,7 @@ impl Compiler {
         for upper_index in 0..tracks.len() {
             for lower_index in (upper_index + 1)..tracks.len() {
                 self.check_voice_crossing(&tracks[upper_index], &tracks[lower_index]);
+                self.check_voice_spacing(&tracks[upper_index], &tracks[lower_index]);
                 self.check_parallel_fifths(&tracks[upper_index], &tracks[lower_index]);
                 self.check_contrapuntal_motion(&tracks[upper_index], &tracks[lower_index]);
             }
@@ -783,6 +784,42 @@ impl Compiler {
                         upper_event.source_span.map_or(1, |span| span.column),
                     );
                     return;
+                }
+            }
+        }
+    }
+
+    fn check_voice_spacing(&mut self, upper: &TrackIr, lower: &TrackIr) {
+        let Some(max_spacing) = self.style.max_voice_spacing else {
+            return;
+        };
+        if self.has_override("voice_spacing") || self.has_score_override("voice_spacing") {
+            return;
+        }
+        let max_spacing = max_spacing.semitones().abs();
+        for upper_event in &upper.events {
+            for lower_event in &lower.events {
+                let Some(upper_pitch) = upper_event.pitch.midi_number().ok() else {
+                    continue;
+                };
+                let Some(lower_pitch) = lower_event.pitch.midi_number().ok() else {
+                    continue;
+                };
+                if upper_event.start_tick == lower_event.start_tick {
+                    let spacing = (i16::from(upper_pitch) - i16::from(lower_pitch)).abs();
+                    if spacing > max_spacing {
+                        self.push_style_diagnostic(
+                            "voice_spacing",
+                            "ML_STYLE_VOICE_SPACING",
+                            format!(
+                                "voices `{}` and `{}` are spaced {spacing} semitones apart, exceeding maximum {max_spacing}",
+                                upper.name, lower.name
+                            ),
+                            upper_event.source_span.map_or(1, |span| span.line),
+                            upper_event.source_span.map_or(1, |span| span.column),
+                        );
+                        return;
+                    }
                 }
             }
         }
@@ -1829,6 +1866,9 @@ fn style_from_program_inner(
                     TheoryDomain::ContrapuntalMotions,
                     &mut diagnostics,
                 );
+            }
+            "voice_spacing" => {
+                context.max_voice_spacing = entry.value.trim().parse::<Interval>().ok();
             }
             "cadence" => {
                 context.cadences = entry
@@ -3318,6 +3358,77 @@ score demo style Smooth {
         .unwrap();
 
         assert_eq!(ir.tracks[0].events.len(), 2);
+    }
+
+    #[test]
+    fn voice_spacing_rule_fails() {
+        let diagnostics = compile_source(
+            r#"
+style CloseVoicing {
+  voice_spacing: P8
+}
+score demo style CloseVoicing {
+  voice soprano {
+    note C6, 1/4
+  }
+  voice alto {
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_VOICE_SPACING");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("voice_spacing"));
+    }
+
+    #[test]
+    fn override_allows_voice_spacing_violation() {
+        let ir = compile_source(
+            r#"
+style CloseVoicing {
+  voice_spacing: P8
+}
+score demo style CloseVoicing {
+  override voice_spacing allow reason "registral antiphony" {
+    voice soprano {
+      note C6, 1/4
+    }
+    voice alto {
+      note C4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks.len(), 2);
+        assert_eq!(ir.overrides[0].rule, "voice_spacing");
+    }
+
+    #[test]
+    fn voice_spacing_rule_can_be_disabled() {
+        let ir = compile_source(
+            r#"
+style OpenVoicing {
+  voice_spacing: P8
+  severity_voice_spacing: off
+}
+score demo style OpenVoicing {
+  voice soprano {
+    note C6, 1/4
+  }
+  voice alto {
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks.len(), 2);
     }
 
     #[test]
