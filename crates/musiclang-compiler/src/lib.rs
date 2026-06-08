@@ -3363,6 +3363,73 @@ impl Compiler {
         }
     }
 
+    fn eval_stretch_value(
+        &mut self,
+        value: Value,
+        factor: i32,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        if factor <= 0 {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_TYPE_MISMATCH",
+                    "expected positive stretch factor",
+                    line,
+                    column,
+                )
+                .with_span(span),
+            );
+            return None;
+        }
+        match value {
+            Value::Duration(duration) => match duration.numerator().checked_mul(factor as u32) {
+                Some(numerator) => match Duration::new(numerator, duration.denominator()) {
+                    Ok(duration) => Some(Value::Duration(duration)),
+                    Err(error) => {
+                        self.diagnostics.push(
+                            Diagnostic::error("ML_CORE_DURATION", error.to_string(), line, column)
+                                .with_span(span),
+                        );
+                        None
+                    }
+                },
+                None => {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_TYPE_MISMATCH",
+                            "duration stretch overflow",
+                            line,
+                            column,
+                        )
+                        .with_span(span),
+                    );
+                    None
+                }
+            },
+            Value::List(values) => values
+                .into_iter()
+                .map(|value| self.eval_stretch_value(value, factor, line, column, span))
+                .collect::<Option<Vec<_>>>()
+                .map(Value::List),
+            Value::Tuple(values) => values
+                .into_iter()
+                .map(|value| self.eval_stretch_value(value, factor, line, column, span))
+                .collect::<Option<Vec<_>>>()
+                .map(Value::Tuple),
+            Value::Dict(values) => values
+                .into_iter()
+                .map(|(key, value)| {
+                    self.eval_stretch_value(value, factor, line, column, span)
+                        .map(|value| (key, value))
+                })
+                .collect::<Option<HashMap<_, _>>>()
+                .map(Value::Dict),
+            value => Some(value),
+        }
+    }
+
     fn eval_call(
         &mut self,
         callee: &str,
@@ -3397,6 +3464,9 @@ impl Compiler {
                     }
                     Some(Value::List(values))
                 }
+            }
+            ("stretch", [value, Value::Int(factor)]) => {
+                self.eval_stretch_value(value.clone(), *factor, line, column, span)
             }
             ("duration", [Value::String(value)]) => match value.parse() {
                 Ok(duration) => Some(Value::Duration(duration)),
@@ -6373,7 +6443,7 @@ score demo {
 fn riff(root) = [(root, 1/8), (root |> transpose(M3), 1/8), {p:root |> transpose(P5), d:1/4}]
 score demo {
   voice lead {
-    play riff(C4) |> transpose(M2) |> repeat(2)
+    play riff(C4) |> transpose(M2) |> stretch(2) |> repeat(2)
   }
 }
 "#,
@@ -6387,6 +6457,8 @@ score demo {
         assert_eq!(ir.tracks[0].events[3].pitch.to_string(), "D4");
         assert_eq!(ir.tracks[0].events[4].pitch.to_string(), "F#4");
         assert_eq!(ir.tracks[0].events[5].pitch.to_string(), "A4");
+        assert_eq!(ir.tracks[0].events[0].duration_ticks, 480);
+        assert_eq!(ir.tracks[0].events[2].duration_ticks, 960);
     }
 
     #[test]
