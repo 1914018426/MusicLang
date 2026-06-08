@@ -8,7 +8,7 @@ use lsp_types::{
     InitializeParams, Location, MarkedString, Position, PublishDiagnosticsParams, Range,
     ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
 };
-use musiclang_core::Severity;
+use musiclang_core::{Severity, BUILT_IN_STYLES};
 
 fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
@@ -199,7 +199,7 @@ fn definition_at(
 
 fn find_definition(source: &str, word: &str) -> Option<Position> {
     for (line_index, line) in source.lines().enumerate() {
-        for keyword in ["fn", "let"] {
+        for keyword in ["fn", "let", "style"] {
             let pattern = format!("{keyword} {word}");
             if let Some(index) = line.find(&pattern) {
                 return Some(Position::new(
@@ -250,6 +250,16 @@ fn completion_items(
             ..CompletionItem::default()
         })
         .collect::<Vec<_>>();
+
+    items.extend(BUILT_IN_STYLES.iter().map(|style| CompletionItem {
+        label: style.id.to_string(),
+        kind: Some(CompletionItemKind::CLASS),
+        detail: Some(style.name.to_string()),
+        documentation: Some(lsp_types::Documentation::String(
+            style.description.to_string(),
+        )),
+        ..CompletionItem::default()
+    }));
 
     let uri = &params.text_document_position.text_document.uri;
     if let Some(source) = documents.get(&uri.to_string()) {
@@ -336,6 +346,32 @@ mod tests {
 
         assert!(items.iter().any(|item| item.label == "chord_vocab"));
         assert!(items.iter().any(|item| item.label == "instrument_range"));
+    }
+
+    #[test]
+    fn completion_includes_builtin_style_names() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
+        let documents = HashMap::new();
+        let CompletionResponse::Array(items) = completion_items(
+            &documents,
+            &CompletionParams {
+                text_document_position: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: Position::new(0, 0),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            },
+        ) else {
+            panic!("expected completion array");
+        };
+
+        assert!(items.iter().any(|item| item.label == "Classical"
+            && item.detail.as_deref() == Some("Classical common-practice")));
+        assert!(items
+            .iter()
+            .any(|item| item.label == "Jazz" && item.kind == Some(CompletionItemKind::CLASS)));
     }
 
     #[test]
@@ -445,5 +481,15 @@ mod tests {
             "score demo {\n  voice lead {\n    let d = duration 1/4\n    note C4, d\n  }\n}";
 
         assert_eq!(find_definition(source, "d"), Some(Position::new(2, 8)));
+    }
+
+    #[test]
+    fn finds_style_definition() {
+        let source = "style Chamber {\n  scale: C D E\n}\nscore demo style Chamber {\n}";
+
+        assert_eq!(
+            find_definition(source, "Chamber"),
+            Some(Position::new(0, 6))
+        );
     }
 }
