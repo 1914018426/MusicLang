@@ -924,6 +924,36 @@ score repetitive {
 }
 
 #[test]
+fn music_analyze_strict_rejects_warning_only_diagnostics() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/analyze-strict-warning.music");
+    fs::write(
+        &input_path,
+        r#"
+style WarningScale {
+  scale: C major
+  severity_scale: warning
+}
+
+score warning_only style WarningScale {
+  key C major
+  voice lead {
+    note C4, 1/4
+    note F#4, 1/4
+  }
+}
+"#,
+    )
+    .unwrap();
+    let output = run_music(&["analyze", &input_path, "--strict"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("analysis quality gate failed"));
+    assert!(stderr.contains("diagnostics 1 exceeds 0"));
+}
+
+#[test]
 fn music_analyze_strict_accepts_demo() {
     let output = run_music(&["analyze", "examples/demo_jazz_complete.music", "--strict"]);
 

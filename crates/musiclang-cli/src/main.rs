@@ -472,6 +472,12 @@ fn analyze_score(
 
 fn enforce_analysis_quality(analysis: &ScoreAnalysis) -> Result<(), String> {
     let mut failures = Vec::new();
+    if analysis.diagnostic_count > 0 {
+        failures.push(format!(
+            "diagnostics {} exceeds 0",
+            analysis.diagnostic_count
+        ));
+    }
     if analysis.repeated_bar_ratio_percent > 50 {
         failures.push(format!(
             "repeated_bar_ratio_percent {} exceeds 50",
