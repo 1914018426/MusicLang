@@ -156,6 +156,7 @@ mod stylecheck {
                 | "rhythm_concept"
                 | "dynamic_vocab"
                 | "articulation_vocab"
+                | "ornament"
                 | "non_chord_tone"
                 | "tuning_system"
                 | "world_tradition"
@@ -301,6 +302,10 @@ impl Compiler {
                     tick: track.cursor_tick(),
                 });
                 self.compile_statements(&section.statements, track);
+            }
+            Stmt::Ornament(ornament) => {
+                self.check_ornament(&ornament.kind, ornament.line, ornament.column);
+                self.compile_statements(&ornament.statements, track);
             }
             Stmt::NonChordTone(non_chord_tone) => {
                 self.check_non_chord_tone(
@@ -534,6 +539,24 @@ impl Compiler {
                 ),
                 articulation.line,
                 articulation.column,
+            );
+        }
+    }
+
+    fn check_ornament(&mut self, kind: &str, line: usize, column: usize) {
+        if self.style.ornaments.is_empty()
+            || self.has_override("ornament")
+            || self.has_score_override("ornament")
+        {
+            return;
+        }
+        if !self.style.ornaments.iter().any(|allowed| allowed == kind) {
+            self.push_style_diagnostic(
+                "ornament",
+                "ML_STYLE_ORNAMENT",
+                format!("ornament `{kind}` is outside active style vocabulary"),
+                line,
+                column,
             );
         }
     }
@@ -1649,6 +1672,14 @@ fn style_from_program_inner(
             }
             "articulation_vocab" => {
                 context.articulation_vocab = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_vocab_entries(style, entry, TheoryDomain::Ornaments, &mut diagnostics);
+            }
+            "ornament" => {
+                context.ornaments = entry
                     .value
                     .split_whitespace()
                     .map(ToString::to_string)
@@ -3308,6 +3339,49 @@ score demo style ShortArticulations {
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_ARTICULATION_VOCAB");
         assert_eq!(diagnostics[0].rule.as_deref(), Some("articulation_vocab"));
+    }
+
+    #[test]
+    fn ornament_accepts_catalog_entry() {
+        let ir = compile_source(
+            r#"
+style Ornamented {
+  ornament: trill mordent
+}
+score demo style Ornamented {
+  voice lead {
+    ornament trill {
+      note C4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
+    }
+
+    #[test]
+    fn ornament_rejects_unlisted_entry() {
+        let diagnostics = compile_source(
+            r#"
+style Ornamented {
+  ornament: trill
+}
+score demo style Ornamented {
+  voice lead {
+    ornament mordent {
+      note C4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_ORNAMENT");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("ornament"));
     }
 
     #[test]

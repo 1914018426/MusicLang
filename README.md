@@ -10,7 +10,7 @@ MusicLang is a Rust-first experimental programming language for developing music
 - Pitch arithmetic such as `C4 + M3` and `E4 - m3`.
 - Built-in style registry for `Classical`, `Modal`, `Jazz`, and `Minimalist` styles.
 - Theory-backed scale and mode constraints with `scale_pattern: tonic scale_id` and `mode_pattern: tonic mode_id`.
-- Style checks for `scale`, `chord_vocab`, `chord_quality_vocab`, `set_class_vocab`, `meter`, `meter_catalog`, `tempo_range`, `rhythm_vocab`, `rhythm_concept`, `dynamic_vocab`, `articulation_vocab`, `non_chord_tone`, `tuning_system`, `world_tradition`, `historical_era`, `harmonic_function`, `max_melodic_leap`, `contrapuntal_motion`, `cadence`, `harmonic_progression`, `texture`, `form`, `instrument_range`, `parallel_fifths`, and `voice_crossing`.
+- Style checks for `scale`, `chord_vocab`, `chord_quality_vocab`, `set_class_vocab`, `meter`, `meter_catalog`, `tempo_range`, `rhythm_vocab`, `rhythm_concept`, `dynamic_vocab`, `articulation_vocab`, `ornament`, `non_chord_tone`, `tuning_system`, `world_tradition`, `historical_era`, `harmonic_function`, `max_melodic_leap`, `contrapuntal_motion`, `cadence`, `harmonic_progression`, `texture`, `form`, `instrument_range`, `parallel_fifths`, and `voice_crossing`.
 - Explicit local overrides with audit traces.
 - IR metadata for tempo, meter, key signature, track name, channel, and program.
 - MIDI rendering with tempo, time signature, key signature, track name, program change, and per-track channel.

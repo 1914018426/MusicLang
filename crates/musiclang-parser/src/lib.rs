@@ -60,6 +60,7 @@ pub enum Stmt {
     Velocity(VelocityStmt),
     Articulation(ArticulationStmt),
     Section(SectionStmt),
+    Ornament(OrnamentStmt),
     NonChordTone(NonChordToneStmt),
     TuningSystem(TuningSystemStmt),
     WorldTradition(WorldTraditionStmt),
@@ -186,6 +187,15 @@ pub struct ArticulationStmt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SectionStmt {
     pub label: String,
+    pub statements: Vec<Stmt>,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrnamentStmt {
+    pub kind: String,
     pub statements: Vec<Stmt>,
     pub line: usize,
     pub column: usize,
@@ -680,6 +690,9 @@ impl Parser {
         if self.check_ident("section") {
             return self.parse_section().map(Stmt::Section);
         }
+        if self.check_ident("ornament") {
+            return self.parse_ornament().map(Stmt::Ornament);
+        }
         if self.check_ident("non_chord_tone") {
             return self.parse_non_chord_tone().map(Stmt::NonChordTone);
         }
@@ -878,6 +891,19 @@ impl Parser {
         let statements = self.parse_required_block()?;
         Some(SectionStmt {
             label,
+            statements,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_ornament(&mut self) -> Option<OrnamentStmt> {
+        let start = self.expect_ident_text("ornament")?;
+        let kind = self.expect_name()?;
+        let statements = self.parse_required_block()?;
+        Some(OrnamentStmt {
+            kind,
             statements,
             line: start.span.line,
             column: start.span.column,
@@ -1122,6 +1148,7 @@ impl Parser {
                 | "velocity"
                 | "articulation"
                 | "section"
+                | "ornament"
                 | "non_chord_tone"
                 | "tuning_system"
                 | "world_tradition"
@@ -1753,6 +1780,29 @@ score demo {
 
         assert_eq!(harmonic_function.kind, "tonic");
         assert_eq!(harmonic_function.statements.len(), 1);
+    }
+
+    #[test]
+    fn parses_ornament_statement() {
+        let source = r#"
+score demo {
+  voice lead {
+    ornament trill {
+      note D4, 1/8
+    }
+  }
+}
+"#;
+        let program = parse_source(source).unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Ornament(ornament) = &voice.statements[0] else {
+            panic!("expected ornament");
+        };
+
+        assert_eq!(ornament.kind, "trill");
+        assert_eq!(ornament.statements.len(), 1);
     }
 
     #[test]

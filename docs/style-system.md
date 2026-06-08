@@ -25,6 +25,7 @@ style Chamber extends Classical {
   rhythm_concept: ostinato
   dynamic_vocab: p mp mf f
   articulation_vocab: staccato tenuto accent
+  ornament: trill mordent turn
   non_chord_tone: passing_tone neighbor_tone
   tuning_system: equal_temperament_12 just_intonation
   world_tradition: maqam hindustani_raga
@@ -55,6 +56,7 @@ style Chamber extends Classical {
 - `rhythm_concept`: score rhythm pattern must satisfy configured concepts from the `rhythms` theory catalog (e.g., `ostinato` requires a repeating duration cell).
 - `dynamic_vocab`: `dynamic` statements must use configured entries from the `dynamics` theory catalog.
 - `articulation_vocab`: `articulation` statements must use configured entries from the `ornaments` theory catalog.
+- `ornament`: `ornament` annotation blocks must use configured entries from the `ornaments` theory catalog.
 - `non_chord_tone`: `non_chord_tone` annotation blocks must use configured entries from the `non_chord_tones` theory catalog.
 - `tuning_system`: `tuning_system` annotation blocks must use configured entries from the `tuning_systems` theory catalog.
 - `world_tradition`: `world_tradition` annotation blocks must use configured entries from the `world_traditions` theory catalog.
@@ -156,6 +158,7 @@ Overrides suppress style rules only. They do not bypass parser, type, name-resol
 - `ML_STYLE_RHYTHM_CONCEPT`
 - `ML_STYLE_DYNAMIC_VOCAB`
 - `ML_STYLE_ARTICULATION_VOCAB`
+- `ML_STYLE_ORNAMENT`
 - `ML_STYLE_NON_CHORD_TONE`
 - `ML_STYLE_TUNING_SYSTEM`
 - `ML_STYLE_WORLD_TRADITION`

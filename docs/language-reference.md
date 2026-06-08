@@ -34,6 +34,7 @@ score demo style Classical {
 - `velocity 0..127` for explicit MIDI velocity
 - `articulation mark` for catalog ornaments/articulations such as `staccato`, `tenuto`, `accent`, or `legato`
 - `section label { ... }` for explicit form markers such as `A`, `B`, `exposition`, or `recapitulation`
+- `ornament kind { ... }` for explicit ornament annotations such as `trill`, `mordent`, or `turn`
 - `non_chord_tone kind { ... }` for explicit non-chord tone annotations such as `passing_tone` or `neighbor_tone`
 - `tuning_system kind { ... }` for explicit tuning-system annotations such as `equal_temperament_12` or `just_intonation`
 - `world_tradition kind { ... }` for explicit world-tradition annotations such as `maqam` or `hindustani_raga`
@@ -76,6 +77,7 @@ style Sparse {
   rhythm_concept: ostinato
   dynamic_vocab: p mp mf f
   articulation_vocab: staccato tenuto accent
+  ornament: trill mordent turn
   non_chord_tone: passing_tone neighbor_tone
   tuning_system: equal_temperament_12 just_intonation
   world_tradition: maqam hindustani_raga
@@ -138,6 +140,7 @@ Stable diagnostic codes include:
 - `ML_STYLE_RHYTHM_CONCEPT`
 - `ML_STYLE_DYNAMIC_VOCAB`
 - `ML_STYLE_ARTICULATION_VOCAB`
+- `ML_STYLE_ORNAMENT`
 - `ML_STYLE_NON_CHORD_TONE`
 - `ML_STYLE_TUNING_SYSTEM`
 - `ML_STYLE_WORLD_TRADITION`
