@@ -32,6 +32,9 @@ enum Command {
     },
     Check {
         input: String,
+
+        #[arg(long)]
+        strict: bool,
     },
     Export {
         input: String,
@@ -87,7 +90,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::New { name } => new_project(&name),
         Command::Build { manifest } => build_project(manifest.as_deref()),
         Command::Compile { input, output } => compile_file(&input, output.as_deref()),
-        Command::Check { input } => check_file(&input),
+        Command::Check { input, strict } => check_file(&input, strict),
         Command::Export {
             input,
             output,
@@ -241,10 +244,18 @@ fn export_file_to(input: &Path, output: Option<&Path>, format: &str) -> Result<(
     Ok(())
 }
 
-fn check_file(input: &str) -> Result<(), String> {
+fn check_file(input: &str, strict: bool) -> Result<(), String> {
     let source =
         fs::read_to_string(input).map_err(|error| format!("failed to read {input}: {error}"))?;
-    musiclang_compiler::compile_source(&source).map_err(format_diagnostics)?;
+    if strict {
+        let compilation = musiclang_compiler::compile_source_with_diagnostics(&source)
+            .map_err(format_diagnostics)?;
+        if !compilation.diagnostics.is_empty() {
+            return Err(format_diagnostics(compilation.diagnostics));
+        }
+    } else {
+        musiclang_compiler::compile_source(&source).map_err(format_diagnostics)?;
+    }
     println!("ok");
     Ok(())
 }

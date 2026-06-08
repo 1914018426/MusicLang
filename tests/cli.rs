@@ -64,6 +64,38 @@ fn music_check_accepts_example() {
 }
 
 #[test]
+fn music_check_strict_rejects_warning_only_diagnostics() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/check-strict-warning.music");
+    fs::write(
+        &input_path,
+        r#"
+style WarningScale {
+  scale: C major
+  severity_scale: warning
+}
+
+score warning_only style WarningScale {
+  key C major
+  voice lead {
+    note C4, 1/4
+    note F#4, 1/4
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    assert!(run_music(&["check", &input_path]).status.success());
+    let strict_output = run_music(&["check", &input_path, "--strict"]);
+
+    assert!(!strict_output.status.success());
+    let stderr = String::from_utf8_lossy(&strict_output.stderr);
+    assert!(stderr.contains("ML_STYLE_SCALE"));
+    assert!(stderr.contains("warning"));
+}
+
+#[test]
 fn music_styles_lists_builtin_registry() {
     let output = run_music(&["styles"]);
 
