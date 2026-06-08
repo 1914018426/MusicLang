@@ -538,7 +538,7 @@ impl Parser {
         if !self.check(TokenKind::Eof) {
             let token = self.peek().clone();
             self.diagnostics.push(Diagnostic::error(
-                "ML_PARSE_TRAILING",
+                "ML_PARSE_TRAILING_INPUT",
                 "unexpected input after score",
                 token.span.line,
                 token.span.column,
@@ -1809,6 +1809,77 @@ score demo {
     fn reports_missing_closing_brace() {
         let diagnostics =
             parse_source("score demo {\n  voice lead {\n    note C4, 1/4\n").unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_PARSE_TOKEN"));
+    }
+
+    #[test]
+    fn reports_unterminated_string() {
+        let diagnostics = parse_source(
+            r#"
+score demo {
+  override scale allow reason "missing close {
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_LEX_STRING");
+    }
+
+    #[test]
+    fn reports_trailing_input_after_score() {
+        let diagnostics = parse_source(
+            r#"
+score demo {
+  voice lead {
+    note C4, 1/4
+  }
+}
+note D4, 1/4
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_PARSE_TRAILING_INPUT"));
+    }
+
+    #[test]
+    fn reports_missing_note_comma() {
+        let diagnostics = parse_source(
+            r#"
+score demo {
+  voice lead {
+    note C4 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_PARSE_TOKEN"));
+    }
+
+    #[test]
+    fn reports_unclosed_chord_literal() {
+        let diagnostics = parse_source(
+            r#"
+score demo {
+  voice lead {
+    chord [C4, E4, G4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
 
         assert!(diagnostics
             .iter()

@@ -149,6 +149,84 @@ fn music_export_midi_produces_valid_file() {
 }
 
 #[test]
+fn music_export_musicxml_produces_valid_file() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let output_path = format!("{workspace}/target/test-export.musicxml");
+    let _ = fs::remove_file(&output_path);
+
+    let output = run_music(&[
+        "export",
+        "examples/minimal.music",
+        "--format",
+        "musicxml",
+        "-o",
+        &output_path,
+    ]);
+
+    assert!(output.status.success());
+    let xml = fs::read_to_string(&output_path).unwrap();
+    assert!(xml.starts_with("<?xml"));
+    assert!(xml.contains("<score-partwise"));
+}
+
+#[test]
+fn music_export_wav_produces_valid_file() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let output_path = format!("{workspace}/target/test-export.wav");
+    let _ = fs::remove_file(&output_path);
+
+    let output = run_music(&[
+        "export",
+        "examples/minimal.music",
+        "--format",
+        "wav",
+        "-o",
+        &output_path,
+    ]);
+
+    assert!(output.status.success());
+    let bytes = fs::read(&output_path).unwrap();
+    assert!(bytes.starts_with(b"RIFF"));
+    assert_eq!(&bytes[8..12], b"WAVE");
+}
+
+#[test]
+fn music_ast_prints_parsed_program() {
+    let output = run_music(&["ast", "examples/minimal.music"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Program"));
+    assert!(stdout.contains("ScoreDecl"));
+}
+
+#[test]
+fn music_ir_prints_lowered_score() {
+    let output = run_music(&["ir", "examples/minimal.music"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ScoreIr"));
+    assert!(stdout.contains("tempo_bpm"));
+}
+
+#[test]
+fn music_export_rejects_unknown_format() {
+    let output = run_music(&[
+        "export",
+        "examples/minimal.music",
+        "--format",
+        "tracker",
+        "-o",
+        "target/test-export.tracker",
+    ]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported export format `tracker`"));
+}
+
+#[test]
 fn music_check_reports_error_on_violation() {
     let output = run_music(&["check", "examples/style_violation.music"]);
 
