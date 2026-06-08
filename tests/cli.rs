@@ -382,7 +382,7 @@ fn music_ir_expands_arpeggio_as_sequential_notes() {
 score demo {
   voice lead {
     arpeggio [C4, E4, G4], 1/8
-    arpeggio D3 minor, 1/16
+    arpeggio D3 minor inv 1, 1/16
     transpose M2 {
       arpeggio [C4, E4, G4], 1/8
     }
@@ -418,7 +418,7 @@ fn music_ir_expands_named_chord_quality() {
         r#"
 score demo {
   voice lead {
-    chord D3 minor7, 1/2
+    chord D3 minor7 inv 1, 1/2
   }
 }
 "#,
@@ -429,10 +429,10 @@ score demo {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("class: D"));
     assert!(stdout.contains("class: F"));
     assert!(stdout.contains("class: A"));
     assert!(stdout.contains("class: C"));
+    assert!(stdout.contains("class: D"));
     assert!(stdout.contains("octave: 4"));
     assert!(stdout.contains("duration_ticks: 960"));
 }

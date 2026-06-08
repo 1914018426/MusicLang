@@ -684,6 +684,7 @@ impl Compiler {
         let pitches = self.collect_chord_pitches(
             chord.root_expr.as_ref(),
             chord.quality.as_deref(),
+            chord.inversion,
             &chord.pitch_exprs,
             context,
         );
@@ -714,6 +715,7 @@ impl Compiler {
         let pitches = self.collect_chord_pitches(
             arpeggio.root_expr.as_ref(),
             arpeggio.quality.as_deref(),
+            arpeggio.inversion,
             &arpeggio.pitch_exprs,
             context,
         );
@@ -755,13 +757,27 @@ impl Compiler {
         &mut self,
         root_expr: Option<&Expr>,
         quality: Option<&str>,
+        inversion: Option<usize>,
         pitch_exprs: &[Expr],
         context: ChordPitchContext,
     ) -> Vec<Pitch> {
         let mut pitches = Vec::new();
         if let (Some(root_expr), Some(quality)) = (root_expr, quality) {
             if let Some(root) = self.eval_pitch(root_expr, context.line, context.column) {
-                if let Some(expanded) = expand_chord_quality(root, quality) {
+                if let Some(mut expanded) = expand_chord_quality(root, quality) {
+                    if let Some(inversion) = inversion {
+                        if invert_chord(&mut expanded, inversion).is_none() {
+                            self.diagnostics.push(
+                                Diagnostic::error(
+                                    "ML_THEORY_CHORD_INVERSION",
+                                    format!("unsupported chord inversion `{inversion}`"),
+                                    context.line,
+                                    context.column,
+                                )
+                                .with_span(context.span),
+                            );
+                        }
+                    }
                     pitches.extend(expanded);
                 } else {
                     self.diagnostics.push(
@@ -3146,6 +3162,9 @@ fn parse_roman_symbol(symbol: &str) -> Option<ParsedRoman> {
 }
 
 fn invert_chord(pitches: &mut [Pitch], inversion: usize) -> Option<()> {
+    if inversion > pitches.len() {
+        return None;
+    }
     for index in 0..inversion {
         let pitch = pitches.get_mut(index)?;
         *pitch = pitch.transpose(Interval::new(12)).ok()?;
@@ -3834,6 +3853,45 @@ score demo {
             .events
             .iter()
             .all(|event| event.start_tick == 0 && event.duration_ticks == 960));
+    }
+
+    #[test]
+    fn named_chord_inversion_reorders_voicing() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    chord C4 major inv 1, 1/2
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let pitches = ir.tracks[0]
+            .events
+            .iter()
+            .map(|event| event.pitch.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(pitches, vec!["E4", "G4", "C5"]);
+    }
+
+    #[test]
+    fn rejects_unknown_named_chord_inversion() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice lead {
+    chord C4 major inv 4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_THEORY_CHORD_INVERSION"));
     }
 
     #[test]
@@ -6744,6 +6802,28 @@ score demo {
         assert_eq!(events[0].start_tick, 0);
         assert_eq!(events[1].start_tick, 120);
         assert_eq!(events[2].start_tick, 240);
+    }
+
+    #[test]
+    fn named_arpeggio_inversion_reorders_sequence() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    arpeggio C4 dominant7 inv 2, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].pitch.to_string(), "G4");
+        assert_eq!(events[1].pitch.to_string(), "A#4");
+        assert_eq!(events[2].pitch.to_string(), "C5");
+        assert_eq!(events[3].pitch.to_string(), "E5");
+        assert_eq!(events[3].start_tick, 720);
     }
 
     #[test]

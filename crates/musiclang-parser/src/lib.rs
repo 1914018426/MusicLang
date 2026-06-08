@@ -270,6 +270,7 @@ pub struct ChordStmt {
     pub pitch_exprs: Vec<Expr>,
     pub root_expr: Option<Expr>,
     pub quality: Option<String>,
+    pub inversion: Option<usize>,
     pub duration_expr: Expr,
     pub line: usize,
     pub column: usize,
@@ -283,6 +284,7 @@ pub struct ArpeggioStmt {
     pub pitch_exprs: Vec<Expr>,
     pub root_expr: Option<Expr>,
     pub quality: Option<String>,
+    pub inversion: Option<usize>,
     pub duration_expr: Expr,
     pub line: usize,
     pub column: usize,
@@ -1223,6 +1225,7 @@ impl Parser {
                 pitch_exprs,
                 root_expr: None,
                 quality: None,
+                inversion: None,
                 duration_expr,
                 line: start.span.line,
                 column: start.span.column,
@@ -1230,7 +1233,7 @@ impl Parser {
             });
         }
 
-        let (root_expr, quality) = self.parse_named_chord_head()?;
+        let (root_expr, quality, inversion) = self.parse_named_chord_head()?;
         self.expect(TokenKind::Comma, "expected `,` after chord quality")?;
         let duration_expr = self.parse_expr_until_stmt_end()?;
         Some(ChordStmt {
@@ -1239,6 +1242,7 @@ impl Parser {
             pitch_exprs: Vec::new(),
             root_expr: Some(root_expr),
             quality: Some(quality),
+            inversion,
             duration_expr,
             line: start.span.line,
             column: start.span.column,
@@ -1266,6 +1270,7 @@ impl Parser {
                 pitch_exprs,
                 root_expr: None,
                 quality: None,
+                inversion: None,
                 duration_expr,
                 line: start.span.line,
                 column: start.span.column,
@@ -1273,7 +1278,7 @@ impl Parser {
             });
         }
 
-        let (root_expr, quality) = self.parse_named_chord_head()?;
+        let (root_expr, quality, inversion) = self.parse_named_chord_head()?;
         self.expect(TokenKind::Comma, "expected `,` after arpeggio quality")?;
         let duration_expr = self.parse_expr_until_stmt_end()?;
         Some(ArpeggioStmt {
@@ -1282,6 +1287,7 @@ impl Parser {
             pitch_exprs: Vec::new(),
             root_expr: Some(root_expr),
             quality: Some(quality),
+            inversion,
             duration_expr,
             line: start.span.line,
             column: start.span.column,
@@ -1630,7 +1636,7 @@ impl Parser {
         })
     }
 
-    fn parse_named_chord_head(&mut self) -> Option<(Expr, String)> {
+    fn parse_named_chord_head(&mut self) -> Option<(Expr, String, Option<usize>)> {
         let mut tokens = Vec::new();
         let mut depth = 0usize;
         while !self.check(TokenKind::Eof) {
@@ -1655,6 +1661,21 @@ impl Parser {
             }
             return None;
         }
+        let inversion = if tokens.len() >= 4 && tokens[tokens.len() - 2].text == "inv" {
+            let number = tokens.pop().unwrap();
+            let inv = tokens.pop().unwrap();
+            if number.kind != TokenKind::Number {
+                self.push_token_diagnostic("ML_PARSE_CHORD", "expected inversion number", &number);
+                return None;
+            }
+            if inv.kind != TokenKind::Ident {
+                self.push_token_diagnostic("ML_PARSE_CHORD", "expected `inv`", &inv);
+                return None;
+            }
+            Some(number.text.parse::<usize>().ok()?)
+        } else {
+            None
+        };
         let quality = tokens.pop().unwrap();
         if !matches!(
             quality.kind,
@@ -1664,7 +1685,7 @@ impl Parser {
             return None;
         }
         parse_expr_tokens(&tokens)
-            .map(|root| (root, quality.text))
+            .map(|root| (root, quality.text, inversion))
             .or_else(|| {
                 if let Some(token) = tokens.first() {
                     self.push_token_diagnostic(
@@ -2393,7 +2414,7 @@ score demo {
 score demo {
   voice lead {
     arpeggio [C4, E4, G4], 1/8
-    arpeggio D3 minor, 1/16
+    arpeggio D3 minor inv 1, 1/16
   }
 }
 "#,
@@ -2412,7 +2433,31 @@ score demo {
         assert_eq!(bracket.pitches, ["C4", "E4", "G4"]);
         assert_eq!(bracket.duration, "1/8");
         assert_eq!(named.quality.as_deref(), Some("minor"));
+        assert_eq!(named.inversion, Some(1));
         assert_eq!(named.duration, "1/16");
+    }
+
+    #[test]
+    fn parses_named_chord_inversion() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    chord C4 dominant7 inv 2, 1/2
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Chord(chord) = &voice.statements[0] else {
+            panic!("expected chord");
+        };
+
+        assert_eq!(chord.quality.as_deref(), Some("dominant7"));
+        assert_eq!(chord.inversion, Some(2));
     }
 
     #[test]
