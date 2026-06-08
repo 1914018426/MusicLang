@@ -166,6 +166,52 @@ fn music_new_and_build_create_project_output() {
 }
 
 #[test]
+fn music_build_strict_rejects_warning_only_diagnostics() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let project = format!("{workspace}/target/music-cli-strict-build-project");
+    let _ = fs::remove_dir_all(&project);
+    fs::create_dir_all(format!("{project}/src")).unwrap();
+    fs::write(
+        format!("{project}/music.toml"),
+        "name = \"strict-build\"\nsource = \"src/main.music\"\noutput = \"build/out.mid\"\nformat = \"midi\"\n",
+    )
+    .unwrap();
+    fs::write(
+        format!("{project}/src/main.music"),
+        r#"
+style WarningScale {
+  scale: C major
+  severity_scale: warning
+}
+
+score warning_only style WarningScale {
+  key C major
+  voice lead {
+    note C4, 1/4
+    note F#4, 1/4
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let build_output = run_music_in(&["build"], &project);
+    assert!(build_output.status.success());
+    assert!(fs::read(format!("{project}/build/out.mid"))
+        .unwrap()
+        .starts_with(b"MThd"));
+    fs::remove_file(format!("{project}/build/out.mid")).unwrap();
+
+    let strict_output = run_music_in(&["build", "--strict"], &project);
+
+    assert!(!strict_output.status.success());
+    assert!(!std::path::Path::new(&format!("{project}/build/out.mid")).exists());
+    let stderr = String::from_utf8_lossy(&strict_output.stderr);
+    assert!(stderr.contains("ML_STYLE_SCALE"));
+    assert!(stderr.contains("warning"));
+}
+
+#[test]
 fn music_diagnose_detects_style_violation() {
     let output = run_music(&["diagnose", "examples/style_violation.music"]);
 

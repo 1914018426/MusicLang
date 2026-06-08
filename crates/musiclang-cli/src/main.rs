@@ -23,6 +23,9 @@ enum Command {
     Build {
         #[arg(long)]
         manifest: Option<String>,
+
+        #[arg(long)]
+        strict: bool,
     },
     Compile {
         input: String,
@@ -91,7 +94,7 @@ fn main() {
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::New { name } => new_project(&name),
-        Command::Build { manifest } => build_project(manifest.as_deref()),
+        Command::Build { manifest, strict } => build_project(manifest.as_deref(), strict),
         Command::Compile { input, output } => compile_file(&input, output.as_deref()),
         Command::Check { input, strict } => check_file(&input, strict),
         Command::Export {
@@ -156,7 +159,7 @@ fn new_project(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn build_project(manifest: Option<&str>) -> Result<(), String> {
+fn build_project(manifest: Option<&str>, strict: bool) -> Result<(), String> {
     let manifest_path = manifest.unwrap_or("music.toml");
     let manifest_text = fs::read_to_string(manifest_path)
         .map_err(|error| format!("failed to read {manifest_path}: {error}"))?;
@@ -168,7 +171,7 @@ fn build_project(manifest: Option<&str>) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create output dir: {error}"))?;
     }
-    export_file_to(&input, Some(&output), &project.format, false)?;
+    export_file_to(&input, Some(&output), &project.format, strict)?;
     println!("built {}", project.name);
     Ok(())
 }
