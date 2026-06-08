@@ -373,6 +373,36 @@ score demo {
 }
 
 #[test]
+fn music_ir_expands_glissando_as_stepped_notes() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/glissando.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  voice lead {
+    glissando C4 to G4 steps 5, 1/16
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["ir", &input_path]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("class: C"));
+    assert!(stdout.contains("class: Cs"));
+    assert!(stdout.contains("class: Ds"));
+    assert!(stdout.contains("class: F"));
+    assert!(stdout.contains("class: G"));
+    assert!(stdout.contains("start_tick: 120"));
+    assert!(stdout.contains("start_tick: 480"));
+    assert!(stdout.contains("duration_ticks: 120"));
+}
+
+#[test]
 fn music_ir_expands_strum_as_staggered_notes() {
     let workspace = env!("CARGO_MANIFEST_DIR");
     let input_path = format!("{workspace}/target/strum.music");

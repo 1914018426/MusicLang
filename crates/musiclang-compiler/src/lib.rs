@@ -8,9 +8,9 @@ use musiclang_core::{
 };
 use musiclang_parser::{
     parse_source, ArpeggioStmt, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt,
-    DynamicStmt, Expr, ExprKind, FunctionDecl, ModulateStmt, NoteStmt, OstinatoStmt, OverrideStmt,
-    PedalStmt, Program, ProgressionStmt, RestStmt, RomanStmt, ScaleStmt, SequenceStmt, Stmt,
-    StrumStmt, StyleDecl, TransposeStmt, VoiceDecl, WithStyleStmt,
+    DynamicStmt, Expr, ExprKind, FunctionDecl, GlissandoStmt, ModulateStmt, NoteStmt, OstinatoStmt,
+    OverrideStmt, PedalStmt, Program, ProgressionStmt, RestStmt, RomanStmt, ScaleStmt,
+    SequenceStmt, Stmt, StrumStmt, StyleDecl, TransposeStmt, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,6 +181,7 @@ impl Compiler {
             Stmt::Voice(voice) => self.compile_voice(voice, track),
             Stmt::Note(note) => self.compile_note(note, track),
             Stmt::Rest(rest) => self.compile_rest(rest, track),
+            Stmt::Glissando(glissando) => self.compile_glissando(glissando, track),
             Stmt::Degree(degree) => self.compile_degree(degree, track),
             Stmt::Scale(scale) => self.compile_scale(scale, track),
             Stmt::Pedal(pedal) => self.compile_pedal(pedal, track),
@@ -370,6 +371,100 @@ impl Compiler {
         };
         self.check_rhythm_vocab(duration, rest.line, rest.column, Some(rest.span));
         track.advance(duration);
+    }
+
+    fn compile_glissando(&mut self, glissando: &GlissandoStmt, track: &mut TrackBuilder) {
+        let Some(start) = self.eval_pitch(&glissando.start_expr, glissando.line, glissando.column)
+        else {
+            return;
+        };
+        let Some(end) = self.eval_pitch(&glissando.end_expr, glissando.line, glissando.column)
+        else {
+            return;
+        };
+        let Some(steps) = self.eval_glissando_steps(glissando) else {
+            return;
+        };
+        let Some(duration) =
+            self.eval_duration(&glissando.duration_expr, glissando.line, glissando.column)
+        else {
+            return;
+        };
+        self.check_rhythm_vocab(
+            duration,
+            glissando.line,
+            glissando.column,
+            Some(glissando.span),
+        );
+        let start_midi = i16::from(start.midi_number().expect("validated pitch"));
+        let end_midi = i16::from(end.midi_number().expect("validated pitch"));
+        for index in 0..steps {
+            let midi = if steps == 1 {
+                start_midi
+            } else {
+                start_midi + ((end_midi - start_midi) * index as i16) / (steps as i16 - 1)
+            };
+            let pitch = match Pitch::from_midi_number(midi) {
+                Ok(pitch) => pitch,
+                Err(error) => {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_CORE_PITCH",
+                            error.to_string(),
+                            glissando.line,
+                            glissando.column,
+                        )
+                        .with_span(glissando.span),
+                    );
+                    return;
+                }
+            };
+            self.check_pitch_style(
+                pitch,
+                glissando.line,
+                glissando.column,
+                Some(glissando.span),
+            );
+            self.check_instrument_range(
+                track.program,
+                pitch,
+                glissando.line,
+                glissando.column,
+                Some(glissando.span),
+            );
+            track.push_note(Note::new(pitch, duration), Some(glissando.span));
+        }
+    }
+
+    fn eval_glissando_steps(&mut self, glissando: &GlissandoStmt) -> Option<usize> {
+        match self.eval_expr(&glissando.steps_expr, glissando.line, glissando.column) {
+            Some(Value::Int(value)) if value > 0 => Some(value as usize),
+            Some(Value::Int(_)) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_THEORY_GLISSANDO",
+                        "glissando steps must be positive",
+                        glissando.line,
+                        glissando.column,
+                    )
+                    .with_span(glissando.span),
+                );
+                None
+            }
+            Some(_) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected integer glissando steps",
+                        glissando.line,
+                        glissando.column,
+                    )
+                    .with_span(glissando.span),
+                );
+                None
+            }
+            None => None,
+        }
     }
 
     fn compile_degree(&mut self, degree: &DegreeStmt, track: &mut TrackBuilder) {
@@ -6807,6 +6902,71 @@ score demo {
             ir.tracks[0].events[2].articulation.as_deref(),
             Some("staccato")
         );
+    }
+
+    #[test]
+    fn glissando_emits_stepped_chromatic_motion() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    glissando C4 to G4 steps 5, 1/16
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[0].pitch.to_string(), "C4");
+        assert_eq!(events[1].pitch.to_string(), "C#4");
+        assert_eq!(events[2].pitch.to_string(), "D#4");
+        assert_eq!(events[3].pitch.to_string(), "F4");
+        assert_eq!(events[4].pitch.to_string(), "G4");
+        assert_eq!(events[0].start_tick, 0);
+        assert_eq!(events[1].start_tick, 120);
+        assert_eq!(events[4].start_tick, 480);
+        assert_eq!(events[0].duration_ticks, 120);
+    }
+
+    #[test]
+    fn transpose_block_transposes_glissando() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    transpose M2 {
+      glissando C4 to G4 steps 3, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].pitch.to_string(), "D4");
+        assert_eq!(events[1].pitch.to_string(), "F4");
+        assert_eq!(events[2].pitch.to_string(), "A4");
+        assert_eq!(events[1].start_tick, 240);
+    }
+
+    #[test]
+    fn glissando_rejects_non_positive_steps() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice lead {
+    glissando C4 to G4 steps 0, 1/16
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_THEORY_GLISSANDO");
     }
 
     #[test]

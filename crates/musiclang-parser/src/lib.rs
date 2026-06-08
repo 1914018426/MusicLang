@@ -69,6 +69,7 @@ pub enum Stmt {
     Voice(VoiceDecl),
     Note(NoteStmt),
     Rest(RestStmt),
+    Glissando(GlissandoStmt),
     Degree(DegreeStmt),
     Scale(ScaleStmt),
     Pedal(PedalStmt),
@@ -190,6 +191,21 @@ pub struct NoteStmt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestStmt {
     pub duration: String,
+    pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlissandoStmt {
+    pub start_pitch: String,
+    pub end_pitch: String,
+    pub steps: i32,
+    pub duration: String,
+    pub start_expr: Expr,
+    pub end_expr: Expr,
+    pub steps_expr: Expr,
     pub duration_expr: Expr,
     pub line: usize,
     pub column: usize,
@@ -900,6 +916,9 @@ impl Parser {
         if self.check_ident("rest") {
             return self.parse_rest().map(Stmt::Rest);
         }
+        if self.check_ident("glissando") {
+            return self.parse_glissando().map(Stmt::Glissando);
+        }
         if self.check_ident("degree") {
             return self.parse_degree().map(Stmt::Degree);
         }
@@ -1104,6 +1123,34 @@ impl Parser {
         let duration_expr = self.parse_expr_until_stmt_end()?;
         Some(RestStmt {
             duration: expr_to_source(&duration_expr),
+            duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_glissando(&mut self) -> Option<GlissandoStmt> {
+        let start = self.expect_ident_text("glissando")?;
+        let start_expr = self.parse_expr_until_keyword("to")?;
+        self.expect_ident_text("to")?;
+        let end_expr = self.parse_expr_until_keyword("steps")?;
+        self.expect_ident_text("steps")?;
+        let steps_expr = self.parse_expr_until(&[TokenKind::Comma])?;
+        self.expect(TokenKind::Comma, "expected `,` after glissando steps")?;
+        let duration_expr = self.parse_expr_until_stmt_end()?;
+        let steps = match steps_expr.kind {
+            ExprKind::Int(value) => value,
+            _ => 0,
+        };
+        Some(GlissandoStmt {
+            start_pitch: expr_to_source(&start_expr),
+            end_pitch: expr_to_source(&end_expr),
+            steps,
+            duration: expr_to_source(&duration_expr),
+            start_expr,
+            end_expr,
+            steps_expr,
             duration_expr,
             line: start.span.line,
             column: start.span.column,
@@ -1826,6 +1873,7 @@ impl Parser {
             "voice"
                 | "note"
                 | "rest"
+                | "glissando"
                 | "degree"
                 | "scale"
                 | "pedal"
@@ -2350,6 +2398,31 @@ score demo {
         };
 
         assert_eq!(rest.duration, "1/4");
+    }
+
+    #[test]
+    fn parses_glissando_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    glissando C4 to G4 steps 5, 1/16
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Glissando(glissando) = &voice.statements[0] else {
+            panic!("expected glissando");
+        };
+
+        assert_eq!(glissando.start_pitch, "C4");
+        assert_eq!(glissando.end_pitch, "G4");
+        assert_eq!(glissando.steps, 5);
+        assert_eq!(glissando.duration, "1/16");
     }
 
     #[test]
