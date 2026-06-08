@@ -7,7 +7,10 @@ use lsp_types::{
     DidOpenTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
     InitializeParams, Location, MarkedString, Position, PublishDiagnosticsParams, Range,
-    ServerCapabilities, SymbolKind, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
+    SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, SymbolKind,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
 };
 use musiclang_core::{Severity, BUILT_IN_STYLES};
 
@@ -19,6 +22,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
         completion_provider: Some(lsp_types::CompletionOptions::default()),
         definition_provider: Some(lsp_types::OneOf::Left(true)),
         document_symbol_provider: Some(lsp_types::OneOf::Left(true)),
+        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+            SemanticTokensOptions {
+                work_done_progress_options: Default::default(),
+                legend: semantic_tokens_legend(),
+                range: Some(false),
+                full: Some(SemanticTokensFullOptions::Bool(true)),
+            },
+        )),
         ..ServerCapabilities::default()
     })?;
     let params = connection.initialize(capabilities)?;
@@ -77,6 +88,13 @@ fn handle_request(
             connection
                 .sender
                 .send(Message::Response(Response::new_ok(request.id, symbols)))?;
+        }
+        "textDocument/semanticTokens/full" => {
+            let params: SemanticTokensParams = serde_json::from_value(request.params)?;
+            let tokens = semantic_tokens(documents, &params);
+            connection
+                .sender
+                .send(Message::Response(Response::new_ok(request.id, tokens)))?;
         }
         _ => connection.sender.send(Message::Response(Response::new_ok(
             request.id,
@@ -328,6 +346,254 @@ fn definition_at(
     }))
 }
 
+const SEMANTIC_KEYWORD: u32 = 0;
+const SEMANTIC_FUNCTION: u32 = 1;
+const SEMANTIC_VARIABLE: u32 = 2;
+const SEMANTIC_CLASS: u32 = 3;
+const SEMANTIC_NUMBER: u32 = 4;
+const SEMANTIC_STRING: u32 = 5;
+const SEMANTIC_COMMENT: u32 = 6;
+const SEMANTIC_OPERATOR: u32 = 7;
+const SEMANTIC_DECLARATION: u32 = 1;
+
+fn semantic_tokens_legend() -> SemanticTokensLegend {
+    SemanticTokensLegend {
+        token_types: vec![
+            SemanticTokenType::KEYWORD,
+            SemanticTokenType::FUNCTION,
+            SemanticTokenType::VARIABLE,
+            SemanticTokenType::CLASS,
+            SemanticTokenType::NUMBER,
+            SemanticTokenType::STRING,
+            SemanticTokenType::COMMENT,
+            SemanticTokenType::OPERATOR,
+        ],
+        token_modifiers: vec![SemanticTokenModifier::DECLARATION],
+    }
+}
+
+fn semantic_tokens(
+    documents: &HashMap<String, String>,
+    params: &SemanticTokensParams,
+) -> Option<SemanticTokensResult> {
+    let uri = &params.text_document.uri;
+    let source = documents.get(&uri.to_string())?;
+    let raw_tokens = source_semantic_tokens(source);
+    Some(SemanticTokensResult::Tokens(SemanticTokens {
+        result_id: None,
+        data: encode_semantic_tokens(raw_tokens),
+    }))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RawSemanticToken {
+    line: u32,
+    start: u32,
+    length: u32,
+    token_type: u32,
+    token_modifiers_bitset: u32,
+}
+
+fn source_semantic_tokens(source: &str) -> Vec<RawSemanticToken> {
+    let local_functions = local_function_names(source);
+    let local_variables = local_variable_names(source);
+    let local_styles = local_style_names(source);
+    source
+        .lines()
+        .enumerate()
+        .flat_map(|(line_index, line)| {
+            line_semantic_tokens(
+                line_index as u32,
+                line,
+                &local_functions,
+                &local_variables,
+                &local_styles,
+            )
+        })
+        .collect()
+}
+
+fn line_semantic_tokens(
+    line_index: u32,
+    line: &str,
+    local_functions: &[String],
+    local_variables: &[String],
+    local_styles: &[String],
+) -> Vec<RawSemanticToken> {
+    let mut tokens = Vec::new();
+    let declaration = declaration_name(line);
+    let mut index = 0usize;
+    while index < line.len() {
+        let Some(ch) = line[index..].chars().next() else {
+            break;
+        };
+        if ch.is_whitespace() {
+            index += ch.len_utf8();
+            continue;
+        }
+        if line[index..].starts_with("//") || line[index..].starts_with('#') {
+            push_semantic_token(
+                &mut tokens,
+                line_index,
+                line,
+                index,
+                line.len(),
+                SEMANTIC_COMMENT,
+                0,
+            );
+            break;
+        }
+        if ch == '"' {
+            let end = string_end(line, index);
+            push_semantic_token(
+                &mut tokens,
+                line_index,
+                line,
+                index,
+                end,
+                SEMANTIC_STRING,
+                0,
+            );
+            index = end;
+            continue;
+        }
+        if is_operator_char(ch) {
+            let end = index + ch.len_utf8();
+            push_semantic_token(
+                &mut tokens,
+                line_index,
+                line,
+                index,
+                end,
+                SEMANTIC_OPERATOR,
+                0,
+            );
+            index = end;
+            continue;
+        }
+        if ch.is_ascii_digit() {
+            let end = numeric_token_end(line, index);
+            push_semantic_token(
+                &mut tokens,
+                line_index,
+                line,
+                index,
+                end,
+                SEMANTIC_NUMBER,
+                0,
+            );
+            index = end;
+            continue;
+        }
+        if is_identifier_start(ch) {
+            let end = identifier_token_end(line, index);
+            let text = &line[index..end];
+            let (token_type, modifiers) = semantic_token_kind(
+                text,
+                declaration,
+                local_functions,
+                local_variables,
+                local_styles,
+            );
+            push_semantic_token(
+                &mut tokens,
+                line_index,
+                line,
+                index,
+                end,
+                token_type,
+                modifiers,
+            );
+            index = end;
+            continue;
+        }
+        index += ch.len_utf8();
+    }
+    tokens
+}
+
+fn push_semantic_token(
+    tokens: &mut Vec<RawSemanticToken>,
+    line_index: u32,
+    line: &str,
+    start: usize,
+    end: usize,
+    token_type: u32,
+    token_modifiers_bitset: u32,
+) {
+    if start >= end {
+        return;
+    }
+    tokens.push(RawSemanticToken {
+        line: line_index,
+        start: utf16_len(&line[..start]),
+        length: utf16_len(&line[start..end]),
+        token_type,
+        token_modifiers_bitset,
+    });
+}
+
+fn semantic_token_kind(
+    text: &str,
+    declaration: Option<(&str, &str)>,
+    local_functions: &[String],
+    local_variables: &[String],
+    local_styles: &[String],
+) -> (u32, u32) {
+    if is_keyword(text) {
+        return (SEMANTIC_KEYWORD, 0);
+    }
+    if declaration == Some(("fn", text)) {
+        return (SEMANTIC_FUNCTION, SEMANTIC_DECLARATION);
+    }
+    if declaration == Some(("let", text)) {
+        return (SEMANTIC_VARIABLE, SEMANTIC_DECLARATION);
+    }
+    if declaration == Some(("style", text)) {
+        return (SEMANTIC_CLASS, SEMANTIC_DECLARATION);
+    }
+    if local_functions.iter().any(|name| name == text) {
+        return (SEMANTIC_FUNCTION, 0);
+    }
+    if local_variables.iter().any(|name| name == text) {
+        return (SEMANTIC_VARIABLE, 0);
+    }
+    if local_styles.iter().any(|name| name == text)
+        || BUILT_IN_STYLES.iter().any(|style| style.id == text)
+    {
+        return (SEMANTIC_CLASS, 0);
+    }
+    if is_pitch_like(text) || is_duration_like(text) {
+        return (SEMANTIC_NUMBER, 0);
+    }
+    (SEMANTIC_VARIABLE, 0)
+}
+
+fn encode_semantic_tokens(raw_tokens: Vec<RawSemanticToken>) -> Vec<SemanticToken> {
+    let mut previous_line = 0u32;
+    let mut previous_start = 0u32;
+    raw_tokens
+        .into_iter()
+        .map(|token| {
+            let delta_line = token.line - previous_line;
+            let delta_start = if delta_line == 0 {
+                token.start - previous_start
+            } else {
+                token.start
+            };
+            previous_line = token.line;
+            previous_start = token.start;
+            SemanticToken {
+                delta_line,
+                delta_start,
+                length: token.length,
+                token_type: token.token_type,
+                token_modifiers_bitset: token.token_modifiers_bitset,
+            }
+        })
+        .collect()
+}
+
 fn document_symbols(
     documents: &HashMap<String, String>,
     params: &DocumentSymbolParams,
@@ -387,6 +653,128 @@ fn source_symbol(line_index: usize, line: &str) -> Option<DocumentSymbol> {
         },
         children: None,
     })
+}
+
+fn declaration_name(line: &str) -> Option<(&str, &str)> {
+    let mut words = line.split_whitespace();
+    let kind = words.next()?;
+    match kind {
+        "fn" | "let" | "style" => words.next().map(|name| (kind, name.trim_end_matches('{'))),
+        _ => None,
+    }
+}
+
+fn string_end(line: &str, start: usize) -> usize {
+    let mut escaped = false;
+    for (offset, ch) in line[start + 1..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            return start + 1 + offset + ch.len_utf8();
+        }
+    }
+    line.len()
+}
+
+fn numeric_token_end(line: &str, start: usize) -> usize {
+    let mut end = start;
+    for (offset, ch) in line[start..].char_indices() {
+        if ch.is_ascii_digit() || ch == '/' {
+            end = start + offset + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    end
+}
+
+fn identifier_token_end(line: &str, start: usize) -> usize {
+    let mut end = start;
+    for (offset, ch) in line[start..].char_indices() {
+        if is_identifier_continue(ch) {
+            end = start + offset + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    end
+}
+
+fn utf16_len(text: &str) -> u32 {
+    text.chars().map(|ch| ch.len_utf16() as u32).sum()
+}
+
+fn is_keyword(text: &str) -> bool {
+    matches!(
+        text,
+        "style"
+            | "extends"
+            | "score"
+            | "voice"
+            | "section"
+            | "tempo"
+            | "meter"
+            | "key"
+            | "program"
+            | "instrument"
+            | "dynamic"
+            | "velocity"
+            | "articulation"
+            | "ornament"
+            | "non_chord_tone"
+            | "tuning_system"
+            | "world_tradition"
+            | "historical_era"
+            | "harmonic_function"
+            | "note"
+            | "chord"
+            | "let"
+            | "duration"
+            | "fn"
+            | "call"
+            | "for"
+            | "in"
+            | "if"
+            | "true"
+            | "false"
+            | "override"
+            | "allow"
+            | "reason"
+    )
+}
+
+fn is_pitch_like(text: &str) -> bool {
+    let mut chars = text.chars();
+    matches!(chars.next(), Some('A'..='G'))
+        && chars.any(|ch| ch.is_ascii_digit())
+        && text
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '#')
+}
+
+fn is_duration_like(text: &str) -> bool {
+    text.contains('/') && text.chars().all(|ch| ch.is_ascii_digit() || ch == '/')
+}
+
+fn is_identifier_start(ch: char) -> bool {
+    ch.is_alphabetic() || ch == '_'
+}
+
+fn is_identifier_continue(ch: char) -> bool {
+    ch.is_alphanumeric() || matches!(ch, '_' | '#')
+}
+
+fn is_operator_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '{' | '}' | '[' | ']' | '(' | ')' | ',' | ':' | '=' | '+' | '-' | '*' | '/' | '.'
+    )
 }
 
 fn find_definition(source: &str, word: &str) -> Option<Position> {
@@ -782,6 +1170,103 @@ mod tests {
         assert!(document_symbols(
             &documents,
             &DocumentSymbolParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            },
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn semantic_tokens_classify_musiclang_source() {
+        let source = "style Chamber {\n  scale: C D E\n}\nfn motif {\n  note C4, 1/4 // theme\n}\nscore demo style Chamber {\n  voice lead {\n    let d = duration 1/8\n    call motif\n  }\n}";
+        let tokens = source_semantic_tokens(source);
+
+        assert!(tokens.iter().any(|token| token.line == 0
+            && token.start == 0
+            && token.length == 5
+            && token.token_type == SEMANTIC_KEYWORD));
+        assert!(tokens.iter().any(|token| token.line == 0
+            && token.start == 6
+            && token.length == 7
+            && token.token_type == SEMANTIC_CLASS
+            && token.token_modifiers_bitset == SEMANTIC_DECLARATION));
+        assert!(tokens.iter().any(|token| token.line == 3
+            && token.start == 3
+            && token.length == 5
+            && token.token_type == SEMANTIC_FUNCTION
+            && token.token_modifiers_bitset == SEMANTIC_DECLARATION));
+        assert!(tokens.iter().any(|token| token.line == 4
+            && token.start == 7
+            && token.length == 2
+            && token.token_type == SEMANTIC_NUMBER));
+        assert!(tokens
+            .iter()
+            .any(|token| token.line == 4 && token.token_type == SEMANTIC_COMMENT));
+        assert!(tokens.iter().any(|token| token.line == 8
+            && token.start == 8
+            && token.length == 1
+            && token.token_type == SEMANTIC_VARIABLE
+            && token.token_modifiers_bitset == SEMANTIC_DECLARATION));
+        assert!(tokens.iter().any(|token| token.line == 9
+            && token.start == 9
+            && token.length == 5
+            && token.token_type == SEMANTIC_FUNCTION));
+    }
+
+    #[test]
+    fn semantic_tokens_use_utf16_lengths() {
+        let tokens = source_semantic_tokens("style 室内乐 {\n}");
+
+        assert!(tokens.iter().any(|token| token.line == 0
+            && token.start == 6
+            && token.length == 3
+            && token.token_type == SEMANTIC_CLASS));
+    }
+
+    #[test]
+    fn semantic_tokens_encode_lsp_deltas() {
+        let encoded = encode_semantic_tokens(vec![
+            RawSemanticToken {
+                line: 0,
+                start: 0,
+                length: 5,
+                token_type: SEMANTIC_KEYWORD,
+                token_modifiers_bitset: 0,
+            },
+            RawSemanticToken {
+                line: 0,
+                start: 6,
+                length: 4,
+                token_type: SEMANTIC_CLASS,
+                token_modifiers_bitset: SEMANTIC_DECLARATION,
+            },
+            RawSemanticToken {
+                line: 2,
+                start: 2,
+                length: 4,
+                token_type: SEMANTIC_KEYWORD,
+                token_modifiers_bitset: 0,
+            },
+        ]);
+
+        assert_eq!(encoded[0].delta_line, 0);
+        assert_eq!(encoded[0].delta_start, 0);
+        assert_eq!(encoded[1].delta_line, 0);
+        assert_eq!(encoded[1].delta_start, 6);
+        assert_eq!(encoded[2].delta_line, 2);
+        assert_eq!(encoded[2].delta_start, 2);
+    }
+
+    #[test]
+    fn semantic_tokens_return_none_for_unknown_document() {
+        let uri = Uri::from_str("file:///missing.music").unwrap();
+        let documents = HashMap::new();
+
+        assert!(semantic_tokens(
+            &documents,
+            &SemanticTokensParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri },
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
