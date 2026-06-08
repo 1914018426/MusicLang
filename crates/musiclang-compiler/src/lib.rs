@@ -9,7 +9,8 @@ use musiclang_core::{
 use musiclang_parser::{
     parse_source, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt, DynamicStmt,
     Expr, ExprKind, FunctionDecl, ModulateStmt, NoteStmt, OstinatoStmt, OverrideStmt, PedalStmt,
-    Program, ProgressionStmt, RomanStmt, SequenceStmt, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
+    Program, ProgressionStmt, RestStmt, RomanStmt, SequenceStmt, Stmt, StyleDecl, VoiceDecl,
+    WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,6 +172,7 @@ impl Compiler {
         match statement {
             Stmt::Voice(voice) => self.compile_voice(voice, track),
             Stmt::Note(note) => self.compile_note(note, track),
+            Stmt::Rest(rest) => self.compile_rest(rest, track),
             Stmt::Degree(degree) => self.compile_degree(degree, track),
             Stmt::Pedal(pedal) => self.compile_pedal(pedal, track),
             Stmt::Ostinato(ostinato) => self.compile_ostinato(ostinato, track),
@@ -348,6 +350,14 @@ impl Compiler {
             Some(note.span),
         );
         track.push_note(Note::new(pitch, duration), Some(note.span));
+    }
+
+    fn compile_rest(&mut self, rest: &RestStmt, track: &mut TrackBuilder) {
+        let Some(duration) = self.eval_duration(&rest.duration_expr, rest.line, rest.column) else {
+            return;
+        };
+        self.check_rhythm_vocab(duration, rest.line, rest.column, Some(rest.span));
+        track.advance(duration);
     }
 
     fn compile_degree(&mut self, degree: &DegreeStmt, track: &mut TrackBuilder) {
@@ -3180,6 +3190,10 @@ impl TrackBuilder {
         }
     }
 
+    fn advance(&mut self, duration: Duration) {
+        self.cursor_tick += duration.ticks(DEFAULT_TICKS_PER_QUARTER);
+    }
+
     fn push_note(&mut self, note: Note, source_span: Option<Span>) {
         let duration_ticks = note.duration().ticks(DEFAULT_TICKS_PER_QUARTER);
         self.events.push(NoteEventIr {
@@ -3274,6 +3288,27 @@ score demo {
 
         assert_eq!(ir.title, "demo");
         assert_eq!(ir.tracks[0].events.len(), 4);
+    }
+
+    #[test]
+    fn rest_advances_track_cursor_without_events() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    note C4, 1/4
+    rest 1/2
+    note E4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let track = &ir.tracks[0];
+        assert_eq!(track.events.len(), 2);
+        assert_eq!(track.events[0].start_tick, 0);
+        assert_eq!(track.events[1].start_tick, 1440);
     }
 
     #[test]

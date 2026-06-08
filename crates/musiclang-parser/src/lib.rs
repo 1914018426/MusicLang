@@ -68,6 +68,7 @@ pub struct TextMetaDecl {
 pub enum Stmt {
     Voice(VoiceDecl),
     Note(NoteStmt),
+    Rest(RestStmt),
     Degree(DegreeStmt),
     Pedal(PedalStmt),
     Ostinato(OstinatoStmt),
@@ -176,6 +177,15 @@ pub struct NoteStmt {
     pub pitch: String,
     pub duration: String,
     pub pitch_expr: Expr,
+    pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestStmt {
+    pub duration: String,
     pub duration_expr: Expr,
     pub line: usize,
     pub column: usize,
@@ -830,6 +840,9 @@ impl Parser {
         if self.check_ident("note") {
             return self.parse_note().map(Stmt::Note);
         }
+        if self.check_ident("rest") {
+            return self.parse_rest().map(Stmt::Rest);
+        }
         if self.check_ident("degree") {
             return self.parse_degree().map(Stmt::Degree);
         }
@@ -1010,6 +1023,18 @@ impl Parser {
             pitch: expr_to_source(&pitch_expr),
             duration: expr_to_source(&duration_expr),
             pitch_expr,
+            duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_rest(&mut self) -> Option<RestStmt> {
+        let start = self.expect_ident_text("rest")?;
+        let duration_expr = self.parse_expr_until_stmt_end()?;
+        Some(RestStmt {
+            duration: expr_to_source(&duration_expr),
             duration_expr,
             line: start.span.line,
             column: start.span.column,
@@ -1583,6 +1608,7 @@ impl Parser {
             self.peek().text.as_str(),
             "voice"
                 | "note"
+                | "rest"
                 | "degree"
                 | "pedal"
                 | "ostinato"
@@ -2080,6 +2106,29 @@ score demo {
         assert_eq!(pedal.pitch, "C3");
         assert_eq!(pedal.count, 4);
         assert_eq!(pedal.duration, "1/4");
+    }
+
+    #[test]
+    fn parses_rest_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    rest 1/4
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Rest(rest) = &voice.statements[0] else {
+            panic!("expected rest");
+        };
+
+        assert_eq!(rest.duration, "1/4");
     }
 
     #[test]

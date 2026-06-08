@@ -176,6 +176,33 @@ fn music_export_midi_produces_valid_file() {
 }
 
 #[test]
+fn music_ir_advances_over_rest() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/rest.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  voice lead {
+    note C4, 1/4
+    rest 1/2
+    note E4, 1/4
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["ir", &input_path]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("class: C"));
+    assert!(stdout.contains("class: E"));
+    assert!(stdout.contains("start_tick: 1440"));
+}
+
+#[test]
 fn music_ir_expands_pedal_tone() {
     let workspace = env!("CARGO_MANIFEST_DIR");
     let input_path = format!("{workspace}/target/pedal-tone.music");
