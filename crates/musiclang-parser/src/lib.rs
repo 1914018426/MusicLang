@@ -1341,7 +1341,7 @@ impl Parser {
 
     fn parse_play(&mut self) -> Option<PlayStmt> {
         let start = self.expect_ident_text("play")?;
-        let expr = self.parse_expr_until_stmt_end()?;
+        let expr = self.parse_expr_until_line_end()?;
         Some(PlayStmt {
             expr,
             line: start.span.line,
@@ -2414,7 +2414,7 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
         return None;
     }
     let span = expr_span(tokens);
-    if let Some(index) = find_top_level_operator(tokens, TokenKind::Pipe) {
+    if let Some(index) = find_last_top_level_operator(tokens, TokenKind::Pipe) {
         return Some(Expr::new(
             ExprKind::Pipe {
                 value: Box::new(parse_expr_tokens(&tokens[..index])?),

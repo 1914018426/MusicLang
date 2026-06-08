@@ -3317,6 +3317,52 @@ impl Compiler {
         Some(value)
     }
 
+    fn eval_transpose_value(
+        &mut self,
+        value: Value,
+        interval: Interval,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        match value {
+            Value::Pitch(pitch) => match pitch.transpose(interval) {
+                Ok(pitch) => Some(Value::Pitch(pitch)),
+                Err(error) => {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_EVAL_UNSUPPORTED_OP",
+                            error.to_string(),
+                            line,
+                            column,
+                        )
+                        .with_span(span),
+                    );
+                    None
+                }
+            },
+            Value::List(values) => values
+                .into_iter()
+                .map(|value| self.eval_transpose_value(value, interval, line, column, span))
+                .collect::<Option<Vec<_>>>()
+                .map(Value::List),
+            Value::Tuple(values) => values
+                .into_iter()
+                .map(|value| self.eval_transpose_value(value, interval, line, column, span))
+                .collect::<Option<Vec<_>>>()
+                .map(Value::Tuple),
+            Value::Dict(values) => values
+                .into_iter()
+                .map(|(key, value)| {
+                    self.eval_transpose_value(value, interval, line, column, span)
+                        .map(|value| (key, value))
+                })
+                .collect::<Option<HashMap<_, _>>>()
+                .map(Value::Dict),
+            value => Some(value),
+        }
+    }
+
     fn eval_call(
         &mut self,
         callee: &str,
@@ -3329,21 +3375,27 @@ impl Compiler {
             return value;
         }
         match (callee, args.as_slice()) {
-            ("transpose", [Value::Pitch(pitch), Value::Interval(interval)]) => {
-                match pitch.transpose(*interval) {
-                    Ok(pitch) => Some(Value::Pitch(pitch)),
-                    Err(error) => {
-                        self.diagnostics.push(
-                            Diagnostic::error(
-                                "ML_EVAL_UNSUPPORTED_OP",
-                                error.to_string(),
-                                line,
-                                column,
-                            )
-                            .with_span(span),
-                        );
-                        None
+            ("transpose", [value, Value::Interval(interval)]) => {
+                self.eval_transpose_value(value.clone(), *interval, line, column, span)
+            }
+            ("repeat", [value, Value::Int(count)]) => {
+                if *count <= 0 {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_TYPE_MISMATCH",
+                            "expected positive repeat count",
+                            line,
+                            column,
+                        )
+                        .with_span(span),
+                    );
+                    None
+                } else {
+                    let mut values = Vec::new();
+                    for _ in 0..*count {
+                        values.push(value.clone());
                     }
+                    Some(Value::List(values))
                 }
             }
             ("duration", [Value::String(value)]) => match value.parse() {
@@ -6321,17 +6373,20 @@ score demo {
 fn riff(root) = [(root, 1/8), (root |> transpose(M3), 1/8), {p:root |> transpose(P5), d:1/4}]
 score demo {
   voice lead {
-    play riff(C4)
+    play riff(C4) |> transpose(M2) |> repeat(2)
   }
 }
 "#,
         )
         .unwrap();
 
-        assert_eq!(ir.tracks[0].events.len(), 3);
-        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
-        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "E4");
-        assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "G4");
+        assert_eq!(ir.tracks[0].events.len(), 6);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "D4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "F#4");
+        assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "A4");
+        assert_eq!(ir.tracks[0].events[3].pitch.to_string(), "D4");
+        assert_eq!(ir.tracks[0].events[4].pitch.to_string(), "F#4");
+        assert_eq!(ir.tracks[0].events[5].pitch.to_string(), "A4");
     }
 
     #[test]
