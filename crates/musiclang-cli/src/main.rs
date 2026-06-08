@@ -281,6 +281,15 @@ struct TrackAnalysis {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct SonorityAnalysis {
+    tick: u32,
+    pitch_classes: Vec<String>,
+    root: Option<String>,
+    quality: Option<String>,
+    roman: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ScoreAnalysis {
     title: String,
     composer: Option<String>,
@@ -299,6 +308,7 @@ struct ScoreAnalysis {
     pitch_max: Option<String>,
     pitch_classes: Vec<String>,
     roman_roots: Vec<String>,
+    sonorities: Vec<SonorityAnalysis>,
     tracks: Vec<TrackAnalysis>,
     override_count: usize,
     diagnostic_count: usize,
@@ -377,6 +387,7 @@ fn analyze_score(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let sonorities = analyze_sonorities(&events, ir.key);
     let tracks = ir
         .tracks
         .iter()
@@ -433,6 +444,7 @@ fn analyze_score(
         pitch_max,
         pitch_classes,
         roman_roots,
+        sonorities,
         tracks,
         override_count: ir.overrides.len(),
         diagnostic_count: diagnostics.len(),
@@ -472,6 +484,16 @@ fn print_analysis(analysis: &ScoreAnalysis) {
     if !analysis.roman_roots.is_empty() {
         println!("roman_roots: {}", analysis.roman_roots.join(","));
     }
+    for sonority in &analysis.sonorities {
+        println!(
+            "sonority tick={}: pcs={}, root={}, quality={}, roman={}",
+            sonority.tick,
+            sonority.pitch_classes.join(","),
+            sonority.root.as_deref().unwrap_or("unknown"),
+            sonority.quality.as_deref().unwrap_or("unknown"),
+            sonority.roman.as_deref().unwrap_or("unknown")
+        );
+    }
     for track in &analysis.tracks {
         if let (Some(low), Some(high)) = (&track.pitch_min, &track.pitch_max) {
             println!(
@@ -492,7 +514,7 @@ fn print_analysis(analysis: &ScoreAnalysis) {
 
 fn print_analysis_json(analysis: &ScoreAnalysis) {
     print!(
-        "{{\"title\":\"{}\",\"composer\":{},\"tempo_bpm\":{},\"meter\":{},\"key\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"bar_ticks\":{},\"duration_bars\":{},\"density_per_bar\":{},\"max_simultaneous_events\":{},\"texture\":\"{}\",\"pitch_min\":{},\"pitch_max\":{},\"pitch_classes\":{},\"roman_roots\":{},\"tracks\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
+        "{{\"title\":\"{}\",\"composer\":{},\"tempo_bpm\":{},\"meter\":{},\"key\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"bar_ticks\":{},\"duration_bars\":{},\"density_per_bar\":{},\"max_simultaneous_events\":{},\"texture\":\"{}\",\"pitch_min\":{},\"pitch_max\":{},\"pitch_classes\":{},\"roman_roots\":{},\"sonorities\":{},\"tracks\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
         json_escape(&analysis.title),
         json_option(analysis.composer.as_deref()),
         analysis.tempo_bpm,
@@ -510,12 +532,93 @@ fn print_analysis_json(analysis: &ScoreAnalysis) {
         json_option(analysis.pitch_max.as_deref()),
         json_string_array(&analysis.pitch_classes),
         json_string_array(&analysis.roman_roots),
+        json_sonority_analysis(&analysis.sonorities),
         json_track_analysis(&analysis.tracks),
         analysis.override_count,
         analysis.diagnostic_count,
         analysis.warning_count,
     );
     println!();
+}
+
+fn analyze_sonorities(
+    events: &[&musiclang_core::NoteEventIr],
+    key: Option<musiclang_core::KeySignature>,
+) -> Vec<SonorityAnalysis> {
+    let ticks = events
+        .iter()
+        .map(|event| event.start_tick)
+        .collect::<BTreeSet<_>>();
+    ticks
+        .into_iter()
+        .filter_map(|tick| {
+            let pitch_classes = events
+                .iter()
+                .filter(|event| event.start_tick == tick)
+                .map(|event| event.pitch.class())
+                .collect::<BTreeSet<_>>();
+            if pitch_classes.len() < 2 {
+                return None;
+            }
+            let pitch_class_names = pitch_classes
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            let chord = infer_triad(&pitch_classes.iter().copied().collect::<Vec<_>>());
+            let roman = chord
+                .as_ref()
+                .and_then(|(root, quality)| key.map(|key| roman_chord(*root, quality, key)));
+            Some(SonorityAnalysis {
+                tick,
+                pitch_classes: pitch_class_names,
+                root: chord.as_ref().map(|(root, _)| root.to_string()),
+                quality: chord.as_ref().map(|(_, quality)| quality.to_string()),
+                roman,
+            })
+        })
+        .collect()
+}
+
+fn infer_triad(
+    pitch_classes: &[musiclang_core::PitchClass],
+) -> Option<(musiclang_core::PitchClass, &'static str)> {
+    for root in pitch_classes {
+        let intervals = pitch_classes
+            .iter()
+            .map(|pitch_class| (pitch_class.semitone() - root.semitone()).rem_euclid(12))
+            .collect::<BTreeSet<_>>();
+        let quality = if intervals.contains(&0) && intervals.contains(&4) && intervals.contains(&7)
+        {
+            Some("major")
+        } else if intervals.contains(&0) && intervals.contains(&3) && intervals.contains(&7) {
+            Some("minor")
+        } else if intervals.contains(&0) && intervals.contains(&3) && intervals.contains(&6) {
+            Some("diminished")
+        } else if intervals.contains(&0) && intervals.contains(&4) && intervals.contains(&8) {
+            Some("augmented")
+        } else {
+            None
+        };
+        if let Some(quality) = quality {
+            return Some((*root, quality));
+        }
+    }
+    None
+}
+
+fn roman_chord(
+    root: musiclang_core::PitchClass,
+    quality: &str,
+    key: musiclang_core::KeySignature,
+) -> String {
+    let degree = roman_degree(root, key);
+    match quality {
+        "major" => degree.to_ascii_uppercase(),
+        "minor" => degree.to_ascii_lowercase(),
+        "diminished" => format!("{}°", degree.to_ascii_lowercase()),
+        "augmented" => format!("{}+", degree.to_ascii_uppercase()),
+        _ => degree,
+    }
 }
 
 fn density_per_bar(event_count: usize, duration_bars: u32) -> u32 {
@@ -580,6 +683,24 @@ fn json_string_array(values: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!("[{values}]")
+}
+
+fn json_sonority_analysis(sonorities: &[SonorityAnalysis]) -> String {
+    let sonorities = sonorities
+        .iter()
+        .map(|sonority| {
+            format!(
+                "{{\"tick\":{},\"pitch_classes\":{},\"root\":{},\"quality\":{},\"roman\":{}}}",
+                sonority.tick,
+                json_string_array(&sonority.pitch_classes),
+                json_option(sonority.root.as_deref()),
+                json_option(sonority.quality.as_deref()),
+                json_option(sonority.roman.as_deref())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{sonorities}]")
 }
 
 fn json_track_analysis(tracks: &[TrackAnalysis]) -> String {
