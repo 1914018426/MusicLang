@@ -305,7 +305,14 @@ impl Compiler {
             }
             Stmt::Ornament(ornament) => {
                 self.check_ornament(&ornament.kind, ornament.line, ornament.column);
+                let event_start = track.event_count();
                 self.compile_statements(&ornament.statements, track);
+                self.check_ornament_pattern(
+                    &ornament.kind,
+                    &track.events()[event_start..],
+                    ornament.line,
+                    ornament.column,
+                );
             }
             Stmt::NonChordTone(non_chord_tone) => {
                 self.check_non_chord_tone(
@@ -555,6 +562,31 @@ impl Compiler {
                 "ornament",
                 "ML_STYLE_ORNAMENT",
                 format!("ornament `{kind}` is outside active style vocabulary"),
+                line,
+                column,
+            );
+        }
+    }
+
+    fn check_ornament_pattern(
+        &mut self,
+        kind: &str,
+        events: &[NoteEventIr],
+        line: usize,
+        column: usize,
+    ) {
+        if self.style.ornaments.is_empty()
+            || self.has_override("ornament")
+            || self.has_score_override("ornament")
+            || !self.style.ornaments.iter().any(|allowed| allowed == kind)
+        {
+            return;
+        }
+        if kind == "trill" && !events_form_trill(events) {
+            self.push_style_diagnostic(
+                "ornament",
+                "ML_STYLE_ORNAMENT",
+                "trill ornament must alternate rapidly between two pitch classes".to_string(),
                 line,
                 column,
             );
@@ -2014,6 +2046,18 @@ fn track_has_swing(track: &TrackIr) -> bool {
         .events
         .windows(2)
         .any(|events| events[0].duration_ticks == events[1].duration_ticks * 2)
+}
+
+fn events_form_trill(events: &[NoteEventIr]) -> bool {
+    if events.len() < 3 {
+        return false;
+    }
+    let first = events[0].pitch.class();
+    let second = events[1].pitch.class();
+    first != second
+        && events.iter().enumerate().all(|(index, event)| {
+            event.pitch.class() == if index % 2 == 0 { first } else { second }
+        })
 }
 
 fn harmonic_functions(tracks: &[TrackIr]) -> Vec<String> {
@@ -3574,7 +3618,7 @@ style Ornamented {
 }
 score demo style Ornamented {
   voice lead {
-    ornament trill {
+    ornament mordent {
       note C4, 1/4
     }
   }
@@ -3584,6 +3628,54 @@ score demo style Ornamented {
         .unwrap();
 
         assert_eq!(ir.tracks[0].events.len(), 1);
+    }
+
+    #[test]
+    fn ornament_trill_accepts_alternating_pattern() {
+        let ir = compile_source(
+            r#"
+style Ornamented {
+  ornament: trill
+}
+score demo style Ornamented {
+  voice lead {
+    ornament trill {
+      note C4, 1/16
+      note D4, 1/16
+      note C4, 1/16
+      note D4, 1/16
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 4);
+    }
+
+    #[test]
+    fn ornament_trill_rejects_non_alternating_pattern() {
+        let diagnostics = compile_source(
+            r#"
+style Ornamented {
+  ornament: trill
+}
+score demo style Ornamented {
+  voice lead {
+    ornament trill {
+      note C4, 1/16
+      note D4, 1/16
+      note E4, 1/16
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_ORNAMENT");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("ornament"));
     }
 
     #[test]
