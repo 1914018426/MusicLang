@@ -7,8 +7,8 @@ use musiclang_core::{
     DEFAULT_TICKS_PER_QUARTER,
 };
 use musiclang_parser::{
-    parse_source, ArticulationStmt, BinaryOp, ChordStmt, DynamicStmt, Expr, FunctionDecl, NoteStmt,
-    OverrideStmt, Program, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
+    parse_source, ArticulationStmt, BinaryOp, ChordStmt, DynamicStmt, Expr, ExprKind, FunctionDecl,
+    NoteStmt, OverrideStmt, Program, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1135,71 +1135,68 @@ impl Compiler {
     }
 
     fn eval_expr(&mut self, expr: &Expr, line: usize, column: usize) -> Option<Value> {
-        match expr {
-            Expr::Ident(name) => self.resolve_token(name).or_else(|| {
-                self.diagnostics.push(Diagnostic::error(
-                    "ML_RESOLVE_UNKNOWN_NAME",
-                    format!("unknown name `{name}`"),
-                    line,
-                    column,
-                ));
+        match &expr.kind {
+            ExprKind::Ident(name) => self.resolve_token(name).or_else(|| {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_RESOLVE_UNKNOWN_NAME",
+                        format!("unknown name `{name}`"),
+                        line,
+                        column,
+                    )
+                    .with_span(expr.span),
+                );
                 None
             }),
-            Expr::Int(value) => Some(Value::Int(*value)),
-            Expr::Bool(value) => Some(Value::Bool(*value)),
-            Expr::PitchLiteral(value) => match value.parse() {
+            ExprKind::Int(value) => Some(Value::Int(*value)),
+            ExprKind::Bool(value) => Some(Value::Bool(*value)),
+            ExprKind::PitchLiteral(value) => match value.parse() {
                 Ok(pitch) => Some(Value::Pitch(pitch)),
                 Err(error) => {
-                    self.diagnostics.push(Diagnostic::error(
-                        "ML_CORE_PITCH",
-                        error.to_string(),
-                        line,
-                        column,
-                    ));
+                    self.diagnostics.push(
+                        Diagnostic::error("ML_CORE_PITCH", error.to_string(), line, column)
+                            .with_span(expr.span),
+                    );
                     None
                 }
             },
-            Expr::IntervalLiteral(value) => match value.parse() {
+            ExprKind::IntervalLiteral(value) => match value.parse() {
                 Ok(interval) => Some(Value::Interval(interval)),
                 Err(error) => {
-                    self.diagnostics.push(Diagnostic::error(
-                        "ML_CORE_INTERVAL",
-                        error.to_string(),
-                        line,
-                        column,
-                    ));
+                    self.diagnostics.push(
+                        Diagnostic::error("ML_CORE_INTERVAL", error.to_string(), line, column)
+                            .with_span(expr.span),
+                    );
                     None
                 }
             },
-            Expr::DurationLiteral(value) => match value.parse() {
+            ExprKind::DurationLiteral(value) => match value.parse() {
                 Ok(duration) => Some(Value::Duration(duration)),
                 Err(error) => {
-                    self.diagnostics.push(Diagnostic::error(
-                        "ML_CORE_DURATION",
-                        error.to_string(),
-                        line,
-                        column,
-                    ));
+                    self.diagnostics.push(
+                        Diagnostic::error("ML_CORE_DURATION", error.to_string(), line, column)
+                            .with_span(expr.span),
+                    );
                     None
                 }
             },
-            Expr::StringLiteral(value) => Some(Value::String(value.clone())),
-            Expr::List(values) => values
+            ExprKind::StringLiteral(value) => Some(Value::String(value.clone())),
+            ExprKind::List(values) => values
                 .iter()
                 .map(|value| self.eval_expr(value, line, column))
                 .collect::<Option<Vec<_>>>()
                 .map(Value::List),
-            Expr::Call { callee, args } => {
+            ExprKind::Call { callee, args } => {
                 let args = args
                     .iter()
                     .map(|arg| self.eval_expr(arg, line, column))
                     .collect::<Option<Vec<_>>>()?;
-                self.eval_call(callee, args, line, column)
+                self.eval_call(callee, args, line, column, expr.span)
             }
-            Expr::Binary { op, left, right } => {
+            ExprKind::Binary { op, left, right } => {
                 let left = self.eval_expr(left, line, column)?;
                 let right = self.eval_expr(right, line, column)?;
-                self.eval_binary(*op, left, right, line, column)
+                self.eval_binary(*op, left, right, line, column, expr.span)
             }
         }
     }
@@ -1210,18 +1207,22 @@ impl Compiler {
         args: Vec<Value>,
         line: usize,
         column: usize,
+        span: Span,
     ) -> Option<Value> {
         match (callee, args.as_slice()) {
             ("transpose", [Value::Pitch(pitch), Value::Interval(interval)]) => {
                 match pitch.transpose(*interval) {
                     Ok(pitch) => Some(Value::Pitch(pitch)),
                     Err(error) => {
-                        self.diagnostics.push(Diagnostic::error(
-                            "ML_EVAL_UNSUPPORTED_OP",
-                            error.to_string(),
-                            line,
-                            column,
-                        ));
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "ML_EVAL_UNSUPPORTED_OP",
+                                error.to_string(),
+                                line,
+                                column,
+                            )
+                            .with_span(span),
+                        );
                         None
                     }
                 }
@@ -1229,43 +1230,40 @@ impl Compiler {
             ("duration", [Value::String(value)]) => match value.parse() {
                 Ok(duration) => Some(Value::Duration(duration)),
                 Err(error) => {
-                    self.diagnostics.push(Diagnostic::error(
-                        "ML_CORE_DURATION",
-                        error.to_string(),
-                        line,
-                        column,
-                    ));
+                    self.diagnostics.push(
+                        Diagnostic::error("ML_CORE_DURATION", error.to_string(), line, column)
+                            .with_span(span),
+                    );
                     None
                 }
             },
             ("pitch", [Value::String(value)]) => match value.parse() {
                 Ok(pitch) => Some(Value::Pitch(pitch)),
                 Err(error) => {
-                    self.diagnostics.push(Diagnostic::error(
-                        "ML_CORE_PITCH",
-                        error.to_string(),
-                        line,
-                        column,
-                    ));
+                    self.diagnostics.push(
+                        Diagnostic::error("ML_CORE_PITCH", error.to_string(), line, column)
+                            .with_span(span),
+                    );
                     None
                 }
             },
             ("first", [Value::List(values)]) => values.first().cloned().or_else(|| {
-                self.diagnostics.push(Diagnostic::error(
-                    "ML_TYPE_MISMATCH",
-                    "expected non-empty list",
-                    line,
-                    column,
-                ));
+                self.diagnostics.push(
+                    Diagnostic::error("ML_TYPE_MISMATCH", "expected non-empty list", line, column)
+                        .with_span(span),
+                );
                 None
             }),
             _ => {
-                self.diagnostics.push(Diagnostic::error(
-                    "ML_EVAL_UNSUPPORTED_OP",
-                    format!("unsupported call `{callee}`"),
-                    line,
-                    column,
-                ));
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_EVAL_UNSUPPORTED_OP",
+                        format!("unsupported call `{callee}`"),
+                        line,
+                        column,
+                    )
+                    .with_span(span),
+                );
                 None
             }
         }
@@ -1278,18 +1276,22 @@ impl Compiler {
         right: Value,
         line: usize,
         column: usize,
+        span: Span,
     ) -> Option<Value> {
         match (op, left, right) {
             (BinaryOp::Add, Value::Pitch(pitch), Value::Interval(interval)) => {
                 match pitch + interval {
                     Ok(pitch) => Some(Value::Pitch(pitch)),
                     Err(error) => {
-                        self.diagnostics.push(Diagnostic::error(
-                            "ML_EVAL_UNSUPPORTED_OP",
-                            error.to_string(),
-                            line,
-                            column,
-                        ));
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "ML_EVAL_UNSUPPORTED_OP",
+                                error.to_string(),
+                                line,
+                                column,
+                            )
+                            .with_span(span),
+                        );
                         None
                     }
                 }
@@ -1298,12 +1300,15 @@ impl Compiler {
                 match pitch - interval {
                     Ok(pitch) => Some(Value::Pitch(pitch)),
                     Err(error) => {
-                        self.diagnostics.push(Diagnostic::error(
-                            "ML_EVAL_UNSUPPORTED_OP",
-                            error.to_string(),
-                            line,
-                            column,
-                        ));
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "ML_EVAL_UNSUPPORTED_OP",
+                                error.to_string(),
+                                line,
+                                column,
+                            )
+                            .with_span(span),
+                        );
                         None
                     }
                 }
@@ -1313,12 +1318,15 @@ impl Compiler {
                 Some(Value::Bool(left == right))
             }
             _ => {
-                self.diagnostics.push(Diagnostic::error(
-                    "ML_TYPE_MISMATCH",
-                    "unsupported expression operand types",
-                    line,
-                    column,
-                ));
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "unsupported expression operand types",
+                        line,
+                        column,
+                    )
+                    .with_span(span),
+                );
                 None
             }
         }
@@ -1328,12 +1336,15 @@ impl Compiler {
         match self.eval_expr(expr, line, column)? {
             Value::Pitch(pitch) => Some(pitch),
             _ => {
-                self.diagnostics.push(Diagnostic::error(
-                    "ML_TYPE_MISMATCH",
-                    "expected pitch expression",
-                    line,
-                    column,
-                ));
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected pitch expression",
+                        line,
+                        column,
+                    )
+                    .with_span(expr.span),
+                );
                 None
             }
         }
@@ -1343,12 +1354,15 @@ impl Compiler {
         match self.eval_expr(expr, line, column)? {
             Value::Duration(duration) => Some(duration),
             _ => {
-                self.diagnostics.push(Diagnostic::error(
-                    "ML_TYPE_MISMATCH",
-                    "expected duration expression",
-                    line,
-                    column,
-                ));
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected duration expression",
+                        line,
+                        column,
+                    )
+                    .with_span(expr.span),
+                );
                 None
             }
         }
@@ -1358,12 +1372,10 @@ impl Compiler {
         match self.eval_expr(expr, line, column)? {
             Value::Bool(value) => Some(value),
             _ => {
-                self.diagnostics.push(Diagnostic::error(
-                    "ML_TYPE_MISMATCH",
-                    "expected bool expression",
-                    line,
-                    column,
-                ));
+                self.diagnostics.push(
+                    Diagnostic::error("ML_TYPE_MISMATCH", "expected bool expression", line, column)
+                        .with_span(expr.span),
+                );
                 None
             }
         }
@@ -2961,18 +2973,20 @@ score demo {
 
     #[test]
     fn unknown_name_uses_stable_diagnostic_code() {
-        let diagnostics = compile_source(
-            r#"
+        let source = r#"
 score demo {
   voice lead {
     note missing, 1/4
   }
 }
-"#,
-        )
-        .unwrap_err();
+"#;
+        let diagnostics = compile_source(source).unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_RESOLVE_UNKNOWN_NAME");
+        let span = diagnostics[0].span.unwrap();
+        let expected_start = source.find("missing").unwrap();
+        assert_eq!(span.start, expected_start);
+        assert_eq!(span.end, expected_start + "missing".len());
     }
 
     #[test]

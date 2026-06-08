@@ -78,7 +78,19 @@ pub enum Stmt {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Expr {
+pub struct Expr {
+    pub kind: ExprKind,
+    pub span: Span,
+}
+
+impl Expr {
+    fn new(kind: ExprKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExprKind {
     Ident(String),
     Int(i32),
     Bool(bool),
@@ -1031,13 +1043,13 @@ impl Parser {
     fn parse_if(&mut self) -> Option<IfStmt> {
         let start = self.expect_ident_text("if")?;
         let condition = self.parse_expr_until(&[TokenKind::LBrace])?;
-        let (left, equals) = match &condition {
-            Expr::Binary {
+        let (left, equals) = match &condition.kind {
+            ExprKind::Binary {
                 op: BinaryOp::Eq,
                 left,
                 right,
-            } => match (&**left, &**right) {
-                (Expr::Ident(name), Expr::Int(value)) => (name.clone(), *value),
+            } => match (&left.kind, &right.kind) {
+                (ExprKind::Ident(name), ExprKind::Int(value)) => (name.clone(), *value),
                 _ => (expr_to_source(&condition), 0),
             },
             _ => (expr_to_source(&condition), 0),
@@ -1316,12 +1328,13 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
     if tokens.is_empty() {
         return None;
     }
+    let span = expr_span(tokens);
     if tokens.first()?.kind == TokenKind::LBracket && tokens.last()?.kind == TokenKind::RBracket {
         return split_expr_list(&tokens[1..tokens.len() - 1])
             .into_iter()
             .map(parse_expr_tokens)
             .collect::<Option<Vec<_>>>()
-            .map(Expr::List);
+            .map(|values| Expr::new(ExprKind::List(values), span));
     }
     if tokens.len() >= 3
         && tokens[0].kind == TokenKind::Ident
@@ -1332,34 +1345,48 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
             .into_iter()
             .map(parse_expr_tokens)
             .collect::<Option<Vec<_>>>()
-            .map(|args| Expr::Call {
-                callee: tokens[0].text.clone(),
-                args,
+            .map(|args| {
+                Expr::new(
+                    ExprKind::Call {
+                        callee: tokens[0].text.clone(),
+                        args,
+                    },
+                    span,
+                )
             });
     }
     if tokens.first()?.kind == TokenKind::LParen && tokens.last()?.kind == TokenKind::RParen {
         return parse_expr_tokens(&tokens[1..tokens.len() - 1]);
     }
     if let Some(index) = find_top_level_operator(tokens, TokenKind::EqEq) {
-        return Some(Expr::Binary {
-            op: BinaryOp::Eq,
-            left: Box::new(parse_expr_tokens(&tokens[..index])?),
-            right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
-        });
+        return Some(Expr::new(
+            ExprKind::Binary {
+                op: BinaryOp::Eq,
+                left: Box::new(parse_expr_tokens(&tokens[..index])?),
+                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
+            },
+            span,
+        ));
     }
     if let Some(index) = find_top_level_operator(tokens, TokenKind::Plus) {
-        return Some(Expr::Binary {
-            op: BinaryOp::Add,
-            left: Box::new(parse_expr_tokens(&tokens[..index])?),
-            right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
-        });
+        return Some(Expr::new(
+            ExprKind::Binary {
+                op: BinaryOp::Add,
+                left: Box::new(parse_expr_tokens(&tokens[..index])?),
+                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
+            },
+            span,
+        ));
     }
     if let Some(index) = find_top_level_operator(tokens, TokenKind::Minus) {
-        return Some(Expr::Binary {
-            op: BinaryOp::Sub,
-            left: Box::new(parse_expr_tokens(&tokens[..index])?),
-            right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
-        });
+        return Some(Expr::new(
+            ExprKind::Binary {
+                op: BinaryOp::Sub,
+                left: Box::new(parse_expr_tokens(&tokens[..index])?),
+                right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
+            },
+            span,
+        ));
     }
     if tokens.len() == 2 && tokens[0].text == "duration" {
         return Some(token_to_expr(&tokens[1]));
@@ -1370,12 +1397,15 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
     if tokens.len() == 1 {
         return Some(token_to_expr(&tokens[0]));
     }
-    Some(Expr::Ident(
-        tokens
-            .iter()
-            .map(|token| token.text.as_str())
-            .collect::<Vec<_>>()
-            .join(" "),
+    Some(Expr::new(
+        ExprKind::Ident(
+            tokens
+                .iter()
+                .map(|token| token.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+        span,
     ))
 }
 
@@ -1415,29 +1445,42 @@ fn split_expr_list(tokens: &[Token]) -> Vec<&[Token]> {
     parts
 }
 
-fn token_to_expr(token: &Token) -> Expr {
-    match token.kind {
-        TokenKind::Number => Expr::Int(token.text.parse().unwrap_or_default()),
-        TokenKind::Pitch => Expr::PitchLiteral(token.text.clone()),
-        TokenKind::Interval => Expr::IntervalLiteral(token.text.clone()),
-        TokenKind::Duration => Expr::DurationLiteral(token.text.clone()),
-        TokenKind::String => Expr::StringLiteral(token.text.clone()),
-        _ if token.text == "true" => Expr::Bool(true),
-        _ if token.text == "false" => Expr::Bool(false),
-        _ => Expr::Ident(token.text.clone()),
+fn expr_span(tokens: &[Token]) -> Span {
+    let first = tokens.first().unwrap().span;
+    let last = tokens.last().unwrap().span;
+    Span {
+        source_id: first.source_id,
+        start: first.start,
+        end: last.end,
+        line: first.line,
+        column: first.column,
     }
 }
 
+fn token_to_expr(token: &Token) -> Expr {
+    let kind = match token.kind {
+        TokenKind::Number => ExprKind::Int(token.text.parse().unwrap_or_default()),
+        TokenKind::Pitch => ExprKind::PitchLiteral(token.text.clone()),
+        TokenKind::Interval => ExprKind::IntervalLiteral(token.text.clone()),
+        TokenKind::Duration => ExprKind::DurationLiteral(token.text.clone()),
+        TokenKind::String => ExprKind::StringLiteral(token.text.clone()),
+        _ if token.text == "true" => ExprKind::Bool(true),
+        _ if token.text == "false" => ExprKind::Bool(false),
+        _ => ExprKind::Ident(token.text.clone()),
+    };
+    Expr::new(kind, token.span)
+}
+
 fn expr_to_source(expr: &Expr) -> String {
-    match expr {
-        Expr::Ident(value)
-        | Expr::PitchLiteral(value)
-        | Expr::IntervalLiteral(value)
-        | Expr::DurationLiteral(value)
-        | Expr::StringLiteral(value) => value.clone(),
-        Expr::Int(value) => value.to_string(),
-        Expr::Bool(value) => value.to_string(),
-        Expr::List(values) => format!(
+    match &expr.kind {
+        ExprKind::Ident(value)
+        | ExprKind::PitchLiteral(value)
+        | ExprKind::IntervalLiteral(value)
+        | ExprKind::DurationLiteral(value)
+        | ExprKind::StringLiteral(value) => value.clone(),
+        ExprKind::Int(value) => value.to_string(),
+        ExprKind::Bool(value) => value.to_string(),
+        ExprKind::List(values) => format!(
             "[{}]",
             values
                 .iter()
@@ -1445,7 +1488,7 @@ fn expr_to_source(expr: &Expr) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        Expr::Call { callee, args } => format!(
+        ExprKind::Call { callee, args } => format!(
             "{}({})",
             callee,
             args.iter()
@@ -1453,7 +1496,7 @@ fn expr_to_source(expr: &Expr) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        Expr::Binary { op, left, right } => {
+        ExprKind::Binary { op, left, right } => {
             let op = match op {
                 BinaryOp::Add => "+",
                 BinaryOp::Sub => "-",
@@ -1547,6 +1590,15 @@ score demo {
 
         assert_eq!(program.score.name, "demo");
         assert_eq!(program.score.statements.len(), 1);
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Note(note) = &voice.statements[0] else {
+            panic!("expected note");
+        };
+        let expected_start = source.find("C4").unwrap();
+        assert_eq!(note.pitch_expr.span.start, expected_start);
+        assert_eq!(note.pitch_expr.span.end, expected_start + "C4".len());
     }
 
     #[test]
