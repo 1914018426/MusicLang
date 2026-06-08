@@ -7,10 +7,10 @@ use musiclang_core::{
     DEFAULT_TICKS_PER_QUARTER,
 };
 use musiclang_parser::{
-    parse_source, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt, DynamicStmt,
-    Expr, ExprKind, FunctionDecl, ModulateStmt, NoteStmt, OstinatoStmt, OverrideStmt, PedalStmt,
-    Program, ProgressionStmt, RestStmt, RomanStmt, SequenceStmt, Stmt, StyleDecl, TransposeStmt,
-    VoiceDecl, WithStyleStmt,
+    parse_source, ArpeggioStmt, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt,
+    DynamicStmt, Expr, ExprKind, FunctionDecl, ModulateStmt, NoteStmt, OstinatoStmt, OverrideStmt,
+    PedalStmt, Program, ProgressionStmt, RestStmt, RomanStmt, SequenceStmt, Stmt, StyleDecl,
+    TransposeStmt, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +66,14 @@ struct PendingNonChordTone {
     event_end: usize,
     line: usize,
     column: usize,
+}
+
+#[derive(Clone, Copy)]
+struct ChordPitchContext {
+    line: usize,
+    column: usize,
+    span: Span,
+    program: Option<u8>,
 }
 
 impl Compiler {
@@ -179,6 +187,7 @@ impl Compiler {
             Stmt::Sequence(sequence) => self.compile_sequence(sequence, track),
             Stmt::Transpose(transpose) => self.compile_transpose(transpose, track),
             Stmt::Chord(chord) => self.compile_chord(chord, track),
+            Stmt::Arpeggio(arpeggio) => self.compile_arpeggio(arpeggio, track),
             Stmt::Roman(roman) => self.compile_roman(roman, track),
             Stmt::Progression(progression) => self.compile_progression(progression, track),
             Stmt::Cadence(cadence) => self.compile_cadence(cadence, track),
@@ -595,95 +604,18 @@ impl Compiler {
     }
 
     fn compile_chord(&mut self, chord: &ChordStmt, track: &mut TrackBuilder) {
-        let mut pitches = Vec::new();
-        if let (Some(root_expr), Some(quality)) = (&chord.root_expr, &chord.quality) {
-            if let Some(root) = self.eval_pitch(root_expr, chord.line, chord.column) {
-                if let Some(expanded) = expand_chord_quality(root, quality) {
-                    pitches.extend(expanded);
-                } else {
-                    self.diagnostics.push(
-                        Diagnostic::error(
-                            "ML_THEORY_CHORD_QUALITY",
-                            format!("unknown chord quality `{quality}`"),
-                            chord.line,
-                            chord.column,
-                        )
-                        .with_span(chord.span),
-                    );
-                }
-            }
-        }
-        for pitch_expr in &chord.pitch_exprs {
-            match self.eval_expr(pitch_expr, chord.line, chord.column) {
-                Some(Value::Pitch(pitch)) => {
-                    let Some(pitch) = self.apply_pitch_transpose(
-                        pitch,
-                        chord.line,
-                        chord.column,
-                        pitch_expr.span,
-                    ) else {
-                        continue;
-                    };
-                    self.check_pitch_style(pitch, chord.line, chord.column, Some(chord.span));
-                    self.check_instrument_range(
-                        track.program,
-                        pitch,
-                        chord.line,
-                        chord.column,
-                        Some(chord.span),
-                    );
-                    pitches.push(pitch);
-                }
-                Some(Value::List(values)) => {
-                    for value in values {
-                        if let Value::Pitch(pitch) = value {
-                            let Some(pitch) = self.apply_pitch_transpose(
-                                pitch,
-                                chord.line,
-                                chord.column,
-                                pitch_expr.span,
-                            ) else {
-                                continue;
-                            };
-                            self.check_pitch_style(
-                                pitch,
-                                chord.line,
-                                chord.column,
-                                Some(chord.span),
-                            );
-                            self.check_instrument_range(
-                                track.program,
-                                pitch,
-                                chord.line,
-                                chord.column,
-                                Some(chord.span),
-                            );
-                            pitches.push(pitch);
-                        } else {
-                            self.diagnostics.push(
-                                Diagnostic::error(
-                                    "ML_TYPE_MISMATCH",
-                                    "expected pitch expression",
-                                    chord.line,
-                                    chord.column,
-                                )
-                                .with_span(chord.span),
-                            );
-                        }
-                    }
-                }
-                Some(_) => self.diagnostics.push(
-                    Diagnostic::error(
-                        "ML_TYPE_MISMATCH",
-                        "expected pitch expression",
-                        chord.line,
-                        chord.column,
-                    )
-                    .with_span(chord.span),
-                ),
-                None => {}
-            }
-        }
+        let context = ChordPitchContext {
+            line: chord.line,
+            column: chord.column,
+            span: chord.span,
+            program: track.program,
+        };
+        let pitches = self.collect_chord_pitches(
+            chord.root_expr.as_ref(),
+            chord.quality.as_deref(),
+            &chord.pitch_exprs,
+            context,
+        );
         let Some(duration) = self.eval_duration(&chord.duration_expr, chord.line, chord.column)
         else {
             return;
@@ -699,6 +631,139 @@ impl Compiler {
                     .with_span(chord.span),
             ),
         }
+    }
+
+    fn compile_arpeggio(&mut self, arpeggio: &ArpeggioStmt, track: &mut TrackBuilder) {
+        let context = ChordPitchContext {
+            line: arpeggio.line,
+            column: arpeggio.column,
+            span: arpeggio.span,
+            program: track.program,
+        };
+        let pitches = self.collect_chord_pitches(
+            arpeggio.root_expr.as_ref(),
+            arpeggio.quality.as_deref(),
+            &arpeggio.pitch_exprs,
+            context,
+        );
+        let Some(duration) =
+            self.eval_duration(&arpeggio.duration_expr, arpeggio.line, arpeggio.column)
+        else {
+            return;
+        };
+        self.check_chord_vocab(
+            &pitches,
+            arpeggio.line,
+            arpeggio.column,
+            Some(arpeggio.span),
+        );
+        self.check_chord_quality_vocab(
+            &pitches,
+            arpeggio.line,
+            arpeggio.column,
+            Some(arpeggio.span),
+        );
+        self.check_set_class_vocab(
+            &pitches,
+            arpeggio.line,
+            arpeggio.column,
+            Some(arpeggio.span),
+        );
+        self.check_rhythm_vocab(
+            duration,
+            arpeggio.line,
+            arpeggio.column,
+            Some(arpeggio.span),
+        );
+        for pitch in pitches {
+            track.push_note(Note::new(pitch, duration), Some(arpeggio.span));
+        }
+    }
+
+    fn collect_chord_pitches(
+        &mut self,
+        root_expr: Option<&Expr>,
+        quality: Option<&str>,
+        pitch_exprs: &[Expr],
+        context: ChordPitchContext,
+    ) -> Vec<Pitch> {
+        let mut pitches = Vec::new();
+        if let (Some(root_expr), Some(quality)) = (root_expr, quality) {
+            if let Some(root) = self.eval_pitch(root_expr, context.line, context.column) {
+                if let Some(expanded) = expand_chord_quality(root, quality) {
+                    pitches.extend(expanded);
+                } else {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_THEORY_CHORD_QUALITY",
+                            format!("unknown chord quality `{quality}`"),
+                            context.line,
+                            context.column,
+                        )
+                        .with_span(context.span),
+                    );
+                }
+            }
+        }
+        for pitch_expr in pitch_exprs {
+            match self.eval_expr(pitch_expr, context.line, context.column) {
+                Some(Value::Pitch(pitch)) => {
+                    if let Some(pitch) = self.apply_pitch_transpose(
+                        pitch,
+                        context.line,
+                        context.column,
+                        pitch_expr.span,
+                    ) {
+                        pitches.push(pitch);
+                    }
+                }
+                Some(Value::List(values)) => {
+                    for value in values {
+                        if let Value::Pitch(pitch) = value {
+                            if let Some(pitch) = self.apply_pitch_transpose(
+                                pitch,
+                                context.line,
+                                context.column,
+                                pitch_expr.span,
+                            ) {
+                                pitches.push(pitch);
+                            }
+                        } else {
+                            self.diagnostics.push(
+                                Diagnostic::error(
+                                    "ML_TYPE_MISMATCH",
+                                    "expected pitch expression",
+                                    context.line,
+                                    context.column,
+                                )
+                                .with_span(context.span),
+                            );
+                        }
+                    }
+                }
+                Some(_) => self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected pitch expression",
+                        context.line,
+                        context.column,
+                    )
+                    .with_span(context.span),
+                ),
+                None => {}
+            }
+        }
+        for pitch in &pitches {
+            self.check_pitch_style(*pitch, context.line, context.column, Some(context.span));
+            self.check_instrument_range(
+                context.program,
+                *pitch,
+                context.line,
+                context.column,
+                Some(context.span),
+            );
+        }
+        pitches
     }
 
     fn compile_roman(&mut self, roman: &RomanStmt, track: &mut TrackBuilder) {
@@ -6447,5 +6512,75 @@ score demo {
             ir.tracks[0].events[2].articulation.as_deref(),
             Some("staccato")
         );
+    }
+
+    #[test]
+    fn arpeggio_emits_sequential_notes() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    arpeggio [C4, E4, G4], 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].pitch.class(), PitchClass::C);
+        assert_eq!(events[1].pitch.class(), PitchClass::E);
+        assert_eq!(events[2].pitch.class(), PitchClass::G);
+        assert_eq!(events[0].start_tick, 0);
+        assert_eq!(events[1].start_tick, 240);
+        assert_eq!(events[2].start_tick, 480);
+        assert_eq!(events[0].duration_ticks, 240);
+    }
+
+    #[test]
+    fn named_arpeggio_expands_quality() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    arpeggio D3 minor, 1/16
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].pitch.class(), PitchClass::D);
+        assert_eq!(events[1].pitch.class(), PitchClass::F);
+        assert_eq!(events[2].pitch.class(), PitchClass::A);
+        assert_eq!(events[0].start_tick, 0);
+        assert_eq!(events[1].start_tick, 120);
+        assert_eq!(events[2].start_tick, 240);
+    }
+
+    #[test]
+    fn transpose_block_transposes_arpeggio() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    transpose M2 {
+      arpeggio [C4, E4, G4], 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let events = &ir.tracks[0].events;
+        assert_eq!(events[0].pitch.class(), PitchClass::D);
+        assert_eq!(events[1].pitch.class(), PitchClass::Fs);
+        assert_eq!(events[2].pitch.class(), PitchClass::A);
+        assert_eq!(events[1].start_tick, 240);
+        assert_eq!(events[2].start_tick, 480);
     }
 }

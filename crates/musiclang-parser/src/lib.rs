@@ -75,6 +75,7 @@ pub enum Stmt {
     Sequence(SequenceStmt),
     Transpose(TransposeStmt),
     Chord(ChordStmt),
+    Arpeggio(ArpeggioStmt),
     Roman(RomanStmt),
     Progression(ProgressionStmt),
     Cadence(CadenceStmt),
@@ -251,6 +252,19 @@ pub struct TransposeStmt {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChordStmt {
+    pub pitches: Vec<String>,
+    pub duration: String,
+    pub pitch_exprs: Vec<Expr>,
+    pub root_expr: Option<Expr>,
+    pub quality: Option<String>,
+    pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArpeggioStmt {
     pub pitches: Vec<String>,
     pub duration: String,
     pub pitch_exprs: Vec<Expr>,
@@ -872,6 +886,9 @@ impl Parser {
         if self.check_ident("chord") {
             return self.parse_chord().map(Stmt::Chord);
         }
+        if self.check_ident("arpeggio") {
+            return self.parse_arpeggio().map(Stmt::Arpeggio);
+        }
         if self.check_ident("roman") {
             return self.parse_roman().map(Stmt::Roman);
         }
@@ -1182,6 +1199,49 @@ impl Parser {
         self.expect(TokenKind::Comma, "expected `,` after chord quality")?;
         let duration_expr = self.parse_expr_until_stmt_end()?;
         Some(ChordStmt {
+            pitches: Vec::new(),
+            duration: expr_to_source(&duration_expr),
+            pitch_exprs: Vec::new(),
+            root_expr: Some(root_expr),
+            quality: Some(quality),
+            duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_arpeggio(&mut self) -> Option<ArpeggioStmt> {
+        let start = self.expect_ident_text("arpeggio")?;
+        if self.check(TokenKind::LBracket) {
+            self.advance();
+            let mut pitch_exprs = Vec::new();
+            while !self.check(TokenKind::RBracket) && !self.check(TokenKind::Eof) {
+                pitch_exprs.push(self.parse_expr_until(&[TokenKind::Comma, TokenKind::RBracket])?);
+                if self.check(TokenKind::Comma) {
+                    self.advance();
+                }
+            }
+            self.expect(TokenKind::RBracket, "expected `]` after arpeggio pitches")?;
+            self.expect(TokenKind::Comma, "expected `,` after arpeggio pitches")?;
+            let duration_expr = self.parse_expr_until_stmt_end()?;
+            return Some(ArpeggioStmt {
+                pitches: pitch_exprs.iter().map(expr_to_source).collect(),
+                duration: expr_to_source(&duration_expr),
+                pitch_exprs,
+                root_expr: None,
+                quality: None,
+                duration_expr,
+                line: start.span.line,
+                column: start.span.column,
+                span: start.span,
+            });
+        }
+
+        let (root_expr, quality) = self.parse_named_chord_head()?;
+        self.expect(TokenKind::Comma, "expected `,` after arpeggio quality")?;
+        let duration_expr = self.parse_expr_until_stmt_end()?;
+        Some(ArpeggioStmt {
             pitches: Vec::new(),
             duration: expr_to_source(&duration_expr),
             pitch_exprs: Vec::new(),
@@ -1643,6 +1703,7 @@ impl Parser {
                 | "sequence"
                 | "transpose"
                 | "chord"
+                | "arpeggio"
                 | "roman"
                 | "progression"
                 | "cadence"
@@ -2262,6 +2323,35 @@ score demo {
         assert_eq!(sequence.count, 3);
         assert_eq!(sequence.interval, "M2");
         assert_eq!(sequence.statements.len(), 1);
+    }
+
+    #[test]
+    fn parses_arpeggio_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    arpeggio [C4, E4, G4], 1/8
+    arpeggio D3 minor, 1/16
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Arpeggio(bracket) = &voice.statements[0] else {
+            panic!("expected arpeggio");
+        };
+        let Stmt::Arpeggio(named) = &voice.statements[1] else {
+            panic!("expected named arpeggio");
+        };
+
+        assert_eq!(bracket.pitches, ["C4", "E4", "G4"]);
+        assert_eq!(bracket.duration, "1/8");
+        assert_eq!(named.quality.as_deref(), Some("minor"));
+        assert_eq!(named.duration, "1/16");
     }
 
     #[test]
