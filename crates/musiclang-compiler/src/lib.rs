@@ -87,7 +87,7 @@ impl Compiler {
 
     fn compile(mut self) -> Result<Compilation, Vec<Diagnostic>> {
         let mut tracks = Vec::new();
-        let (tempo_bpm, meter, key) = lower::score_metadata(&self.program);
+        let (title, composer, tempo_bpm, meter, key) = lower::score_metadata(&self.program);
         self.check_score_style(tempo_bpm, meter);
         let statements = self.program.score.statements.clone();
 
@@ -133,10 +133,13 @@ impl Compiler {
 
         Ok(Compilation {
             ir: lower::score_ir(
-                self.program,
-                tempo_bpm,
-                meter,
-                key,
+                lower::ScoreMetadata {
+                    title,
+                    composer,
+                    tempo_bpm,
+                    meter,
+                    key,
+                },
                 tracks,
                 self.markers,
                 self.override_traces,
@@ -2639,6 +2642,25 @@ score demo {
 
         assert_eq!(ir.title, "demo");
         assert_eq!(ir.tracks[0].events.len(), 4);
+    }
+
+    #[test]
+    fn lowers_score_title_and_composer_metadata() {
+        let ir = compile_source(
+            r#"
+score demo {
+  title "String Quartet"
+  composer "Ada Lovelace"
+  voice lead {
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.title, "String Quartet");
+        assert_eq!(ir.composer.as_deref(), Some("Ada Lovelace"));
     }
 
     #[test]

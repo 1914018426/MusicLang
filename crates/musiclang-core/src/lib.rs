@@ -1519,6 +1519,7 @@ impl Score {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScoreIr {
     pub title: String,
+    pub composer: Option<String>,
     pub ticks_per_quarter: u32,
     pub tempo_bpm: u16,
     pub meter: Option<Meter>,

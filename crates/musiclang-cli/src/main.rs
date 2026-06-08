@@ -273,6 +273,7 @@ fn ir_file(input: &str) -> Result<(), String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ScoreAnalysis {
     title: String,
+    composer: Option<String>,
     tempo_bpm: u16,
     meter: Option<musiclang_core::Meter>,
     track_count: usize,
@@ -339,6 +340,7 @@ fn analyze_score(
         .count();
     ScoreAnalysis {
         title: ir.title.clone(),
+        composer: ir.composer.clone(),
         tempo_bpm: ir.tempo_bpm,
         meter: ir.meter,
         track_count: ir.tracks.len(),
@@ -354,6 +356,9 @@ fn analyze_score(
 
 fn print_analysis(analysis: &ScoreAnalysis) {
     println!("title: {}", analysis.title);
+    if let Some(composer) = &analysis.composer {
+        println!("composer: {composer}");
+    }
     println!("tempo: {} bpm", analysis.tempo_bpm);
     if let Some(meter) = analysis.meter {
         println!("meter: {}/{}", meter.numerator, meter.denominator);
@@ -371,8 +376,9 @@ fn print_analysis(analysis: &ScoreAnalysis) {
 
 fn print_analysis_json(analysis: &ScoreAnalysis) {
     print!(
-        "{{\"title\":\"{}\",\"tempo_bpm\":{},\"meter\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"pitch_min\":{},\"pitch_max\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
+        "{{\"title\":\"{}\",\"composer\":{},\"tempo_bpm\":{},\"meter\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"pitch_min\":{},\"pitch_max\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
         json_escape(&analysis.title),
+        json_option(analysis.composer.as_deref()),
         analysis.tempo_bpm,
         json_meter(analysis.meter),
         analysis.track_count,

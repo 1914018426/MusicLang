@@ -11,8 +11,18 @@ pub fn write_midi<W: Write>(score: &ScoreIr, writer: &mut W) -> io::Result<()> {
     let microseconds_per_quarter = 60_000_000 / u32::from(score.tempo_bpm.max(1));
     let mut tempo_track = vec![TrackEvent {
         delta: u28::new(0),
-        kind: TrackEventKind::Meta(MetaMessage::Tempo(u24::new(microseconds_per_quarter))),
+        kind: TrackEventKind::Meta(MetaMessage::TrackName(score.title.as_bytes())),
     }];
+    if let Some(composer) = &score.composer {
+        tempo_track.push(TrackEvent {
+            delta: u28::new(0),
+            kind: TrackEventKind::Meta(MetaMessage::Text(composer.as_bytes())),
+        });
+    }
+    tempo_track.push(TrackEvent {
+        delta: u28::new(0),
+        kind: TrackEventKind::Meta(MetaMessage::Tempo(u24::new(microseconds_per_quarter))),
+    });
     if let Some(meter) = score.meter {
         tempo_track.push(TrackEvent {
             delta: u28::new(0),
@@ -150,6 +160,7 @@ mod tests {
     fn renders_midi_bytes() {
         let score = ScoreIr {
             title: "demo".to_string(),
+            composer: Some("Ada Lovelace".to_string()),
             ticks_per_quarter: DEFAULT_TICKS_PER_QUARTER,
             tempo_bpm: 90,
             meter: Some(Meter {
@@ -184,6 +195,14 @@ mod tests {
             smf.header.timing,
             Timing::Metrical(ticks) if ticks.as_int() == DEFAULT_TICKS_PER_QUARTER as u16
         ));
+        assert!(smf.tracks[0].iter().any(|event| matches!(
+            event.kind,
+            TrackEventKind::Meta(MetaMessage::TrackName(b"demo"))
+        )));
+        assert!(smf.tracks[0].iter().any(|event| matches!(
+            event.kind,
+            TrackEventKind::Meta(MetaMessage::Text(b"Ada Lovelace"))
+        )));
         assert!(smf.tracks[0].iter().any(|event| matches!(
             event.kind,
             TrackEventKind::Meta(MetaMessage::Tempo(value)) if value.as_int() == 666_666

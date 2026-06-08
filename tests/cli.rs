@@ -237,30 +237,57 @@ fn music_ir_prints_lowered_score() {
     assert!(stdout.contains("tempo_bpm"));
 }
 
+fn write_analyze_metadata_fixture() -> String {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/analyze-metadata.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  title "String Quartet"
+  composer "Ada Lovelace"
+  tempo 96
+  meter 3/4
+  voice lead {
+    note C4, 1/4
+    note G4, 1/4
+  }
+}
+"#,
+    )
+    .unwrap();
+    input_path
+}
+
 #[test]
 fn music_analyze_summarizes_score() {
-    let output = run_music(&["analyze", "examples/minimal.music"]);
+    let input_path = write_analyze_metadata_fixture();
+    let output = run_music(&["analyze", &input_path]);
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("title: demo"));
-    assert!(stdout.contains("tempo: 120 bpm"));
+    assert!(stdout.contains("title: String Quartet"));
+    assert!(stdout.contains("composer: Ada Lovelace"));
+    assert!(stdout.contains("tempo: 96 bpm"));
+    assert!(stdout.contains("meter: 3/4"));
     assert!(stdout.contains("tracks: 1"));
-    assert!(stdout.contains("events: 5"));
+    assert!(stdout.contains("events: 2"));
     assert!(stdout.contains("pitch_range: C4..G4"));
 }
 
 #[test]
 fn music_analyze_json_is_machine_readable() {
-    let output = run_music(&["analyze", "examples/minimal.music", "--json"]);
+    let input_path = write_analyze_metadata_fixture();
+    let output = run_music(&["analyze", &input_path, "--json"]);
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("\"title\":\"demo\""));
-    assert!(stdout.contains("\"tempo_bpm\":120"));
-    assert!(stdout.contains("\"meter\":null"));
+    assert!(stdout.contains("\"title\":\"String Quartet\""));
+    assert!(stdout.contains("\"composer\":\"Ada Lovelace\""));
+    assert!(stdout.contains("\"tempo_bpm\":96"));
+    assert!(stdout.contains("\"meter\":{\"numerator\":3,\"denominator\":4}"));
     assert!(stdout.contains("\"track_count\":1"));
-    assert!(stdout.contains("\"event_count\":5"));
+    assert!(stdout.contains("\"event_count\":2"));
     assert!(stdout.contains("\"pitch_min\":\"C4\""));
     assert!(stdout.contains("\"pitch_max\":\"G4\""));
 }

@@ -12,6 +12,12 @@ pub fn render_musicxml(score: &ScoreIr) -> String {
         "  <work><work-title>{}</work-title></work>\n",
         escape_xml(&score.title)
     ));
+    if let Some(composer) = &score.composer {
+        output.push_str(&format!(
+            "  <identification><creator type=\"composer\">{}</creator></identification>\n",
+            escape_xml(composer)
+        ));
+    }
     output.push_str("  <part-list>\n");
     for (index, track) in score.tracks.iter().enumerate() {
         output.push_str(&format!(
@@ -182,6 +188,7 @@ mod tests {
     fn score() -> ScoreIr {
         ScoreIr {
             title: "demo".to_string(),
+            composer: Some("Ada Lovelace".to_string()),
             ticks_per_quarter: DEFAULT_TICKS_PER_QUARTER,
             tempo_bpm: 120,
             meter: None,
@@ -210,6 +217,7 @@ mod tests {
 
         assert!(xml.contains("<score-partwise"));
         assert!(xml.contains("<part-name>lead</part-name>"));
+        assert!(xml.contains("<creator type=\"composer\">Ada Lovelace</creator>"));
         assert!(xml.contains("<staccato/>"));
     }
 

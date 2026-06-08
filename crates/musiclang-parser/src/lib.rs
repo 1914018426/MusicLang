@@ -49,9 +49,19 @@ pub struct ScoreDecl {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScoreMeta {
+    Title(TextMetaDecl),
+    Composer(TextMetaDecl),
     Tempo(TempoDecl),
     Meter(MeterDecl),
     Key(KeyDecl),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextMetaDecl {
+    pub value: String,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -676,7 +686,11 @@ impl Parser {
         let mut metadata = Vec::new();
         let mut statements = Vec::new();
         while !self.check(TokenKind::RBrace) && !self.check(TokenKind::Eof) {
-            if self.check_ident("tempo") {
+            if self.check_ident("title") {
+                metadata.push(ScoreMeta::Title(self.parse_text_meta("title")?));
+            } else if self.check_ident("composer") {
+                metadata.push(ScoreMeta::Composer(self.parse_text_meta("composer")?));
+            } else if self.check_ident("tempo") {
                 metadata.push(ScoreMeta::Tempo(self.parse_tempo()?));
             } else if self.check_ident("meter") {
                 metadata.push(ScoreMeta::Meter(self.parse_meter()?));
@@ -801,6 +815,17 @@ impl Parser {
             name,
             program,
             statements,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_text_meta(&mut self, key: &str) -> Option<TextMetaDecl> {
+        let start = self.expect_ident_text(key)?;
+        let value = self.expect_string()?;
+        Some(TextMetaDecl {
+            value,
             line: start.span.line,
             column: start.span.column,
             span: start.span,
@@ -1195,8 +1220,11 @@ impl Parser {
                 | "call"
                 | "override"
                 | "with"
+                | "title"
+                | "composer"
                 | "tempo"
                 | "meter"
+                | "key"
                 | "program"
                 | "instrument"
         )
@@ -1599,6 +1627,31 @@ score demo {
         let expected_start = source.find("C4").unwrap();
         assert_eq!(note.pitch_expr.span.start, expected_start);
         assert_eq!(note.pitch_expr.span.end, expected_start + "C4".len());
+    }
+
+    #[test]
+    fn parses_score_title_and_composer_metadata() {
+        let program = parse_source(
+            r#"
+score demo {
+  title "String Quartet"
+  composer "Ada Lovelace"
+  voice lead {
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            &program.score.metadata[0],
+            ScoreMeta::Title(value) if value.value == "String Quartet"
+        ));
+        assert!(matches!(
+            &program.score.metadata[1],
+            ScoreMeta::Composer(value) if value.value == "Ada Lovelace"
+        ));
     }
 
     #[test]
