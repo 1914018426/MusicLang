@@ -68,6 +68,7 @@ pub struct TextMetaDecl {
 pub enum Stmt {
     Voice(VoiceDecl),
     Tempo(TempoDecl),
+    Meter(MeterDecl),
     Note(NoteStmt),
     Rest(RestStmt),
     Glissando(GlissandoStmt),
@@ -942,6 +943,9 @@ impl Parser {
         }
         if self.check_ident("tempo") {
             return self.parse_tempo().map(Stmt::Tempo);
+        }
+        if self.check_ident("meter") {
+            return self.parse_meter().map(Stmt::Meter);
         }
         if self.check_ident("note") {
             return self.parse_note().map(Stmt::Note);
@@ -2489,6 +2493,30 @@ score demo {
         };
 
         assert_eq!(tempo.bpm, 144);
+    }
+
+    #[test]
+    fn parses_meter_statement_inside_voice() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    meter 6/8
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Meter(meter) = &voice.statements[0] else {
+            panic!("expected meter");
+        };
+
+        assert_eq!(meter.numerator, 6);
+        assert_eq!(meter.denominator, 8);
     }
 
     #[test]

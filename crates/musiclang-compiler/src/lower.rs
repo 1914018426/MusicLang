@@ -1,5 +1,5 @@
 use musiclang_core::{
-    KeySignature, MarkerIr, Meter, OverrideTrace, ScoreIr, TempoChangeIr, TrackIr,
+    KeySignature, MarkerIr, Meter, MeterChangeIr, OverrideTrace, ScoreIr, TempoChangeIr, TrackIr,
     DEFAULT_TICKS_PER_QUARTER,
 };
 use musiclang_parser::{Program, ScoreMeta};
@@ -50,6 +50,7 @@ pub(super) fn score_ir(
     tracks: Vec<TrackIr>,
     markers: Vec<MarkerIr>,
     tempo_changes: Vec<TempoChangeIr>,
+    meter_changes: Vec<MeterChangeIr>,
     overrides: Vec<OverrideTrace>,
 ) -> ScoreIr {
     ScoreIr {
@@ -62,6 +63,7 @@ pub(super) fn score_ir(
         tracks,
         markers,
         tempo_changes,
+        meter_changes,
         overrides,
     }
 }

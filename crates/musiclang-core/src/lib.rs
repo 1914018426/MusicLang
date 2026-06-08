@@ -1527,12 +1527,19 @@ pub struct ScoreIr {
     pub tracks: Vec<TrackIr>,
     pub markers: Vec<MarkerIr>,
     pub tempo_changes: Vec<TempoChangeIr>,
+    pub meter_changes: Vec<MeterChangeIr>,
     pub overrides: Vec<OverrideTrace>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TempoChangeIr {
     pub bpm: u16,
+    pub tick: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MeterChangeIr {
+    pub meter: Meter,
     pub tick: u32,
 }
 

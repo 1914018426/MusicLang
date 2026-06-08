@@ -2,8 +2,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use musiclang_core::{
     Chord, CustomStyleRule, CustomTheoryDomain, Diagnostic, Duration, InstrumentRange, Interval,
-    KeySignature, MarkerIr, Meter, Note, NoteEventIr, OverrideTrace, Pitch, PitchClass,
-    RuleSeverity, ScoreIr, Severity, Span, StyleContext, TempoChangeIr, TheoryDomain,
+    KeySignature, MarkerIr, Meter, MeterChangeIr, Note, NoteEventIr, OverrideTrace, Pitch,
+    PitchClass, RuleSeverity, ScoreIr, Severity, Span, StyleContext, TempoChangeIr, TheoryDomain,
     TheoryReference, TrackIr, DEFAULT_TICKS_PER_QUARTER,
 };
 use musiclang_parser::{
@@ -56,6 +56,7 @@ struct Compiler {
     section_labels: Vec<String>,
     markers: Vec<MarkerIr>,
     tempo_changes: Vec<TempoChangeIr>,
+    meter_changes: Vec<MeterChangeIr>,
     pending_non_chord_tones: Vec<PendingNonChordTone>,
     score_key: Option<KeySignature>,
     pitch_transpose_semitones: i16,
@@ -96,6 +97,7 @@ impl Compiler {
             section_labels: Vec::new(),
             markers: Vec::new(),
             tempo_changes: Vec::new(),
+            meter_changes: Vec::new(),
             pending_non_chord_tones: Vec::new(),
             score_key: None,
             pitch_transpose_semitones: 0,
@@ -161,6 +163,7 @@ impl Compiler {
                 tracks,
                 self.markers,
                 self.tempo_changes,
+                self.meter_changes,
                 self.override_traces,
             ),
             diagnostics: self.diagnostics,
@@ -185,6 +188,13 @@ impl Compiler {
             Stmt::Voice(voice) => self.compile_voice(voice, track),
             Stmt::Tempo(tempo) => self.tempo_changes.push(TempoChangeIr {
                 bpm: tempo.bpm,
+                tick: track.cursor_tick(),
+            }),
+            Stmt::Meter(meter) => self.meter_changes.push(MeterChangeIr {
+                meter: Meter {
+                    numerator: meter.numerator,
+                    denominator: meter.denominator,
+                },
                 tick: track.cursor_tick(),
             }),
             Stmt::Note(note) => self.compile_note(note, track),
@@ -4997,6 +5007,29 @@ score demo {
         assert_eq!(ir.tempo_changes.len(), 1);
         assert_eq!(ir.tempo_changes[0].bpm, 144);
         assert_eq!(ir.tempo_changes[0].tick, 480);
+    }
+
+    #[test]
+    fn lowers_meter_changes_at_current_tick() {
+        let ir = compile_source(
+            r#"
+score demo {
+  meter 4/4
+  voice lead {
+    note C4, 1/4
+    meter 6/8
+    note E4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.meter.unwrap().numerator, 4);
+        assert_eq!(ir.meter_changes.len(), 1);
+        assert_eq!(ir.meter_changes[0].meter.numerator, 6);
+        assert_eq!(ir.meter_changes[0].meter.denominator, 8);
+        assert_eq!(ir.meter_changes[0].tick, 480);
     }
 
     #[test]

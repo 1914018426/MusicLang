@@ -4,7 +4,7 @@ use midly::{
     num::{u15, u24, u28, u4, u7},
     Format, Header, MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind,
 };
-use musiclang_core::ScoreIr;
+use musiclang_core::{Meter, ScoreIr};
 
 pub fn write_midi<W: Write>(score: &ScoreIr, writer: &mut W) -> io::Result<()> {
     let mut tracks = Vec::new();
@@ -26,12 +26,7 @@ pub fn write_midi<W: Write>(score: &ScoreIr, writer: &mut W) -> io::Result<()> {
     if let Some(meter) = score.meter {
         tempo_track.push(TrackEvent {
             delta: u28::new(0),
-            kind: TrackEventKind::Meta(MetaMessage::TimeSignature(
-                meter.numerator,
-                meter.denominator.trailing_zeros() as u8,
-                24,
-                8,
-            )),
+            kind: time_signature_message(meter),
         });
     }
     if let Some(key) = score.key {
@@ -40,17 +35,26 @@ pub fn write_midi<W: Write>(score: &ScoreIr, writer: &mut W) -> io::Result<()> {
             kind: TrackEventKind::Meta(MetaMessage::KeySignature(key.fifths, key.is_minor)),
         });
     }
-    let mut tempo_changes = score.tempo_changes.clone();
-    tempo_changes.sort_by_key(|change| change.tick);
-    let mut tempo_cursor = 0;
-    for change in tempo_changes {
-        tempo_track.push(TrackEvent {
-            delta: u28::new(change.tick - tempo_cursor),
-            kind: TrackEventKind::Meta(MetaMessage::Tempo(u24::new(
+    let mut timeline_events = Vec::new();
+    for change in &score.tempo_changes {
+        timeline_events.push((
+            change.tick,
+            TrackEventKind::Meta(MetaMessage::Tempo(u24::new(
                 60_000_000 / u32::from(change.bpm.max(1)),
             ))),
+        ));
+    }
+    for change in &score.meter_changes {
+        timeline_events.push((change.tick, time_signature_message(change.meter)));
+    }
+    timeline_events.sort_by_key(|(tick, _)| *tick);
+    let mut timeline_cursor = 0;
+    for (tick, kind) in timeline_events {
+        tempo_track.push(TrackEvent {
+            delta: u28::new(tick - timeline_cursor),
+            kind,
         });
-        tempo_cursor = change.tick;
+        timeline_cursor = tick;
     }
     tempo_track.push(TrackEvent {
         delta: u28::new(0),
@@ -135,6 +139,15 @@ pub fn render_midi(score: &ScoreIr) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn time_signature_message(meter: Meter) -> TrackEventKind<'static> {
+    TrackEventKind::Meta(MetaMessage::TimeSignature(
+        meter.numerator,
+        meter.denominator.trailing_zeros() as u8,
+        24,
+        8,
+    ))
+}
+
 fn articulated_velocity(velocity: u8, articulation: Option<&str>) -> u8 {
     match articulation {
         Some("accent") => velocity.saturating_add(16).min(127),
@@ -164,8 +177,8 @@ mod tests {
     use super::*;
     use midly::TrackEventKind;
     use musiclang_core::{
-        KeySignature, Meter, NoteEventIr, Pitch, PitchClass, ScoreIr, TempoChangeIr, TrackIr,
-        DEFAULT_TICKS_PER_QUARTER,
+        KeySignature, Meter, MeterChangeIr, NoteEventIr, Pitch, PitchClass, ScoreIr, TempoChangeIr,
+        TrackIr, DEFAULT_TICKS_PER_QUARTER,
     };
 
     #[test]
@@ -199,6 +212,13 @@ mod tests {
             markers: Vec::new(),
             tempo_changes: vec![TempoChangeIr {
                 bpm: 120,
+                tick: DEFAULT_TICKS_PER_QUARTER,
+            }],
+            meter_changes: vec![MeterChangeIr {
+                meter: Meter {
+                    numerator: 6,
+                    denominator: 8,
+                },
                 tick: DEFAULT_TICKS_PER_QUARTER,
             }],
             overrides: Vec::new(),
@@ -237,6 +257,10 @@ mod tests {
             event.kind,
             TrackEventKind::Meta(MetaMessage::TimeSignature(3, 2, 24, 8))
         )));
+        assert!(smf.tracks[0].iter().any(|event| matches!(
+            event.kind,
+            TrackEventKind::Meta(MetaMessage::TimeSignature(6, 3, 24, 8))
+        ) && event.delta.as_int() == 0));
         assert!(smf.tracks[0].iter().any(|event| matches!(
             event.kind,
             TrackEventKind::Meta(MetaMessage::KeySignature(-1, false))

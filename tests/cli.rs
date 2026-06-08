@@ -739,6 +739,9 @@ fn music_ir_prints_lowered_score() {
     assert!(stdout.contains("tempo_bpm"));
     assert!(stdout.contains("tempo_changes"));
     assert!(stdout.contains("bpm: 144"));
+    assert!(stdout.contains("meter_changes"));
+    assert!(stdout.contains("numerator: 6"));
+    assert!(stdout.contains("denominator: 8"));
 }
 
 fn write_analyze_metadata_fixture() -> String {
