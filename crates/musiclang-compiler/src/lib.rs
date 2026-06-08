@@ -112,6 +112,7 @@ impl Compiler {
         self.check_score_key_metadata();
         self.check_function_calls();
         self.check_style_references();
+        self.check_override_rules();
         self.score_key = key;
         self.check_score_style(tempo_bpm, meter);
         let statements = self.program.score.statements.clone();
@@ -415,6 +416,83 @@ impl Compiler {
             diagnostic = diagnostic.with_span(span);
         }
         self.diagnostics.push(diagnostic);
+    }
+
+    fn check_override_rules(&mut self) {
+        let score_statements = self.program.score.statements.clone();
+        self.check_override_rules_in_statements(&score_statements);
+        let functions = self.program.functions.clone();
+        for function in functions {
+            self.check_override_rules_in_statements(&function.statements);
+        }
+    }
+
+    fn check_override_rules_in_statements(&mut self, statements: &[Stmt]) {
+        for statement in statements {
+            match statement {
+                Stmt::Override(override_stmt) => {
+                    self.check_override_rule(override_stmt);
+                    self.check_override_rules_in_statements(&override_stmt.statements);
+                }
+                Stmt::Voice(voice) => self.check_override_rules_in_statements(&voice.statements),
+                Stmt::Ostinato(ostinato) => {
+                    self.check_override_rules_in_statements(&ostinato.statements)
+                }
+                Stmt::Sequence(sequence) => {
+                    self.check_override_rules_in_statements(&sequence.statements)
+                }
+                Stmt::Tuplet(tuplet) => self.check_override_rules_in_statements(&tuplet.statements),
+                Stmt::Transpose(transpose) => {
+                    self.check_override_rules_in_statements(&transpose.statements)
+                }
+                Stmt::Section(section) => {
+                    self.check_override_rules_in_statements(&section.statements)
+                }
+                Stmt::Ornament(ornament) => {
+                    self.check_override_rules_in_statements(&ornament.statements)
+                }
+                Stmt::NonChordTone(non_chord_tone) => {
+                    self.check_override_rules_in_statements(&non_chord_tone.statements)
+                }
+                Stmt::TuningSystem(tuning_system) => {
+                    self.check_override_rules_in_statements(&tuning_system.statements)
+                }
+                Stmt::WorldTradition(world_tradition) => {
+                    self.check_override_rules_in_statements(&world_tradition.statements)
+                }
+                Stmt::HistoricalEra(historical_era) => {
+                    self.check_override_rules_in_statements(&historical_era.statements)
+                }
+                Stmt::HarmonicFunction(harmonic_function) => {
+                    self.check_override_rules_in_statements(&harmonic_function.statements)
+                }
+                Stmt::For(for_stmt) => {
+                    self.check_override_rules_in_statements(&for_stmt.statements)
+                }
+                Stmt::If(if_stmt) => self.check_override_rules_in_statements(&if_stmt.statements),
+                Stmt::WithStyle(with_style) => {
+                    self.check_override_rules_in_statements(&with_style.statements)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn check_override_rule(&mut self, override_stmt: &OverrideStmt) {
+        if self.is_known_rule(&override_stmt.rule) {
+            return;
+        }
+        self.diagnostics.push(
+            Diagnostic::error(
+                "ML_STYLE_UNKNOWN_RULE",
+                format!("unknown style rule `{}`", override_stmt.rule),
+                override_stmt.line,
+                override_stmt.column,
+            )
+            .with_span(override_stmt.span)
+            .with_rule(override_stmt.rule.clone())
+            .with_style(self.style.name.clone()),
+        );
     }
 
     fn compile_voice(&mut self, voice: &VoiceDecl, track: &mut TrackBuilder) {
@@ -2242,17 +2320,6 @@ impl Compiler {
 
     fn compile_override_tracks(&mut self, override_stmt: &OverrideStmt, tracks: &mut Vec<TrackIr>) {
         if !self.is_known_rule(&override_stmt.rule) {
-            self.diagnostics.push(
-                Diagnostic::error(
-                    "ML_STYLE_UNKNOWN_RULE",
-                    format!("unknown style rule `{}`", override_stmt.rule),
-                    override_stmt.line,
-                    override_stmt.column,
-                )
-                .with_span(override_stmt.span)
-                .with_rule(override_stmt.rule.clone())
-                .with_style(self.style.name.clone()),
-            );
             return;
         }
         self.override_rules.push(override_stmt.rule.clone());
@@ -2290,17 +2357,6 @@ impl Compiler {
 
     fn compile_override(&mut self, override_stmt: &OverrideStmt, track: &mut TrackBuilder) {
         if !self.is_known_rule(&override_stmt.rule) {
-            self.diagnostics.push(
-                Diagnostic::error(
-                    "ML_STYLE_UNKNOWN_RULE",
-                    format!("unknown style rule `{}`", override_stmt.rule),
-                    override_stmt.line,
-                    override_stmt.column,
-                )
-                .with_span(override_stmt.span)
-                .with_rule(override_stmt.rule.clone())
-                .with_style(self.style.name.clone()),
-            );
             return;
         }
 
@@ -5435,6 +5491,52 @@ score demo {
         let expected_start = source.find("override imaginary").unwrap();
         assert_eq!(span.start, expected_start);
         assert_eq!(span.end, expected_start + "override".len());
+    }
+
+    #[test]
+    fn unused_function_unknown_override_rule_fails() {
+        let diagnostics = compile_source(
+            r#"
+fn hidden {
+  override imaginary allow {
+    note C4, 1/4
+  }
+}
+score demo {
+  voice lead {
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_STYLE_UNKNOWN_RULE"));
+    }
+
+    #[test]
+    fn unexecuted_branch_unknown_override_rule_fails() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice lead {
+    if false == true {
+      override imaginary allow {
+        note C4, 1/4
+      }
+    }
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_STYLE_UNKNOWN_RULE"));
     }
 
     #[test]
