@@ -44,6 +44,9 @@ enum Command {
 
         #[arg(long, default_value = "midi")]
         format: String,
+
+        #[arg(long)]
+        strict: bool,
     },
     Diagnose {
         input: String,
@@ -95,7 +98,8 @@ fn run(cli: Cli) -> Result<(), String> {
             input,
             output,
             format,
-        } => export_file(&input, output.as_deref(), &format),
+            strict,
+        } => export_file(&input, output.as_deref(), &format, strict),
         Command::Diagnose { input, json } => diagnose_file(&input, json),
         Command::Ast { input } => ast_file(&input),
         Command::Ir { input } => ir_file(&input),
@@ -164,7 +168,7 @@ fn build_project(manifest: Option<&str>) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create output dir: {error}"))?;
     }
-    export_file_to(&input, Some(&output), &project.format)?;
+    export_file_to(&input, Some(&output), &project.format, false)?;
     println!("built {}", project.name);
     Ok(())
 }
@@ -209,18 +213,38 @@ fn compile_file(input: &str, output: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-fn export_file(input: &str, output: Option<&str>, format: &str) -> Result<(), String> {
+fn export_file(
+    input: &str,
+    output: Option<&str>,
+    format: &str,
+    strict: bool,
+) -> Result<(), String> {
     export_file_to(
         Path::new(input),
         output.map(PathBuf::from).as_deref(),
         format,
+        strict,
     )
 }
 
-fn export_file_to(input: &Path, output: Option<&Path>, format: &str) -> Result<(), String> {
+fn export_file_to(
+    input: &Path,
+    output: Option<&Path>,
+    format: &str,
+    strict: bool,
+) -> Result<(), String> {
     let source = fs::read_to_string(input)
         .map_err(|error| format!("failed to read {}: {error}", input.display()))?;
-    let ir = musiclang_compiler::compile_source(&source).map_err(format_diagnostics)?;
+    let ir = if strict {
+        let compilation = musiclang_compiler::compile_source_with_diagnostics(&source)
+            .map_err(format_diagnostics)?;
+        if !compilation.diagnostics.is_empty() {
+            return Err(format_diagnostics(compilation.diagnostics));
+        }
+        compilation.ir
+    } else {
+        musiclang_compiler::compile_source(&source).map_err(format_diagnostics)?
+    };
     let (output, bytes) = match format {
         "midi" | "mid" => (
             output.unwrap_or(Path::new("output.mid")).to_path_buf(),
