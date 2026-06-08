@@ -178,12 +178,13 @@ fn music_export_midi_produces_valid_file() {
 #[test]
 fn music_export_musicxml_produces_valid_file() {
     let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = write_analyze_metadata_fixture();
     let output_path = format!("{workspace}/target/test-export.musicxml");
     let _ = fs::remove_file(&output_path);
 
     let output = run_music(&[
         "export",
-        "examples/minimal.music",
+        &input_path,
         "--format",
         "musicxml",
         "-o",
@@ -194,6 +195,10 @@ fn music_export_musicxml_produces_valid_file() {
     let xml = fs::read_to_string(&output_path).unwrap();
     assert!(xml.starts_with("<?xml"));
     assert!(xml.contains("<score-partwise"));
+    assert!(xml.contains("<work-title>String Quartet</work-title>"));
+    assert!(xml.contains("<creator type=\"composer\">Ada Lovelace</creator>"));
+    assert!(xml.contains("<fifths>-1</fifths>"));
+    assert!(xml.contains("<mode>minor</mode>"));
 }
 
 #[test]
@@ -248,6 +253,7 @@ score demo {
   composer "Ada Lovelace"
   tempo 96
   meter 3/4
+  key D minor
   voice lead {
     note C4, 1/4
     note G4, 1/4
@@ -270,6 +276,7 @@ fn music_analyze_summarizes_score() {
     assert!(stdout.contains("composer: Ada Lovelace"));
     assert!(stdout.contains("tempo: 96 bpm"));
     assert!(stdout.contains("meter: 3/4"));
+    assert!(stdout.contains("key: D minor"));
     assert!(stdout.contains("tracks: 1"));
     assert!(stdout.contains("events: 2"));
     assert!(stdout.contains("pitch_range: C4..G4"));
@@ -286,6 +293,7 @@ fn music_analyze_json_is_machine_readable() {
     assert!(stdout.contains("\"composer\":\"Ada Lovelace\""));
     assert!(stdout.contains("\"tempo_bpm\":96"));
     assert!(stdout.contains("\"meter\":{\"numerator\":3,\"denominator\":4}"));
+    assert!(stdout.contains("\"key\":{\"tonic\":\"D\",\"mode\":\"minor\",\"fifths\":-1}"));
     assert!(stdout.contains("\"track_count\":1"));
     assert!(stdout.contains("\"event_count\":2"));
     assert!(stdout.contains("\"pitch_min\":\"C4\""));

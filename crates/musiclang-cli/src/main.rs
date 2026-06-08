@@ -276,6 +276,7 @@ struct ScoreAnalysis {
     composer: Option<String>,
     tempo_bpm: u16,
     meter: Option<musiclang_core::Meter>,
+    key: Option<musiclang_core::KeySignature>,
     track_count: usize,
     event_count: usize,
     duration_ticks: u32,
@@ -343,6 +344,7 @@ fn analyze_score(
         composer: ir.composer.clone(),
         tempo_bpm: ir.tempo_bpm,
         meter: ir.meter,
+        key: ir.key,
         track_count: ir.tracks.len(),
         event_count: events.len(),
         duration_ticks,
@@ -363,6 +365,9 @@ fn print_analysis(analysis: &ScoreAnalysis) {
     if let Some(meter) = analysis.meter {
         println!("meter: {}/{}", meter.numerator, meter.denominator);
     }
+    if let Some(key) = analysis.key {
+        println!("key: {}", format_key_signature(key));
+    }
     println!("tracks: {}", analysis.track_count);
     println!("events: {}", analysis.event_count);
     println!("duration_ticks: {}", analysis.duration_ticks);
@@ -376,11 +381,12 @@ fn print_analysis(analysis: &ScoreAnalysis) {
 
 fn print_analysis_json(analysis: &ScoreAnalysis) {
     print!(
-        "{{\"title\":\"{}\",\"composer\":{},\"tempo_bpm\":{},\"meter\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"pitch_min\":{},\"pitch_max\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
+        "{{\"title\":\"{}\",\"composer\":{},\"tempo_bpm\":{},\"meter\":{},\"key\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"pitch_min\":{},\"pitch_max\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
         json_escape(&analysis.title),
         json_option(analysis.composer.as_deref()),
         analysis.tempo_bpm,
         json_meter(analysis.meter),
+        json_key_signature(analysis.key),
         analysis.track_count,
         analysis.event_count,
         analysis.duration_ticks,
@@ -402,6 +408,66 @@ fn json_meter(meter: Option<musiclang_core::Meter>) -> String {
             )
         })
         .unwrap_or_else(|| "null".to_string())
+}
+
+fn json_key_signature(key: Option<musiclang_core::KeySignature>) -> String {
+    key.map(|key| {
+        format!(
+            "{{\"tonic\":\"{}\",\"mode\":\"{}\",\"fifths\":{}}}",
+            key_signature_tonic(key),
+            key_signature_mode(key),
+            key.fifths
+        )
+    })
+    .unwrap_or_else(|| "null".to_string())
+}
+
+fn format_key_signature(key: musiclang_core::KeySignature) -> String {
+    format!("{} {}", key_signature_tonic(key), key_signature_mode(key))
+}
+
+fn key_signature_mode(key: musiclang_core::KeySignature) -> &'static str {
+    if key.is_minor {
+        "minor"
+    } else {
+        "major"
+    }
+}
+
+fn key_signature_tonic(key: musiclang_core::KeySignature) -> &'static str {
+    match (key.fifths, key.is_minor) {
+        (-7, false) => "Cb",
+        (-6, false) => "Gb",
+        (-5, false) => "Db",
+        (-4, false) => "Ab",
+        (-3, false) => "Eb",
+        (-2, false) => "Bb",
+        (-1, false) => "F",
+        (0, false) => "C",
+        (1, false) => "G",
+        (2, false) => "D",
+        (3, false) => "A",
+        (4, false) => "E",
+        (5, false) => "B",
+        (6, false) => "F#",
+        (7, false) => "C#",
+        (-7, true) => "Ab",
+        (-6, true) => "Eb",
+        (-5, true) => "Bb",
+        (-4, true) => "F",
+        (-3, true) => "C",
+        (-2, true) => "G",
+        (-1, true) => "D",
+        (0, true) => "A",
+        (1, true) => "E",
+        (2, true) => "B",
+        (3, true) => "F#",
+        (4, true) => "C#",
+        (5, true) => "G#",
+        (6, true) => "D#",
+        (7, true) => "A#",
+        _ => "unknown",
+    }
 }
 
 fn theory(domain: Option<&str>, find: Option<&str>) -> Result<(), String> {

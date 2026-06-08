@@ -44,6 +44,15 @@ pub fn render_musicxml(score: &ScoreIr) -> String {
             ));
             output.push_str("        </time>\n");
         }
+        if let Some(key) = score.key {
+            output.push_str("        <key>\n");
+            output.push_str(&format!("          <fifths>{}</fifths>\n", key.fifths));
+            output.push_str(&format!(
+                "          <mode>{}</mode>\n",
+                if key.is_minor { "minor" } else { "major" }
+            ));
+            output.push_str("        </key>\n");
+        }
         output.push_str("      </attributes>\n");
         output.push_str(&format!(
             "      <direction><sound tempo=\"{}\"/></direction>\n",
@@ -180,7 +189,7 @@ fn escape_xml(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use musiclang_core::{
-        NoteEventIr, Pitch, PitchClass, ScoreIr, TrackIr, DEFAULT_TICKS_PER_QUARTER,
+        KeySignature, NoteEventIr, Pitch, PitchClass, ScoreIr, TrackIr, DEFAULT_TICKS_PER_QUARTER,
     };
 
     use super::*;
@@ -192,7 +201,10 @@ mod tests {
             ticks_per_quarter: DEFAULT_TICKS_PER_QUARTER,
             tempo_bpm: 120,
             meter: None,
-            key: None,
+            key: Some(KeySignature {
+                fifths: -1,
+                is_minor: false,
+            }),
             tracks: vec![TrackIr {
                 name: "lead".to_string(),
                 channel: 0,
@@ -218,6 +230,8 @@ mod tests {
         assert!(xml.contains("<score-partwise"));
         assert!(xml.contains("<part-name>lead</part-name>"));
         assert!(xml.contains("<creator type=\"composer\">Ada Lovelace</creator>"));
+        assert!(xml.contains("<fifths>-1</fifths>"));
+        assert!(xml.contains("<mode>major</mode>"));
         assert!(xml.contains("<staccato/>"));
     }
 
