@@ -753,6 +753,12 @@ pub fn theory_catalog() -> TheoryCatalog {
                 description: "temporary dominant of a non-tonic goal",
                 pattern: &["V/x", "x"],
             },
+            TheoryEntry {
+                id: "submediant",
+                name: "submediant function",
+                description: "relative-minor substitute and deceptive-resolution goal",
+                pattern: &["vi"],
+            },
         ],
         set_classes: vec![
             TheoryEntry {

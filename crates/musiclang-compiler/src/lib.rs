@@ -3982,6 +3982,27 @@ score demo style Functional {
     }
 
     #[test]
+    fn harmonic_progression_rule_accepts_submediant() {
+        let ir = compile_source(
+            r#"
+style Functional {
+  harmonic_progression: tonic dominant submediant
+}
+score demo style Functional {
+  voice chordal {
+    chord [C4, E4, G4], 1/4
+    chord [G4, B4, D5], 1/4
+    chord [A4, C5, E5], 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 9);
+    }
+
+    #[test]
     fn harmonic_progression_rule_fails() {
         let diagnostics = compile_source(
             r#"
