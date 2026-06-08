@@ -193,71 +193,134 @@ impl Compiler {
     }
 
     fn check_function_calls(&mut self) {
-        let score_statements = self.program.score.statements.clone();
-        self.check_function_calls_in_statements(&score_statements);
+        let mut score_calls = Vec::new();
+        self.collect_function_calls(&self.program.score.statements, &mut score_calls);
+        self.check_unknown_function_calls(&score_calls);
+
+        let mut graph = HashMap::new();
         let functions = self.program.functions.clone();
         for function in functions {
-            self.check_function_calls_in_statements(&function.statements);
+            let mut calls = Vec::new();
+            self.collect_function_calls(&function.statements, &mut calls);
+            self.check_unknown_function_calls(&calls);
+            graph.insert(function.name.clone(), calls);
+        }
+
+        let mut reported = HashSet::new();
+        for function in self.functions.keys().cloned().collect::<Vec<_>>() {
+            let mut visiting = Vec::new();
+            self.check_recursive_function_calls(&function, &graph, &mut visiting, &mut reported);
         }
     }
 
-    fn check_function_calls_in_statements(&mut self, statements: &[Stmt]) {
+    fn check_unknown_function_calls(&mut self, calls: &[(String, usize, usize, Span)]) {
+        for (name, line, column, span) in calls {
+            if !self.functions.contains_key(name) {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_RESOLVE_UNKNOWN_NAME",
+                        format!("unknown function `{name}`"),
+                        *line,
+                        *column,
+                    )
+                    .with_span(*span),
+                );
+            }
+        }
+    }
+
+    fn check_recursive_function_calls(
+        &mut self,
+        function: &str,
+        graph: &HashMap<String, Vec<(String, usize, usize, Span)>>,
+        visiting: &mut Vec<String>,
+        reported: &mut HashSet<String>,
+    ) {
+        if let Some(index) = visiting.iter().position(|name| name == function) {
+            let cycle = visiting[index..].join(" -> ");
+            if reported.insert(cycle.clone()) {
+                let line = self
+                    .functions
+                    .get(function)
+                    .map(|function| function.line)
+                    .unwrap_or(self.program.score.line);
+                let column = self
+                    .functions
+                    .get(function)
+                    .map(|function| function.column)
+                    .unwrap_or(self.program.score.column);
+                let message = if cycle == function {
+                    format!("recursive function call `{function}`")
+                } else {
+                    format!("recursive function call `{cycle} -> {function}`")
+                };
+                self.diagnostics.push(Diagnostic::error(
+                    "ML_RESOLVE_RECURSIVE_CALL",
+                    message,
+                    line,
+                    column,
+                ));
+            }
+            return;
+        }
+        visiting.push(function.to_string());
+        if let Some(calls) = graph.get(function) {
+            for (callee, _, _, _) in calls {
+                if self.functions.contains_key(callee) {
+                    self.check_recursive_function_calls(callee, graph, visiting, reported);
+                }
+            }
+        }
+        visiting.pop();
+    }
+
+    fn collect_function_calls(
+        &self,
+        statements: &[Stmt],
+        calls: &mut Vec<(String, usize, usize, Span)>,
+    ) {
         for statement in statements {
             match statement {
                 Stmt::Call(call) => {
-                    if !self.functions.contains_key(&call.name) {
-                        self.diagnostics.push(
-                            Diagnostic::error(
-                                "ML_RESOLVE_UNKNOWN_NAME",
-                                format!("unknown function `{}`", call.name),
-                                call.line,
-                                call.column,
-                            )
-                            .with_span(call.span),
-                        );
-                    }
+                    calls.push((call.name.clone(), call.line, call.column, call.span))
                 }
-                Stmt::Voice(voice) => self.check_function_calls_in_statements(&voice.statements),
+                Stmt::Voice(voice) => self.collect_function_calls(&voice.statements, calls),
                 Stmt::Ostinato(ostinato) => {
-                    self.check_function_calls_in_statements(&ostinato.statements)
+                    self.collect_function_calls(&ostinato.statements, calls)
                 }
                 Stmt::Sequence(sequence) => {
-                    self.check_function_calls_in_statements(&sequence.statements)
+                    self.collect_function_calls(&sequence.statements, calls)
                 }
-                Stmt::Tuplet(tuplet) => self.check_function_calls_in_statements(&tuplet.statements),
+                Stmt::Tuplet(tuplet) => self.collect_function_calls(&tuplet.statements, calls),
                 Stmt::Transpose(transpose) => {
-                    self.check_function_calls_in_statements(&transpose.statements)
+                    self.collect_function_calls(&transpose.statements, calls)
                 }
-                Stmt::Section(section) => {
-                    self.check_function_calls_in_statements(&section.statements)
-                }
+                Stmt::Section(section) => self.collect_function_calls(&section.statements, calls),
                 Stmt::Ornament(ornament) => {
-                    self.check_function_calls_in_statements(&ornament.statements)
+                    self.collect_function_calls(&ornament.statements, calls)
                 }
                 Stmt::NonChordTone(non_chord_tone) => {
-                    self.check_function_calls_in_statements(&non_chord_tone.statements)
+                    self.collect_function_calls(&non_chord_tone.statements, calls)
                 }
                 Stmt::TuningSystem(tuning_system) => {
-                    self.check_function_calls_in_statements(&tuning_system.statements)
+                    self.collect_function_calls(&tuning_system.statements, calls)
                 }
                 Stmt::WorldTradition(world_tradition) => {
-                    self.check_function_calls_in_statements(&world_tradition.statements)
+                    self.collect_function_calls(&world_tradition.statements, calls)
                 }
                 Stmt::HistoricalEra(historical_era) => {
-                    self.check_function_calls_in_statements(&historical_era.statements)
+                    self.collect_function_calls(&historical_era.statements, calls)
                 }
                 Stmt::HarmonicFunction(harmonic_function) => {
-                    self.check_function_calls_in_statements(&harmonic_function.statements)
+                    self.collect_function_calls(&harmonic_function.statements, calls)
                 }
-                Stmt::For(for_stmt) => {
-                    self.check_function_calls_in_statements(&for_stmt.statements)
-                }
-                Stmt::If(if_stmt) => self.check_function_calls_in_statements(&if_stmt.statements),
+                Stmt::For(for_stmt) => self.collect_function_calls(&for_stmt.statements, calls),
+                Stmt::If(if_stmt) => self.collect_function_calls(&if_stmt.statements, calls),
                 Stmt::Override(override_stmt) => {
-                    self.check_function_calls_in_statements(&override_stmt.statements)
+                    self.collect_function_calls(&override_stmt.statements, calls)
                 }
                 Stmt::WithStyle(with_style) => {
-                    self.check_function_calls_in_statements(&with_style.statements)
+                    self.collect_function_calls(&with_style.statements, calls)
                 }
                 _ => {}
             }
@@ -430,15 +493,6 @@ impl Compiler {
             }
             Stmt::Call(call) => {
                 if self.function_call_stack.contains(&call.name) {
-                    self.diagnostics.push(
-                        Diagnostic::error(
-                            "ML_RESOLVE_RECURSIVE_CALL",
-                            format!("recursive function call `{}`", call.name),
-                            call.line,
-                            call.column,
-                        )
-                        .with_span(call.span),
-                    );
                     return;
                 }
 
@@ -5196,6 +5250,51 @@ score demo {
         .unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_RESOLVE_RECURSIVE_CALL");
+    }
+
+    #[test]
+    fn unused_recursive_call_uses_stable_diagnostic_code() {
+        let diagnostics = compile_source(
+            r#"
+fn motif {
+  call motif
+}
+score demo {
+  voice lead {
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_RESOLVE_RECURSIVE_CALL"));
+    }
+
+    #[test]
+    fn unused_indirect_recursive_call_uses_stable_diagnostic_code() {
+        let diagnostics = compile_source(
+            r#"
+fn first {
+  call second
+}
+fn second {
+  call first
+}
+score demo {
+  voice lead {
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_RESOLVE_RECURSIVE_CALL"));
     }
 
     #[test]
