@@ -1053,49 +1053,29 @@ impl Compiler {
     }
 
     fn check_cadence(&mut self, tracks: &[TrackIr]) {
-        let Some(cadence) = self.style.cadence.clone() else {
-            return;
-        };
-        if self.has_override("cadence") || self.has_score_override("cadence") {
+        if self.style.cadences.is_empty()
+            || self.has_override("cadence")
+            || self.has_score_override("cadence")
+        {
             return;
         }
         let sonorities = final_sonorities(tracks);
         let Some((penultimate, final_sonority)) = sonorities else {
             return;
         };
-        let valid = match cadence.as_str() {
-            "authentic" => {
-                contains_classes(&penultimate, &[PitchClass::G, PitchClass::B, PitchClass::D])
-                    && contains_classes(
-                        &final_sonority,
-                        &[PitchClass::C, PitchClass::E, PitchClass::G],
-                    )
-            }
-            "plagal" => {
-                contains_classes(&penultimate, &[PitchClass::F, PitchClass::A, PitchClass::C])
-                    && contains_classes(
-                        &final_sonority,
-                        &[PitchClass::C, PitchClass::E, PitchClass::G],
-                    )
-            }
-            "deceptive" => {
-                contains_classes(&penultimate, &[PitchClass::G, PitchClass::B, PitchClass::D])
-                    && contains_classes(
-                        &final_sonority,
-                        &[PitchClass::A, PitchClass::C, PitchClass::E],
-                    )
-            }
-            "half" => contains_classes(
-                &final_sonority,
-                &[PitchClass::G, PitchClass::B, PitchClass::D],
-            ),
-            _ => true,
-        };
-        if !valid {
+        if !self
+            .style
+            .cadences
+            .iter()
+            .any(|cadence| cadence_matches(cadence, &penultimate, &final_sonority))
+        {
             self.push_style_diagnostic(
                 "cadence",
                 "ML_STYLE_CADENCE",
-                format!("score ending does not satisfy {cadence} cadence"),
+                format!(
+                    "score ending does not satisfy cadence candidates `{}`",
+                    self.style.cadences.join(" ")
+                ),
                 self.program.score.line,
                 self.program.score.column,
             );
@@ -1870,7 +1850,11 @@ fn style_from_program_inner(
                 );
             }
             "cadence" => {
-                context.cadence = Some(entry.value.trim().to_string());
+                context.cadences = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
                 validate_vocab_entries(style, entry, TheoryDomain::Cadences, &mut diagnostics);
             }
             "harmonic_progression" => {
@@ -2200,6 +2184,41 @@ fn events_form_neighbor_tone(
 
 fn pitch_distance_is_step(distance: i16) -> bool {
     matches!(distance.abs(), 1 | 2)
+}
+
+fn cadence_matches(
+    cadence: &str,
+    penultimate: &[PitchClass],
+    final_sonority: &[PitchClass],
+) -> bool {
+    match cadence {
+        "authentic" => {
+            contains_classes(penultimate, &[PitchClass::G, PitchClass::B, PitchClass::D])
+                && contains_classes(
+                    final_sonority,
+                    &[PitchClass::C, PitchClass::E, PitchClass::G],
+                )
+        }
+        "plagal" => {
+            contains_classes(penultimate, &[PitchClass::F, PitchClass::A, PitchClass::C])
+                && contains_classes(
+                    final_sonority,
+                    &[PitchClass::C, PitchClass::E, PitchClass::G],
+                )
+        }
+        "deceptive" => {
+            contains_classes(penultimate, &[PitchClass::G, PitchClass::B, PitchClass::D])
+                && contains_classes(
+                    final_sonority,
+                    &[PitchClass::A, PitchClass::C, PitchClass::E],
+                )
+        }
+        "half" => contains_classes(
+            final_sonority,
+            &[PitchClass::G, PitchClass::B, PitchClass::D],
+        ),
+        _ => true,
+    }
 }
 
 fn harmonic_functions(tracks: &[TrackIr]) -> Vec<String> {
@@ -4589,6 +4608,47 @@ score demo style ClassicalCadence {
         .unwrap();
 
         assert_eq!(ir.tracks[0].events.len(), 6);
+    }
+
+    #[test]
+    fn cadence_rule_accepts_any_configured_candidate() {
+        let ir = compile_source(
+            r#"
+style FlexibleCadence {
+  cadence: authentic plagal deceptive
+}
+score demo style FlexibleCadence {
+  voice chordal {
+    chord [F4, A4, C5], 1/4
+    chord [C4, E4, G4], 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 6);
+    }
+
+    #[test]
+    fn cadence_rule_rejects_when_no_candidate_matches() {
+        let diagnostics = compile_source(
+            r#"
+style FlexibleCadence {
+  cadence: authentic deceptive
+}
+score demo style FlexibleCadence {
+  voice chordal {
+    chord [F4, A4, C5], 1/4
+    chord [C4, E4, G4], 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_CADENCE");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("cadence"));
     }
 
     #[test]

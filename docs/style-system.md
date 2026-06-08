@@ -33,7 +33,7 @@ style Chamber extends Classical {
   harmonic_function: tonic predominant dominant
   max_melodic_leap: P5
   contrapuntal_motion: contrary oblique similar
-  cadence: authentic
+  cadence: authentic plagal deceptive half
   harmonic_progression: tonic predominant dominant tonic
   texture: homophony
   form: ternary
@@ -67,7 +67,7 @@ style Chamber extends Classical {
 - `instrument_range`: notes in a voice with `program` must fit the configured MIDI program range.
 - `parallel_fifths`: simultaneous voice pairs must not move through consecutive perfect fifths.
 - `voice_crossing`: an upper voice must not cross below a lower voice at the same tick.
-- `cadence`: final sonorities must satisfy configured cadence patterns (`authentic`, `plagal`, `deceptive`, `half`).
+- `cadence`: final sonorities must satisfy at least one configured cadence pattern (`authentic`, `plagal`, `deceptive`, `half`).
 - `harmonic_progression`: sonorities must contain the configured functional progression (`tonic`, `predominant`, `dominant`, `secondary_dominant`, `submediant`).
 - `texture`: compiled tracks must satisfy configured texture (`monophony`, `polyphony`, `homophony`, `heterophony`).
 - `form`: explicit `section` labels must match the configured entry from the `forms` theory catalog, such as `binary`, `ternary`, `sonata`, or `rondo`.
