@@ -288,6 +288,35 @@ score demo {
 }
 
 #[test]
+fn music_ir_expands_transpose_block() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/transpose.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  voice lead {
+    transpose M2 {
+      note C4, 1/8
+      chord [E4, G4], 1/8
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["ir", &input_path]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("class: D"));
+    assert!(stdout.contains("class: Fs"));
+    assert!(stdout.contains("class: A"));
+    assert!(stdout.contains("duration_ticks: 240"));
+}
+
+#[test]
 fn music_ir_expands_sequence_block() {
     let workspace = env!("CARGO_MANIFEST_DIR");
     let input_path = format!("{workspace}/target/sequence.music");

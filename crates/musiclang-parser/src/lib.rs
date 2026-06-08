@@ -73,6 +73,7 @@ pub enum Stmt {
     Pedal(PedalStmt),
     Ostinato(OstinatoStmt),
     Sequence(SequenceStmt),
+    Transpose(TransposeStmt),
     Chord(ChordStmt),
     Roman(RomanStmt),
     Progression(ProgressionStmt),
@@ -230,6 +231,16 @@ pub struct OstinatoStmt {
 pub struct SequenceStmt {
     pub count: i32,
     pub count_expr: Expr,
+    pub interval: String,
+    pub interval_expr: Expr,
+    pub statements: Vec<Stmt>,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransposeStmt {
     pub interval: String,
     pub interval_expr: Expr,
     pub statements: Vec<Stmt>,
@@ -855,6 +866,9 @@ impl Parser {
         if self.check_ident("sequence") {
             return self.parse_sequence().map(Stmt::Sequence);
         }
+        if self.check_ident("transpose") {
+            return self.parse_transpose().map(Stmt::Transpose);
+        }
         if self.check_ident("chord") {
             return self.parse_chord().map(Stmt::Chord);
         }
@@ -1114,6 +1128,20 @@ impl Parser {
         Some(SequenceStmt {
             count,
             count_expr,
+            interval: expr_to_source(&interval_expr),
+            interval_expr,
+            statements,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_transpose(&mut self) -> Option<TransposeStmt> {
+        let start = self.expect_ident_text("transpose")?;
+        let interval_expr = self.parse_expr_until(&[TokenKind::LBrace])?;
+        let statements = self.parse_required_block()?;
+        Some(TransposeStmt {
             interval: expr_to_source(&interval_expr),
             interval_expr,
             statements,
@@ -1613,6 +1641,7 @@ impl Parser {
                 | "pedal"
                 | "ostinato"
                 | "sequence"
+                | "transpose"
                 | "chord"
                 | "roman"
                 | "progression"
@@ -2181,6 +2210,32 @@ score demo {
         assert_eq!(ostinato.count, 3);
         assert_eq!(ostinato.statements.len(), 2);
         assert!(matches!(ostinato.statements[0], Stmt::Note(_)));
+    }
+
+    #[test]
+    fn parses_transpose_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    transpose M2 {
+      note C4, 1/8
+      chord [E4, G4], 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Transpose(transpose) = &voice.statements[0] else {
+            panic!("expected transpose");
+        };
+
+        assert_eq!(transpose.interval, "M2");
+        assert_eq!(transpose.statements.len(), 2);
     }
 
     #[test]

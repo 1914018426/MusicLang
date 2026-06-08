@@ -14,6 +14,10 @@ score demo {
       note C4, 1/8
       note E4, 1/8
     }
+    transpose P5 {
+      note C4, 1/8
+      chord [E4, G4], 1/8
+    }
     chord [C4, E4, G4], 1/2
     chord D3 minor, 1/2
     progression I vi ii V7 I, 1/4

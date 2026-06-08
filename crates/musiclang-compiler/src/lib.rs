@@ -9,8 +9,8 @@ use musiclang_core::{
 use musiclang_parser::{
     parse_source, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt, DynamicStmt,
     Expr, ExprKind, FunctionDecl, ModulateStmt, NoteStmt, OstinatoStmt, OverrideStmt, PedalStmt,
-    Program, ProgressionStmt, RestStmt, RomanStmt, SequenceStmt, Stmt, StyleDecl, VoiceDecl,
-    WithStyleStmt,
+    Program, ProgressionStmt, RestStmt, RomanStmt, SequenceStmt, Stmt, StyleDecl, TransposeStmt,
+    VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,6 +177,7 @@ impl Compiler {
             Stmt::Pedal(pedal) => self.compile_pedal(pedal, track),
             Stmt::Ostinato(ostinato) => self.compile_ostinato(ostinato, track),
             Stmt::Sequence(sequence) => self.compile_sequence(sequence, track),
+            Stmt::Transpose(transpose) => self.compile_transpose(transpose, track),
             Stmt::Chord(chord) => self.compile_chord(chord, track),
             Stmt::Roman(roman) => self.compile_roman(roman, track),
             Stmt::Progression(progression) => self.compile_progression(progression, track),
@@ -544,6 +545,21 @@ impl Compiler {
             self.pitch_transpose_semitones = base_transpose + interval.semitones() * index as i16;
             self.compile_statements(&sequence.statements, track);
         }
+        self.pitch_transpose_semitones = base_transpose;
+    }
+
+    fn compile_transpose(&mut self, transpose: &TransposeStmt, track: &mut TrackBuilder) {
+        let Some(interval) = self.eval_interval(
+            &transpose.interval_expr,
+            transpose.line,
+            transpose.column,
+            "expected interval transpose amount",
+        ) else {
+            return;
+        };
+        let base_transpose = self.pitch_transpose_semitones;
+        self.pitch_transpose_semitones = base_transpose + interval.semitones();
+        self.compile_statements(&transpose.statements, track);
         self.pitch_transpose_semitones = base_transpose;
     }
 
@@ -3466,6 +3482,32 @@ score demo {
         assert!(diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "ML_THEORY_OSTINATO"));
+    }
+
+    #[test]
+    fn transposes_nested_block_events() {
+        let ir = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    transpose M2 {
+      note C4, 1/8
+      chord [E4, G4], 1/8
+      degree 1 4, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let pitches = ir.tracks[0]
+            .events
+            .iter()
+            .map(|event| event.pitch.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(pitches, vec!["D4", "F#4", "A4", "D4"]);
     }
 
     #[test]
