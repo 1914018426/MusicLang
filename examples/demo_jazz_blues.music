@@ -1,0 +1,40 @@
+score jazz_blues {
+  title "Jazz Blues Sketch"
+  composer "MusicLang"
+  tempo 132
+  meter 4/4
+  key C major
+  voice sax {
+    program 65
+    dynamic mf
+    section Head {
+      note C4, 1/8
+      note Eb4, 1/8
+      note F4, 1/8
+      note Gb4, 1/8
+      note G4, 1/4
+      note Bb4, 1/4
+      glissando C5 to G4 steps 4, 1/16
+      tremolo Eb4 with F4 repeats 4, 1/16
+    }
+    section Turnaround {
+      roman I7, 1/4
+      roman IV7, 1/4
+      roman V7, 1/4
+      roman I7, 1/4
+    }
+  }
+  voice comp {
+    program 0
+    strum C4 dominant7, 1/2 by 1/32
+    strum F3 dominant7, 1/2 by 1/32
+    strum G3 dominant7, 1/2 by 1/32
+    strum C4 dominant7, 1/2 by 1/32
+  }
+  voice bass {
+    program 32
+    pedal C2, 4, 1/4
+    pedal F2, 2, 1/4
+    pedal G2, 2, 1/4
+  }
+}

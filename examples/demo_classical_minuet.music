@@ -1,0 +1,44 @@
+score classical_minuet {
+  title "Classical Minuet"
+  composer "MusicLang"
+  tempo 108
+  meter 3/4
+  key G major
+  voice melody {
+    program 40
+    section A {
+      note G4, 1/4
+      note B4, 1/4
+      note D5, 1/4
+      note C5, 1/4
+      note A4, 1/4
+      note B4, 1/4
+      note G4, 1/2
+      note D4, 1/4
+    }
+    section B {
+      sequence 2 by M2 {
+        note A4, 1/8
+        note B4, 1/8
+        note C5, 1/4
+      }
+      ornament turn {
+        note B4, 1/16
+        note C5, 1/16
+        note B4, 1/16
+        note A4, 1/16
+        note B4, 1/8
+      }
+      cadence authentic, 1/2
+    }
+  }
+  voice harmony {
+    program 48
+    chord G3 major, 1/2
+    chord D3 dominant7, 1/2
+    chord G3 major inv 1, 1/2
+    chord C3 major, 1/2
+    chord D3 dominant7, 1/2
+    chord G3 major, 1/1
+  }
+}

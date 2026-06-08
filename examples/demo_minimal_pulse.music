@@ -1,0 +1,35 @@
+score minimal_pulse {
+  title "Minimal Pulse"
+  composer "MusicLang"
+  tempo 144
+  meter 6/8
+  key D minor
+  override voice_crossing allow reason "interlocking minimalist register phasing" {
+    voice bass {
+      program 38
+      pedal D2, 6, 1/4
+      key F major
+      pedal F2, 6, 1/4
+    }
+    voice pulse {
+      program 12
+      section Pulse {
+        ostinato 6 {
+          note D4, 1/8
+          note A4, 1/8
+          note F4, 1/8
+        }
+      }
+    }
+    voice phase {
+      program 89
+      sequence 4 by M2 {
+        tuplet 3 in 1/4 {
+          note D5, 1/8
+          note E5, 1/8
+          note F5, 1/8
+        }
+      }
+    }
+  }
+}

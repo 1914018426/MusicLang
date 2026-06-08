@@ -13,6 +13,10 @@ fn valid_examples_compile_to_midi() {
         "examples/control_flow.music",
         "examples/override.music",
         "examples/custom_style.music",
+        "examples/demo_classical_minuet.music",
+        "examples/demo_jazz_blues.music",
+        "examples/demo_minimal_pulse.music",
+        "examples/demo_cinematic_ambient.music",
     ] {
         let ir = compile_example(path);
         let midi = musiclang_midi::render_midi(&ir).unwrap();

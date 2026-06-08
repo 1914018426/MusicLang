@@ -1,0 +1,35 @@
+score cinematic_ambient {
+  title "Cinematic Ambient"
+  composer "MusicLang"
+  tempo 72
+  meter 4/4
+  key A minor
+  override voice_crossing allow reason "wide cinematic pad voicings overlap by design" {
+    voice low_strings {
+      program 42
+      pedal A2, 4, 1/2
+      pedal F2, 2, 1/2
+      pedal C3, 2, 1/2
+    }
+    voice pad {
+      program 88
+      section Dawn {
+        chord A3 minor, 1/1
+        tempo 84
+        chord F3 major, 1/1
+        key C major
+        chord C4 major, 1/1
+        chord G3 major, 1/1
+      }
+    }
+    voice shimmer {
+      program 10
+      dynamic p
+      arpeggio [A4, C5, E5], 1/8
+      arpeggio [F4, A4, C5], 1/8
+      arpeggio [C5, E5, G5], 1/8
+      glissando E5 to A5 steps 5, 1/16
+      tremolo C5 with G5 repeats 8, 1/32
+    }
+  }
+}
