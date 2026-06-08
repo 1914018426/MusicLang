@@ -827,6 +827,9 @@ fn music_analyze_summarizes_score() {
     assert!(stdout.contains("bar_ticks: 1440"));
     assert!(stdout.contains("duration_bars: 1"));
     assert!(stdout.contains("density_per_bar: 4"));
+    assert!(stdout.contains("repeated_bar_count: 0"));
+    assert!(stdout.contains("repeated_bar_ratio_percent: 0"));
+    assert!(stdout.contains("longest_repeated_bar_run: 1"));
     assert!(stdout.contains("max_simultaneous_events: 3"));
     assert!(stdout.contains("texture: dense_polyphonic"));
     assert!(stdout.contains("pitch_range: D3..G4"));
@@ -836,6 +839,48 @@ fn music_analyze_summarizes_score() {
     assert!(stdout.contains("track lead: events=2, density_per_bar=2, range=F4..G4"));
     assert!(stdout.contains("track alto: events=1, density_per_bar=1, range=A3..A3"));
     assert!(stdout.contains("track bass: events=1, density_per_bar=1, range=D3..D3"));
+}
+
+#[test]
+fn music_analyze_reports_repeated_bars() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/analyze-repetition.music");
+    fs::write(
+        &input_path,
+        r#"
+score repetitive {
+  tempo 120
+  meter 4/4
+  voice lead {
+    note C4, 1/4
+    note E4, 1/4
+    note G4, 1/4
+    note E4, 1/4
+    note C4, 1/4
+    note E4, 1/4
+    note G4, 1/4
+    note E4, 1/4
+    note C4, 1/4
+    note E4, 1/4
+    note G4, 1/4
+    note E4, 1/4
+    note C4, 1/4
+    note E4, 1/4
+    note G4, 1/4
+    note E4, 1/4
+  }
+}
+"#,
+    )
+    .unwrap();
+    let output = run_music(&["analyze", &input_path]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("duration_bars: 4"));
+    assert!(stdout.contains("repeated_bar_count: 3"));
+    assert!(stdout.contains("repeated_bar_ratio_percent: 75"));
+    assert!(stdout.contains("longest_repeated_bar_run: 4"));
 }
 
 #[test]
@@ -856,6 +901,9 @@ fn music_analyze_json_is_machine_readable() {
     assert!(stdout.contains("\"bar_ticks\":1440"));
     assert!(stdout.contains("\"duration_bars\":1"));
     assert!(stdout.contains("\"density_per_bar\":4"));
+    assert!(stdout.contains("\"repeated_bar_count\":0"));
+    assert!(stdout.contains("\"repeated_bar_ratio_percent\":0"));
+    assert!(stdout.contains("\"longest_repeated_bar_run\":1"));
     assert!(stdout.contains("\"max_simultaneous_events\":3"));
     assert!(stdout.contains("\"texture\":\"dense_polyphonic\""));
     assert!(stdout.contains("\"pitch_min\":\"D3\""));

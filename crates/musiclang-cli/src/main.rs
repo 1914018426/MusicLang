@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
@@ -302,6 +303,9 @@ struct ScoreAnalysis {
     bar_ticks: u32,
     duration_bars: u32,
     density_per_bar: u32,
+    repeated_bar_count: u32,
+    repeated_bar_ratio_percent: u32,
+    longest_repeated_bar_run: u32,
     max_simultaneous_events: usize,
     texture: String,
     pitch_min: Option<String>,
@@ -348,6 +352,7 @@ fn analyze_score(
         ir.ticks_per_quarter * u32::from(meter.numerator) * 4 / u32::from(meter.denominator);
     let duration_bars = duration_ticks.div_ceil(bar_ticks.max(1));
     let score_density_per_bar = density_per_bar(events.len(), duration_bars);
+    let repeated_bars = analyze_repeated_bars(ir, bar_ticks.max(1), duration_bars);
     let max_simultaneous_events = max_simultaneous_events(&events);
     let texture = classify_texture(ir.tracks.len(), max_simultaneous_events).to_string();
     let pitch_min = events
@@ -438,6 +443,9 @@ fn analyze_score(
         bar_ticks,
         duration_bars,
         density_per_bar: score_density_per_bar,
+        repeated_bar_count: repeated_bars.repeated_count,
+        repeated_bar_ratio_percent: repeated_bars.ratio_percent,
+        longest_repeated_bar_run: repeated_bars.longest_run,
         max_simultaneous_events,
         texture,
         pitch_min,
@@ -470,6 +478,15 @@ fn print_analysis(analysis: &ScoreAnalysis) {
     println!("bar_ticks: {}", analysis.bar_ticks);
     println!("duration_bars: {}", analysis.duration_bars);
     println!("density_per_bar: {}", analysis.density_per_bar);
+    println!("repeated_bar_count: {}", analysis.repeated_bar_count);
+    println!(
+        "repeated_bar_ratio_percent: {}",
+        analysis.repeated_bar_ratio_percent
+    );
+    println!(
+        "longest_repeated_bar_run: {}",
+        analysis.longest_repeated_bar_run
+    );
     println!(
         "max_simultaneous_events: {}",
         analysis.max_simultaneous_events
@@ -514,7 +531,7 @@ fn print_analysis(analysis: &ScoreAnalysis) {
 
 fn print_analysis_json(analysis: &ScoreAnalysis) {
     print!(
-        "{{\"title\":\"{}\",\"composer\":{},\"tempo_bpm\":{},\"meter\":{},\"key\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"bar_ticks\":{},\"duration_bars\":{},\"density_per_bar\":{},\"max_simultaneous_events\":{},\"texture\":\"{}\",\"pitch_min\":{},\"pitch_max\":{},\"pitch_classes\":{},\"roman_roots\":{},\"sonorities\":{},\"tracks\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
+        "{{\"title\":\"{}\",\"composer\":{},\"tempo_bpm\":{},\"meter\":{},\"key\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"bar_ticks\":{},\"duration_bars\":{},\"density_per_bar\":{},\"repeated_bar_count\":{},\"repeated_bar_ratio_percent\":{},\"longest_repeated_bar_run\":{},\"max_simultaneous_events\":{},\"texture\":\"{}\",\"pitch_min\":{},\"pitch_max\":{},\"pitch_classes\":{},\"roman_roots\":{},\"sonorities\":{},\"tracks\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
         json_escape(&analysis.title),
         json_option(analysis.composer.as_deref()),
         analysis.tempo_bpm,
@@ -526,6 +543,9 @@ fn print_analysis_json(analysis: &ScoreAnalysis) {
         analysis.bar_ticks,
         analysis.duration_bars,
         analysis.density_per_bar,
+        analysis.repeated_bar_count,
+        analysis.repeated_bar_ratio_percent,
+        analysis.longest_repeated_bar_run,
         analysis.max_simultaneous_events,
         json_escape(&analysis.texture),
         json_option(analysis.pitch_min.as_deref()),
@@ -539,6 +559,68 @@ fn print_analysis_json(analysis: &ScoreAnalysis) {
         analysis.warning_count,
     );
     println!();
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RepeatedBarAnalysis {
+    repeated_count: u32,
+    ratio_percent: u32,
+    longest_run: u32,
+}
+
+fn analyze_repeated_bars(
+    ir: &musiclang_core::ScoreIr,
+    bar_ticks: u32,
+    duration_bars: u32,
+) -> RepeatedBarAnalysis {
+    let mut signatures = Vec::new();
+    for bar in 0..duration_bars {
+        let bar_start = bar * bar_ticks;
+        let bar_end = bar_start + bar_ticks;
+        let mut entries = Vec::new();
+        for track in &ir.tracks {
+            for event in &track.events {
+                if event.start_tick >= bar_start && event.start_tick < bar_end {
+                    entries.push(format!(
+                        "{}:{}:{}:{}",
+                        track.name,
+                        event.start_tick - bar_start,
+                        event.duration_ticks,
+                        event.pitch.midi_number().unwrap_or(0)
+                    ));
+                }
+            }
+        }
+        entries.sort();
+        signatures.push(entries.join("|"));
+    }
+
+    let repeated_count = signatures
+        .iter()
+        .fold(BTreeMap::<&String, u32>::new(), |mut counts, signature| {
+            *counts.entry(signature).or_default() += 1;
+            counts
+        })
+        .values()
+        .map(|count| count.saturating_sub(1))
+        .sum::<u32>();
+    let mut longest_run = 0;
+    let mut current_run = 0;
+    let mut previous = None;
+    for signature in &signatures {
+        if Some(signature) == previous {
+            current_run += 1;
+        } else {
+            current_run = 1;
+            previous = Some(signature);
+        }
+        longest_run = longest_run.max(current_run);
+    }
+    RepeatedBarAnalysis {
+        repeated_count,
+        ratio_percent: repeated_count * 100 / duration_bars.max(1),
+        longest_run,
+    }
 }
 
 fn analyze_sonorities(
