@@ -117,9 +117,9 @@ fn music_new_and_build_create_project_output() {
     assert!(fs::metadata(format!("{project}/music.toml"))
         .unwrap()
         .is_file());
-    assert!(fs::metadata(format!("{project}/src/main.music"))
-        .unwrap()
-        .is_file());
+    let source = fs::read_to_string(format!("{project}/src/main.music")).unwrap();
+    assert!(source.contains("volume 96"));
+    assert!(source.contains("pan 64"));
 
     let build_output = run_music_in(&["build"], &project);
     assert!(build_output.status.success());
@@ -731,12 +731,39 @@ fn music_ast_prints_parsed_program() {
 
 #[test]
 fn music_ir_prints_lowered_score() {
-    let output = run_music(&["ir", "examples/minimal.music"]);
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/ir-track-metadata.music");
+    fs::write(
+        &input_path,
+        r#"
+score ir_track_metadata {
+  tempo 144
+  meter 6/8
+  key G major
+  voice lead {
+    section Theme {
+      tempo 144
+      meter 6/8
+      key G major
+    }
+    program 40
+    volume 96
+    pan 32
+    note C4, 1/4
+  }
+}
+"#,
+    )
+    .unwrap();
+    let output = run_music(&["ir", &input_path]);
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ScoreIr"));
     assert!(stdout.contains("tempo_bpm"));
+    assert!(stdout.contains("program: Some(\n                40,"));
+    assert!(stdout.contains("volume: Some(\n                96,"));
+    assert!(stdout.contains("pan: Some(\n                32,"));
     assert!(stdout.contains("tempo_changes"));
     assert!(stdout.contains("bpm: 144"));
     assert!(stdout.contains("meter_changes"));

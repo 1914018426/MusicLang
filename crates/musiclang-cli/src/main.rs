@@ -134,7 +134,7 @@ fn new_project(name: &str) -> Result<(), String> {
     .map_err(|error| format!("failed to write music.toml: {error}"))?;
     fs::write(
         root.join("src/main.music"),
-        format!("score {name} {{\n  tempo 96\n  meter 4/4\n  key C major\n  voice lead {{\n    program 40\n    note C4, 1/4\n    note C4 + M3, 1/4\n    note G4, 1/2\n  }}\n}}\n"),
+        format!("score {name} {{\n  tempo 96\n  meter 4/4\n  key C major\n  voice lead {{\n    program 40\n    volume 96\n    pan 64\n    note C4, 1/4\n    note C4 + M3, 1/4\n    note G4, 1/2\n  }}\n}}\n"),
     )
     .map_err(|error| format!("failed to write src/main.music: {error}"))?;
     println!("created {name}");

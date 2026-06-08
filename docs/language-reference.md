@@ -16,6 +16,8 @@ score demo style Classical {
   meter 4/4
   voice lead {
     program 40
+    volume 96
+    pan 64
     call motif
   }
 }
@@ -30,6 +32,8 @@ score demo style Classical {
 - `key tonic major|minor`
 - `voice name { ... }`
 - `program midi_program` or `instrument midi_program`
+- `volume 0..127` for MIDI channel volume (CC7)
+- `pan 0..127` for MIDI pan position (CC10)
 - `dynamic mark` for catalog dynamics such as `p`, `mf`, `f`, or `sfz`
 - `velocity 0..127` for explicit MIDI velocity
 - `articulation mark` for catalog ornaments/articulations such as `staccato`, `tenuto`, `accent`, or `legato`
