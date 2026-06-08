@@ -130,6 +130,12 @@ pub enum ExprKind {
     DurationLiteral(String),
     StringLiteral(String),
     List(Vec<Expr>),
+    Tuple(Vec<Expr>),
+    Dict(Vec<(String, Expr)>),
+    Access {
+        target: Box<Expr>,
+        key: String,
+    },
     Call {
         callee: String,
         args: Vec<Expr>,
@@ -582,6 +588,7 @@ pub enum TokenKind {
     Colon,
     Eq,
     EqEq,
+    Dot,
     DotDot,
     Plus,
     Minus,
@@ -636,6 +643,7 @@ impl Lexer {
                 '=' if self.peek_next() == Some('=') => tokens.push(self.double(TokenKind::EqEq)),
                 '=' => tokens.push(self.simple(TokenKind::Eq)),
                 '.' if self.peek_next() == Some('.') => tokens.push(self.double(TokenKind::DotDot)),
+                '.' => tokens.push(self.simple(TokenKind::Dot)),
                 '"' => {
                     if let Some(token) = self.string(&mut diagnostics) {
                         tokens.push(token);
@@ -987,8 +995,10 @@ impl Parser {
             }
             let token = self.advance().clone();
             match token.kind {
-                TokenKind::LBracket | TokenKind::LParen => depth += 1,
-                TokenKind::RBracket | TokenKind::RParen => depth = depth.saturating_sub(1),
+                TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+                TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1)
+                }
                 _ => {}
             }
             tokens.push(token);
@@ -1948,8 +1958,10 @@ impl Parser {
             }
             let token = self.advance().clone();
             match token.kind {
-                TokenKind::LBracket | TokenKind::LParen => depth += 1,
-                TokenKind::RBracket | TokenKind::RParen => depth = depth.saturating_sub(1),
+                TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+                TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1)
+                }
                 _ => {}
             }
             tokens.push(token);
@@ -1971,8 +1983,10 @@ impl Parser {
             }
             let token = self.advance().clone();
             match token.kind {
-                TokenKind::LBracket | TokenKind::LParen => depth += 1,
-                TokenKind::RBracket | TokenKind::RParen => depth = depth.saturating_sub(1),
+                TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+                TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1)
+                }
                 _ => {}
             }
             tokens.push(token);
@@ -1994,8 +2008,10 @@ impl Parser {
             }
             let token = self.advance().clone();
             match token.kind {
-                TokenKind::LBracket | TokenKind::LParen => depth += 1,
-                TokenKind::RBracket | TokenKind::RParen => depth = depth.saturating_sub(1),
+                TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+                TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1)
+                }
                 _ => {}
             }
             tokens.push(token);
@@ -2082,8 +2098,10 @@ impl Parser {
             }
             let token = self.advance().clone();
             match token.kind {
-                TokenKind::LBracket | TokenKind::LParen => depth += 1,
-                TokenKind::RBracket | TokenKind::RParen => depth = depth.saturating_sub(1),
+                TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+                TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1)
+                }
                 _ => {}
             }
             tokens.push(token);
@@ -2309,12 +2327,33 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
         return None;
     }
     let span = expr_span(tokens);
+    if let Some(index) = find_top_level_operator(tokens, TokenKind::Dot) {
+        let key = tokens[index + 1..]
+            .iter()
+            .map(|token| token.text.as_str())
+            .collect::<Vec<_>>()
+            .join("");
+        return Some(Expr::new(
+            ExprKind::Access {
+                target: Box::new(parse_expr_tokens(&tokens[..index])?),
+                key,
+            },
+            span,
+        ));
+    }
     if tokens.first()?.kind == TokenKind::LBracket && tokens.last()?.kind == TokenKind::RBracket {
         return split_expr_list(&tokens[1..tokens.len() - 1])
             .into_iter()
             .map(parse_expr_tokens)
             .collect::<Option<Vec<_>>>()
             .map(|values| Expr::new(ExprKind::List(values), span));
+    }
+    if tokens.first()?.kind == TokenKind::LBrace && tokens.last()?.kind == TokenKind::RBrace {
+        return split_dict_entries(&tokens[1..tokens.len() - 1])
+            .into_iter()
+            .map(|(key, value)| parse_expr_tokens(value).map(|value| (key, value)))
+            .collect::<Option<Vec<_>>>()
+            .map(|entries| Expr::new(ExprKind::Dict(entries), span));
     }
     if tokens.len() >= 3
         && tokens[0].kind == TokenKind::Ident
@@ -2335,8 +2374,20 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
                 )
             });
     }
-    if tokens.first()?.kind == TokenKind::LParen && tokens.last()?.kind == TokenKind::RParen {
-        return parse_expr_tokens(&tokens[1..tokens.len() - 1]);
+    if tokens.len() >= 2
+        && tokens.first()?.kind == TokenKind::LParen
+        && tokens.last()?.kind == TokenKind::RParen
+    {
+        let inner = &tokens[1..tokens.len() - 1];
+        let parts = split_expr_list(inner);
+        if parts.len() > 1 || inner.iter().any(|token| token.kind == TokenKind::Comma) {
+            return parts
+                .into_iter()
+                .map(parse_expr_tokens)
+                .collect::<Option<Vec<_>>>()
+                .map(|values| Expr::new(ExprKind::Tuple(values), span));
+        }
+        return parse_expr_tokens(inner);
     }
     if let Some(index) = find_top_level_operator(tokens, TokenKind::EqEq) {
         return Some(Expr::new(
@@ -2393,8 +2444,10 @@ fn find_top_level_operator(tokens: &[Token], kind: TokenKind) -> Option<usize> {
     let mut depth = 0usize;
     for (index, token) in tokens.iter().enumerate() {
         match token.kind {
-            TokenKind::LBracket | TokenKind::LParen => depth += 1,
-            TokenKind::RBracket | TokenKind::RParen => depth = depth.saturating_sub(1),
+            TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+            TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                depth = depth.saturating_sub(1)
+            }
             _ if depth == 0 && token.kind == kind => return Some(index),
             _ => {}
         }
@@ -2408,8 +2461,10 @@ fn split_expr_list(tokens: &[Token]) -> Vec<&[Token]> {
     let mut start = 0usize;
     for (index, token) in tokens.iter().enumerate() {
         match token.kind {
-            TokenKind::LBracket | TokenKind::LParen => depth += 1,
-            TokenKind::RBracket | TokenKind::RParen => depth = depth.saturating_sub(1),
+            TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+            TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                depth = depth.saturating_sub(1)
+            }
             TokenKind::Comma if depth == 0 => {
                 if start < index {
                     parts.push(&tokens[start..index]);
@@ -2423,6 +2478,21 @@ fn split_expr_list(tokens: &[Token]) -> Vec<&[Token]> {
         parts.push(&tokens[start..]);
     }
     parts
+}
+
+fn split_dict_entries(tokens: &[Token]) -> Vec<(String, &[Token])> {
+    split_expr_list(tokens)
+        .into_iter()
+        .filter_map(|entry| {
+            let colon = find_top_level_operator(entry, TokenKind::Colon)?;
+            let key = entry[..colon]
+                .iter()
+                .map(|token| token.text.as_str())
+                .collect::<Vec<_>>()
+                .join("");
+            Some((key, &entry[colon + 1..]))
+        })
+        .collect()
 }
 
 fn expr_span(tokens: &[Token]) -> Span {
@@ -2468,6 +2538,23 @@ fn expr_to_source(expr: &Expr) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        ExprKind::Tuple(values) => format!(
+            "({})",
+            values
+                .iter()
+                .map(expr_to_source)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ExprKind::Dict(entries) => format!(
+            "{{{}}}",
+            entries
+                .iter()
+                .map(|(key, value)| format!("{key}:{}", expr_to_source(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ExprKind::Access { target, key } => format!("{}.{}", expr_to_source(target), key),
         ExprKind::Call { callee, args } => format!(
             "{}({})",
             callee,
@@ -3289,6 +3376,40 @@ score demo {
             panic!("expected call");
         };
         assert_eq!(call.args.len(), 2);
+    }
+
+    #[test]
+    fn parses_compact_tuple_dict_and_access_expressions() {
+        let program = parse_source(
+            r#"
+fn motif(cfg, pair) {
+  note cfg.root, pair.1
+}
+score demo {
+  voice lead {
+    call motif({root:C4, dur:1/8}, (C4, 1/4))
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let Stmt::Note(note) = &program.functions[0].statements[0] else {
+            panic!("expected note");
+        };
+        let ExprKind::Access { target, key } = &note.pitch_expr.kind else {
+            panic!("expected access");
+        };
+        assert_eq!(key, "root");
+        assert!(matches!(target.kind, ExprKind::Ident(_)));
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Call(call) = &voice.statements[0] else {
+            panic!("expected call");
+        };
+        assert!(matches!(call.args[0].kind, ExprKind::Dict(_)));
+        assert!(matches!(call.args[1].kind, ExprKind::Tuple(_)));
     }
 
     #[test]

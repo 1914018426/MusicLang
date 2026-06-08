@@ -933,10 +933,18 @@ impl Compiler {
                     );
                 }
             }
-            ExprKind::List(values) => {
+            ExprKind::List(values) | ExprKind::Tuple(values) => {
                 for value in values {
                     self.check_expression_name(value, line, column, scopes);
                 }
+            }
+            ExprKind::Dict(entries) => {
+                for (_, value) in entries {
+                    self.check_expression_name(value, line, column, scopes);
+                }
+            }
+            ExprKind::Access { target, .. } => {
+                self.check_expression_name(target, line, column, scopes);
             }
             ExprKind::Call { args, .. } => {
                 for arg in args {
@@ -2900,6 +2908,23 @@ impl Compiler {
                 .map(|value| self.eval_expr(value, line, column))
                 .collect::<Option<Vec<_>>>()
                 .map(Value::List),
+            ExprKind::Tuple(values) => values
+                .iter()
+                .map(|value| self.eval_expr(value, line, column))
+                .collect::<Option<Vec<_>>>()
+                .map(Value::Tuple),
+            ExprKind::Dict(entries) => entries
+                .iter()
+                .map(|(key, value)| {
+                    self.eval_expr(value, line, column)
+                        .map(|value| (key.clone(), value))
+                })
+                .collect::<Option<HashMap<_, _>>>()
+                .map(Value::Dict),
+            ExprKind::Access { target, key } => {
+                let target = self.eval_expr(target, line, column)?;
+                self.eval_access(target, key, line, column, expr.span)
+            }
             ExprKind::Call { callee, args } => {
                 let args = args
                     .iter()
@@ -2911,6 +2936,53 @@ impl Compiler {
                 let left = self.eval_expr(left, line, column)?;
                 let right = self.eval_expr(right, line, column)?;
                 self.eval_binary(*op, left, right, line, column, expr.span)
+            }
+        }
+    }
+
+    fn eval_access(
+        &mut self,
+        target: Value,
+        key: &str,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        match target {
+            Value::Dict(values) => values.get(key).cloned().or_else(|| {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_RESOLVE_UNKNOWN_NAME",
+                        format!("unknown field `{key}`"),
+                        line,
+                        column,
+                    )
+                    .with_span(span),
+                );
+                None
+            }),
+            Value::Tuple(values) => key
+                .parse::<usize>()
+                .ok()
+                .and_then(|index| values.get(index).cloned())
+                .or_else(|| {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_RESOLVE_UNKNOWN_NAME",
+                            format!("unknown tuple index `{key}`"),
+                            line,
+                            column,
+                        )
+                        .with_span(span),
+                    );
+                    None
+                }),
+            _ => {
+                self.diagnostics.push(
+                    Diagnostic::error("ML_TYPE_MISMATCH", "expected tuple or dict", line, column)
+                        .with_span(span),
+                );
+                None
             }
         }
     }
@@ -5907,6 +5979,50 @@ score demo {
         assert_eq!(events[1].pitch.to_string(), "E4");
         assert_eq!(events[2].pitch.to_string(), "G4");
         assert_eq!(events[3].pitch.to_string(), "B4");
+    }
+
+    #[test]
+    fn function_accepts_compact_dict_argument() {
+        let ir = compile_source(
+            r#"
+fn hit(cfg) {
+  note cfg.root, cfg.dur
+}
+score demo {
+  voice lead {
+    call hit({root:C4, dur:1/8})
+    call hit({root:E4, dur:1/4})
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 2);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "E4");
+    }
+
+    #[test]
+    fn function_accepts_compact_tuple_argument() {
+        let ir = compile_source(
+            r#"
+fn hit(pair) {
+  note pair.0, pair.1
+}
+score demo {
+  voice lead {
+    call hit((C4, 1/8))
+    call hit((G4, 1/4))
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 2);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "G4");
     }
 
     #[test]
