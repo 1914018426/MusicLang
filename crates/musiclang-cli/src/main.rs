@@ -377,18 +377,59 @@ fn print_diagnostics_json(diagnostics: &[musiclang_core::Diagnostic]) {
             print!(",");
         }
         print!(
-            "{{\"code\":\"{}\",\"severity\":\"{}\",\"message\":\"{}\",\"line\":{},\"column\":{},\"rule\":{},\"style\":{},\"help\":{}}}",
+            "{{\"code\":\"{}\",\"severity\":\"{}\",\"message\":\"{}\",\"line\":{},\"column\":{},\"span\":{},\"labels\":{},\"related\":{},\"rule\":{},\"style\":{},\"help\":{}}}",
             json_escape(&diagnostic.code),
             diagnostic.severity,
             json_escape(&diagnostic.message),
             diagnostic.line,
             diagnostic.column,
+            json_span(diagnostic.span),
+            json_labels(&diagnostic.labels),
+            json_related(&diagnostic.related),
             json_option(diagnostic.rule.as_deref()),
             json_option(diagnostic.style.as_deref()),
             json_option(diagnostic.help.as_deref())
         );
     }
     println!("]");
+}
+
+fn json_labels(labels: &[musiclang_core::DiagnosticLabel]) -> String {
+    let values = labels
+        .iter()
+        .map(|label| {
+            format!(
+                "{{\"span\":{},\"message\":\"{}\"}}",
+                json_span(Some(label.span)),
+                json_escape(&label.message)
+            )
+        })
+        .collect::<Vec<_>>();
+    format!("[{}]", values.join(","))
+}
+
+fn json_related(related: &[musiclang_core::DiagnosticRelated]) -> String {
+    let values = related
+        .iter()
+        .map(|related| {
+            format!(
+                "{{\"span\":{},\"message\":\"{}\"}}",
+                json_span(Some(related.span)),
+                json_escape(&related.message)
+            )
+        })
+        .collect::<Vec<_>>();
+    format!("[{}]", values.join(","))
+}
+
+fn json_span(span: Option<musiclang_core::Span>) -> String {
+    span.map(|span| {
+        format!(
+            "{{\"source_id\":{},\"start\":{},\"end\":{},\"line\":{},\"column\":{}}}",
+            span.source_id.0, span.start, span.end, span.line, span.column
+        )
+    })
+    .unwrap_or_else(|| "null".to_string())
 }
 
 fn json_option(value: Option<&str>) -> String {

@@ -147,6 +147,11 @@ fn music_diagnose_json_machine_readable() {
     assert!(stdout.contains("\"code\":\"ML_STYLE_SCALE\""));
     assert!(stdout.contains("\"severity\""));
     assert!(stdout.contains("\"line\""));
+    assert!(stdout.contains("\"span\":{"));
+    assert!(stdout.contains("\"start\":"));
+    assert!(stdout.contains("\"end\":"));
+    assert!(stdout.contains("\"labels\":[]"));
+    assert!(stdout.contains("\"related\":[]"));
 }
 
 #[test]
@@ -349,4 +354,28 @@ score demo {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"code\":\"ML_RESOLVE_RECURSIVE_CALL\""));
     assert!(stdout.contains("recursive function call `motif`"));
+}
+
+#[test]
+fn music_diagnose_json_reports_compiler_span() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/json-unknown-function.music");
+    let source = r#"
+score demo {
+  voice lead {
+    call missing
+  }
+}
+"#;
+    fs::write(&input_path, source).unwrap();
+
+    let output = run_music(&["diagnose", &input_path, "--json"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected_start = source.find("call missing").unwrap();
+    let expected_end = expected_start + "call".len();
+    assert!(stdout.contains("\"code\":\"ML_RESOLVE_UNKNOWN_NAME\""));
+    assert!(stdout.contains(&format!("\"start\":{expected_start}")));
+    assert!(stdout.contains(&format!("\"end\":{expected_end}")));
 }
