@@ -69,6 +69,7 @@ pub enum Stmt {
     Voice(VoiceDecl),
     Tempo(TempoDecl),
     Meter(MeterDecl),
+    Key(KeyDecl),
     Note(NoteStmt),
     Rest(RestStmt),
     Glissando(GlissandoStmt),
@@ -946,6 +947,9 @@ impl Parser {
         }
         if self.check_ident("meter") {
             return self.parse_meter().map(Stmt::Meter);
+        }
+        if self.check_ident("key") {
+            return self.parse_key().map(Stmt::Key);
         }
         if self.check_ident("note") {
             return self.parse_note().map(Stmt::Note);
@@ -2517,6 +2521,30 @@ score demo {
 
         assert_eq!(meter.numerator, 6);
         assert_eq!(meter.denominator, 8);
+    }
+
+    #[test]
+    fn parses_key_statement_inside_voice() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    key G major
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Key(key) = &voice.statements[0] else {
+            panic!("expected key");
+        };
+
+        assert_eq!(key.tonic, "G");
+        assert_eq!(key.mode, "major");
     }
 
     #[test]

@@ -742,6 +742,8 @@ fn music_ir_prints_lowered_score() {
     assert!(stdout.contains("meter_changes"));
     assert!(stdout.contains("numerator: 6"));
     assert!(stdout.contains("denominator: 8"));
+    assert!(stdout.contains("key_changes"));
+    assert!(stdout.contains("fifths: 1"));
 }
 
 fn write_analyze_metadata_fixture() -> String {

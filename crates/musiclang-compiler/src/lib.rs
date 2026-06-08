@@ -2,9 +2,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use musiclang_core::{
     Chord, CustomStyleRule, CustomTheoryDomain, Diagnostic, Duration, InstrumentRange, Interval,
-    KeySignature, MarkerIr, Meter, MeterChangeIr, Note, NoteEventIr, OverrideTrace, Pitch,
-    PitchClass, RuleSeverity, ScoreIr, Severity, Span, StyleContext, TempoChangeIr, TheoryDomain,
-    TheoryReference, TrackIr, DEFAULT_TICKS_PER_QUARTER,
+    KeyChangeIr, KeySignature, MarkerIr, Meter, MeterChangeIr, Note, NoteEventIr, OverrideTrace,
+    Pitch, PitchClass, RuleSeverity, ScoreIr, Severity, Span, StyleContext, TempoChangeIr,
+    TheoryDomain, TheoryReference, TrackIr, DEFAULT_TICKS_PER_QUARTER,
 };
 use musiclang_parser::{
     parse_source, ArpeggioStmt, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt,
@@ -57,6 +57,7 @@ struct Compiler {
     markers: Vec<MarkerIr>,
     tempo_changes: Vec<TempoChangeIr>,
     meter_changes: Vec<MeterChangeIr>,
+    key_changes: Vec<KeyChangeIr>,
     pending_non_chord_tones: Vec<PendingNonChordTone>,
     score_key: Option<KeySignature>,
     pitch_transpose_semitones: i16,
@@ -98,6 +99,7 @@ impl Compiler {
             markers: Vec::new(),
             tempo_changes: Vec::new(),
             meter_changes: Vec::new(),
+            key_changes: Vec::new(),
             pending_non_chord_tones: Vec::new(),
             score_key: None,
             pitch_transpose_semitones: 0,
@@ -164,6 +166,7 @@ impl Compiler {
                 self.markers,
                 self.tempo_changes,
                 self.meter_changes,
+                self.key_changes,
                 self.override_traces,
             ),
             diagnostics: self.diagnostics,
@@ -197,6 +200,15 @@ impl Compiler {
                 },
                 tick: track.cursor_tick(),
             }),
+            Stmt::Key(key) => {
+                if let Some(signature) = key_signature(&key.tonic, &key.mode) {
+                    self.score_key = Some(signature);
+                    self.key_changes.push(KeyChangeIr {
+                        key: signature,
+                        tick: track.cursor_tick(),
+                    });
+                }
+            }
             Stmt::Note(note) => self.compile_note(note, track),
             Stmt::Rest(rest) => self.compile_rest(rest, track),
             Stmt::Glissando(glissando) => self.compile_glissando(glissando, track),
@@ -5030,6 +5042,30 @@ score demo {
         assert_eq!(ir.meter_changes[0].meter.numerator, 6);
         assert_eq!(ir.meter_changes[0].meter.denominator, 8);
         assert_eq!(ir.meter_changes[0].tick, 480);
+    }
+
+    #[test]
+    fn lowers_key_changes_at_current_tick() {
+        let ir = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    note C4, 1/4
+    key G major
+    roman I, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.key.unwrap().fifths, 0);
+        assert_eq!(ir.key_changes.len(), 1);
+        assert_eq!(ir.key_changes[0].key.fifths, 1);
+        assert!(!ir.key_changes[0].key.is_minor);
+        assert_eq!(ir.key_changes[0].tick, 480);
+        assert_eq!(ir.tracks[0].events[1].pitch.class(), PitchClass::G);
     }
 
     #[test]

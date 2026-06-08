@@ -4,6 +4,7 @@ score demo {
     note C4, 1/4
     tempo 144
     meter 6/8
+    key G major
     note E4, 1/4
     degree b3 4, 1/8
     scale C major 4, 1/16

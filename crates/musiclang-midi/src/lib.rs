@@ -4,7 +4,7 @@ use midly::{
     num::{u15, u24, u28, u4, u7},
     Format, Header, MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind,
 };
-use musiclang_core::{Meter, ScoreIr};
+use musiclang_core::{KeySignature, Meter, ScoreIr};
 
 pub fn write_midi<W: Write>(score: &ScoreIr, writer: &mut W) -> io::Result<()> {
     let mut tracks = Vec::new();
@@ -32,7 +32,7 @@ pub fn write_midi<W: Write>(score: &ScoreIr, writer: &mut W) -> io::Result<()> {
     if let Some(key) = score.key {
         tempo_track.push(TrackEvent {
             delta: u28::new(0),
-            kind: TrackEventKind::Meta(MetaMessage::KeySignature(key.fifths, key.is_minor)),
+            kind: key_signature_message(key),
         });
     }
     let mut timeline_events = Vec::new();
@@ -46,6 +46,9 @@ pub fn write_midi<W: Write>(score: &ScoreIr, writer: &mut W) -> io::Result<()> {
     }
     for change in &score.meter_changes {
         timeline_events.push((change.tick, time_signature_message(change.meter)));
+    }
+    for change in &score.key_changes {
+        timeline_events.push((change.tick, key_signature_message(change.key)));
     }
     timeline_events.sort_by_key(|(tick, _)| *tick);
     let mut timeline_cursor = 0;
@@ -139,6 +142,10 @@ pub fn render_midi(score: &ScoreIr) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn key_signature_message(key: KeySignature) -> TrackEventKind<'static> {
+    TrackEventKind::Meta(MetaMessage::KeySignature(key.fifths, key.is_minor))
+}
+
 fn time_signature_message(meter: Meter) -> TrackEventKind<'static> {
     TrackEventKind::Meta(MetaMessage::TimeSignature(
         meter.numerator,
@@ -177,8 +184,8 @@ mod tests {
     use super::*;
     use midly::TrackEventKind;
     use musiclang_core::{
-        KeySignature, Meter, MeterChangeIr, NoteEventIr, Pitch, PitchClass, ScoreIr, TempoChangeIr,
-        TrackIr, DEFAULT_TICKS_PER_QUARTER,
+        KeyChangeIr, KeySignature, Meter, MeterChangeIr, NoteEventIr, Pitch, PitchClass, ScoreIr,
+        TempoChangeIr, TrackIr, DEFAULT_TICKS_PER_QUARTER,
     };
 
     #[test]
@@ -218,6 +225,13 @@ mod tests {
                 meter: Meter {
                     numerator: 6,
                     denominator: 8,
+                },
+                tick: DEFAULT_TICKS_PER_QUARTER,
+            }],
+            key_changes: vec![KeyChangeIr {
+                key: KeySignature {
+                    fifths: 1,
+                    is_minor: false,
                 },
                 tick: DEFAULT_TICKS_PER_QUARTER,
             }],
@@ -265,6 +279,10 @@ mod tests {
             event.kind,
             TrackEventKind::Meta(MetaMessage::KeySignature(-1, false))
         )));
+        assert!(smf.tracks[0].iter().any(|event| matches!(
+            event.kind,
+            TrackEventKind::Meta(MetaMessage::KeySignature(1, false))
+        ) && event.delta.as_int() == 0));
         assert!(matches!(
             smf.tracks[1][0].kind,
             TrackEventKind::Meta(MetaMessage::TrackName(b"lead"))

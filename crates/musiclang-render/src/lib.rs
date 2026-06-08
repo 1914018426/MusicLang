@@ -221,6 +221,7 @@ mod tests {
             markers: Vec::new(),
             tempo_changes: Vec::new(),
             meter_changes: Vec::new(),
+            key_changes: Vec::new(),
             overrides: Vec::new(),
         }
     }

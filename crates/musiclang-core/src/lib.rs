@@ -1528,6 +1528,7 @@ pub struct ScoreIr {
     pub markers: Vec<MarkerIr>,
     pub tempo_changes: Vec<TempoChangeIr>,
     pub meter_changes: Vec<MeterChangeIr>,
+    pub key_changes: Vec<KeyChangeIr>,
     pub overrides: Vec<OverrideTrace>,
 }
 
@@ -1540,6 +1541,12 @@ pub struct TempoChangeIr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeterChangeIr {
     pub meter: Meter,
+    pub tick: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyChangeIr {
+    pub key: KeySignature,
     pub tick: u32,
 }
 
