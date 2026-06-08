@@ -50,6 +50,12 @@ pub fn write_midi<W: Write>(score: &ScoreIr, writer: &mut W) -> io::Result<()> {
     for change in &score.key_changes {
         timeline_events.push((change.tick, key_signature_message(change.key)));
     }
+    for marker in &score.markers {
+        timeline_events.push((
+            marker.tick,
+            TrackEventKind::Meta(MetaMessage::Marker(marker.label.as_bytes())),
+        ));
+    }
     timeline_events.sort_by_key(|(tick, _)| *tick);
     let mut timeline_cursor = 0;
     for (tick, kind) in timeline_events {
@@ -216,7 +222,10 @@ mod tests {
                     source_span: None,
                 }],
             }],
-            markers: Vec::new(),
+            markers: vec![musiclang_core::MarkerIr {
+                label: "A".to_string(),
+                tick: DEFAULT_TICKS_PER_QUARTER,
+            }],
             tempo_changes: vec![TempoChangeIr {
                 bpm: 120,
                 tick: DEFAULT_TICKS_PER_QUARTER,
@@ -282,6 +291,10 @@ mod tests {
         assert!(smf.tracks[0].iter().any(|event| matches!(
             event.kind,
             TrackEventKind::Meta(MetaMessage::KeySignature(1, false))
+        ) && event.delta.as_int() == 0));
+        assert!(smf.tracks[0].iter().any(|event| matches!(
+            event.kind,
+            TrackEventKind::Meta(MetaMessage::Marker(b"A"))
         ) && event.delta.as_int() == 0));
         assert!(matches!(
             smf.tracks[1][0].kind,

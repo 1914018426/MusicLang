@@ -5,8 +5,10 @@ score demo {
     tempo 144
     meter 6/8
     key G major
-    note E4, 1/4
-    degree b3 4, 1/8
+    section Theme {
+      note E4, 1/4
+      degree b3 4, 1/8
+    }
     scale C major 4, 1/16
     rest 1/8
     pedal C3, 2, 1/4
