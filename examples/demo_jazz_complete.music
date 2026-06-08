@@ -1,0 +1,182 @@
+score jazz_complete {
+  title "Midnight Rail Blues"
+  composer "MusicLang"
+  tempo 138
+  meter 4/4
+  key C major
+  override voice_crossing allow reason "jazz comping and walking bass intentionally overlap inner registers" {
+    voice bass {
+      program 32
+      section Walking_Chorus_1 {
+        note C2, 1/4
+        note E2, 1/4
+        note G2, 1/4
+        note Bb2, 1/4
+        note F2, 1/4
+        note A2, 1/4
+        note C3, 1/4
+        note Eb3, 1/4
+        note C2, 1/4
+        note E2, 1/4
+        note G2, 1/4
+        note A2, 1/4
+        note G2, 1/4
+        note B2, 1/4
+        note D3, 1/4
+        note F3, 1/4
+      }
+      section Walking_Chorus_2 {
+        note F2, 1/4
+        note A2, 1/4
+        note C3, 1/4
+        note Eb3, 1/4
+        note F2, 1/4
+        note Ab2, 1/4
+        note C3, 1/4
+        note D3, 1/4
+        note C2, 1/4
+        note E2, 1/4
+        note G2, 1/4
+        note Bb2, 1/4
+        note G2, 1/4
+        note B2, 1/4
+        note D3, 1/4
+        note F3, 1/4
+      }
+      section Walking_Shout {
+        pedal C2, 4, 1/4
+        pedal F2, 4, 1/4
+        pedal G2, 4, 1/4
+        pedal C2, 4, 1/4
+      }
+      section Tag {
+        note C2, 1/2
+        note G1, 1/2
+        note C2, 1/1
+      }
+    }
+    voice piano {
+      program 0
+      section Head_Comp {
+        strum C4 dominant7, 1/2 by 1/32
+        strum F3 dominant7, 1/2 by 1/32
+        strum C4 dominant7 inv 1, 1/2 by 1/32
+        strum G3 dominant7, 1/2 by 1/32
+      }
+      section Solo_Comp {
+        chord F3 dominant7, 1/2
+        chord F3 minor7, 1/2
+        chord C4 dominant7, 1/2
+        chord A3 minor7, 1/2
+        chord D3 minor7, 1/2
+        chord G3 dominant7, 1/2
+        chord C4 dominant7, 1/1
+      }
+      section Shout_Comp {
+        strum C4 dominant7, 1/4 by 1/64
+        strum Eb4 dominant7, 1/4 by 1/64
+        strum F4 dominant7, 1/4 by 1/64
+        strum Gb4 dominant7, 1/4 by 1/64
+        strum G4 dominant7, 1/2 by 1/64
+        strum C4 dominant7, 1/2 by 1/64
+      }
+      section Ending_Comp {
+        chord F3 dominant7, 1/2
+        chord G3 dominant7, 1/2
+        chord C4 major7, 1/1
+      }
+    }
+    voice tenor {
+      program 65
+      dynamic mf
+      section Head_A {
+        note C4, 1/8
+        note Eb4, 1/8
+        note F4, 1/8
+        note Gb4, 1/8
+        note G4, 1/4
+        note Bb4, 1/4
+        note C5, 1/4
+        rest 1/8
+        note Bb4, 1/8
+        note G4, 1/4
+        note F4, 1/4
+      }
+      section Head_B {
+        sequence 2 by M2 {
+          note Eb4, 1/8
+          note F4, 1/8
+          note G4, 1/4
+        }
+        glissando C5 to G4 steps 5, 1/16
+        tremolo Eb4 with F4 repeats 4, 1/16
+        note C4, 1/2
+      }
+      section Solo {
+        arpeggio C4 dominant7, 1/8
+        arpeggio F4 dominant7, 1/8
+        tuplet 3 in 1/4 {
+          note G4, 1/8
+          note Bb4, 1/8
+          note C5, 1/8
+        }
+        note Eb5, 1/8
+        note D5, 1/8
+        note C5, 1/4
+        arpeggio A3 minor7, 1/8
+        arpeggio D4 minor7, 1/8
+        arpeggio G4 dominant7, 1/8
+        glissando Bb4 to E5 steps 6, 1/16
+        note C5, 1/2
+      }
+      section Shout {
+        note G4, 1/8
+        note Bb4, 1/8
+        note C5, 1/4
+        note Eb5, 1/4
+        note D5, 1/4
+        note C5, 1/8
+        note G4, 1/8
+        note Bb4, 1/4
+        note C5, 1/2
+      }
+      section Ending {
+        cadence authentic, 1/2
+        note C5, 1/1
+      }
+    }
+    voice trumpet {
+      program 56
+      dynamic f
+      section Riffs {
+        rest 1/1
+        note G5, 1/8
+        note Bb5, 1/8
+        note C6, 1/4
+        rest 1/4
+        note G5, 1/4
+        rest 1/2
+        tremolo C6 with Bb5 repeats 4, 1/16
+        note G5, 1/2
+      }
+      section Soli_Response {
+        rest 1/2
+        note Eb5, 1/8
+        note F5, 1/8
+        note G5, 1/4
+        rest 1/2
+        note Bb5, 1/8
+        note C6, 1/8
+        note D6, 1/4
+        glissando D6 to G5 steps 5, 1/16
+        rest 1/4
+      }
+      section Final_Hit {
+        note E5, 1/4
+        note G5, 1/4
+        note Bb5, 1/4
+        note C6, 1/1
+      }
+    }
+  }
+}

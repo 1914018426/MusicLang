@@ -15,6 +15,7 @@ fn valid_examples_compile_to_midi() {
         "examples/custom_style.music",
         "examples/demo_classical_minuet.music",
         "examples/demo_jazz_blues.music",
+        "examples/demo_jazz_complete.music",
         "examples/demo_minimal_pulse.music",
         "examples/demo_cinematic_ambient.music",
     ] {
