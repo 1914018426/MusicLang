@@ -1,7 +1,7 @@
 use std::f32::consts::TAU;
 use std::io;
 
-use musiclang_core::{NoteEventIr, PitchClass, ScoreIr};
+use musiclang_core::{Meter, NoteEventIr, PitchClass, ScoreIr};
 
 pub fn render_musicxml(score: &ScoreIr) -> String {
     let mut output = String::new();
@@ -12,83 +12,316 @@ pub fn render_musicxml(score: &ScoreIr) -> String {
         "  <work><work-title>{}</work-title></work>\n",
         escape_xml(&score.title)
     ));
-    if let Some(composer) = &score.composer {
-        output.push_str(&format!(
-            "  <identification><creator type=\"composer\">{}</creator></identification>\n",
-            escape_xml(composer)
-        ));
+    if score.composer.is_some() || !score.metadata.is_empty() {
+        render_musicxml_identification(&mut output, score);
     }
     output.push_str("  <part-list>\n");
     for (index, track) in score.tracks.iter().enumerate() {
+        let part_id = format!("P{}", index + 1);
+        let instrument_id = format!("{part_id}-I1");
+        output.push_str(&format!("    <score-part id=\"{part_id}\">\n"));
         output.push_str(&format!(
-            "    <score-part id=\"P{}\"><part-name>{}</part-name></score-part>\n",
-            index + 1,
+            "      <part-name>{}</part-name>\n",
             escape_xml(&track.name)
         ));
+        output.push_str(&format!(
+            "      <score-instrument id=\"{instrument_id}\"><instrument-name>{}</instrument-name></score-instrument>\n",
+            escape_xml(&track.name)
+        ));
+        output.push_str(&format!("      <midi-instrument id=\"{instrument_id}\">\n"));
+        output.push_str(&format!(
+            "        <midi-channel>{}</midi-channel>\n",
+            track.channel.min(15) + 1
+        ));
+        if let Some(program) = track.program {
+            output.push_str(&format!(
+                "        <midi-program>{}</midi-program>\n",
+                program.min(127) + 1
+            ));
+        }
+        if let Some(volume) = track.volume {
+            output.push_str(&format!("        <volume>{}</volume>\n", volume.min(100)));
+        }
+        if let Some(pan) = track.pan {
+            output.push_str(&format!("        <pan>{}</pan>\n", musicxml_pan(pan)));
+        }
+        output.push_str("      </midi-instrument>\n");
+        output.push_str("    </score-part>\n");
     }
     output.push_str("  </part-list>\n");
+    let bar_ticks = musicxml_bar_ticks(score.ticks_per_quarter, score.meter);
+    let measure_count = musicxml_measure_count(score, bar_ticks);
     for (index, track) in score.tracks.iter().enumerate() {
         output.push_str(&format!("  <part id=\"P{}\">\n", index + 1));
-        output.push_str("    <measure number=\"1\">\n");
-        output.push_str("      <attributes>\n");
-        output.push_str(&format!(
-            "        <divisions>{}</divisions>\n",
-            score.ticks_per_quarter
-        ));
-        if let Some(meter) = score.meter {
-            output.push_str("        <time>\n");
-            output.push_str(&format!("          <beats>{}</beats>\n", meter.numerator));
-            output.push_str(&format!(
-                "          <beat-type>{}</beat-type>\n",
-                meter.denominator
-            ));
-            output.push_str("        </time>\n");
-        }
-        if let Some(key) = score.key {
-            output.push_str("        <key>\n");
-            output.push_str(&format!("          <fifths>{}</fifths>\n", key.fifths));
-            output.push_str(&format!(
-                "          <mode>{}</mode>\n",
-                if key.is_minor { "minor" } else { "major" }
-            ));
-            output.push_str("        </key>\n");
-        }
-        output.push_str("      </attributes>\n");
-        output.push_str(&format!(
-            "      <direction><sound tempo=\"{}\"/></direction>\n",
-            score.tempo_bpm
-        ));
-        let mut events: Vec<&NoteEventIr> = track.events.iter().collect();
-        events.sort_by_key(|event| (event.start_tick, event.pitch.midi_number().unwrap_or(0)));
-        let mut cursor_tick = 0;
-        let mut previous_start = None;
-        for event in events {
-            if Some(event.start_tick) != previous_start {
-                if event.start_tick > cursor_tick {
-                    output.push_str("      <note>\n");
-                    output.push_str("        <rest/>\n");
-                    output.push_str(&format!(
-                        "        <duration>{}</duration>\n",
-                        event.start_tick - cursor_tick
-                    ));
-                    output.push_str("      </note>\n");
-                }
-                cursor_tick = cursor_tick.max(event.start_tick + event.duration_ticks);
-                previous_start = Some(event.start_tick);
-                render_musicxml_note(&mut output, event, false);
-            } else {
-                cursor_tick = cursor_tick.max(event.start_tick + event.duration_ticks);
-                render_musicxml_note(&mut output, event, true);
-            }
-        }
-        output.push_str("    </measure>\n");
+        render_musicxml_track(&mut output, score, track, bar_ticks, measure_count);
         output.push_str("  </part>\n");
     }
     output.push_str("</score-partwise>\n");
     output
 }
 
-fn render_musicxml_note(output: &mut String, event: &NoteEventIr, chord: bool) {
+fn render_musicxml_identification(output: &mut String, score: &ScoreIr) {
+    output.push_str("  <identification>\n");
+    if let Some(composer) = &score.composer {
+        output.push_str(&format!(
+            "    <creator type=\"composer\">{}</creator>\n",
+            escape_xml(composer)
+        ));
+    }
+    if !score.metadata.is_empty() {
+        output.push_str("    <miscellaneous>\n");
+        for (key, value) in &score.metadata {
+            output.push_str(&format!(
+                "      <miscellaneous-field name=\"{}\">{}</miscellaneous-field>\n",
+                escape_xml(key),
+                escape_xml(value)
+            ));
+        }
+        output.push_str("    </miscellaneous>\n");
+    }
+    output.push_str("  </identification>\n");
+}
+
+fn render_musicxml_track(
+    output: &mut String,
+    score: &ScoreIr,
+    track: &musiclang_core::TrackIr,
+    bar_ticks: u32,
+    measure_count: u32,
+) {
+    let mut events: Vec<&NoteEventIr> = track.events.iter().collect();
+    events.sort_by_key(|event| {
+        (
+            event.start_tick,
+            event.pitch.octave(),
+            event.pitch.class().semitone(),
+        )
+    });
+    for measure_index in 0..measure_count {
+        let measure_start = measure_index * bar_ticks;
+        let measure_end = measure_start + bar_ticks;
+        output.push_str(&format!("    <measure number=\"{}\">\n", measure_index + 1));
+        if measure_index == 0 {
+            render_musicxml_initial_attributes(output, score);
+        }
+        render_musicxml_timeline_changes(output, score, measure_start, measure_end);
+        let mut cursor_tick = measure_start;
+        let mut previous_start = None;
+        for event in events.iter().copied().filter(|event| {
+            event.start_tick < measure_end
+                && event.start_tick + event.duration_ticks > measure_start
+        }) {
+            let event_start = event.start_tick.max(measure_start);
+            let event_end = (event.start_tick + event.duration_ticks).min(measure_end);
+            let original_end = event.start_tick + event.duration_ticks;
+            let tie_stop = event_start > event.start_tick;
+            let tie_start = event_end < original_end;
+            if Some(event.start_tick) != previous_start {
+                if event_start > cursor_tick {
+                    render_musicxml_rest(output, event_start - cursor_tick);
+                }
+                cursor_tick = cursor_tick.max(event_end);
+                previous_start = Some(event.start_tick);
+                render_musicxml_note_with_duration(
+                    output,
+                    event,
+                    event_end - event_start,
+                    false,
+                    tie_start,
+                    tie_stop,
+                );
+            } else {
+                cursor_tick = cursor_tick.max(event_end);
+                render_musicxml_note_with_duration(
+                    output,
+                    event,
+                    event_end - event_start,
+                    true,
+                    tie_start,
+                    tie_stop,
+                );
+            }
+        }
+        if cursor_tick < measure_end {
+            render_musicxml_rest(output, measure_end - cursor_tick);
+        }
+        output.push_str("    </measure>\n");
+    }
+}
+
+fn render_musicxml_initial_attributes(output: &mut String, score: &ScoreIr) {
+    render_musicxml_attributes(
+        output,
+        Some(score.ticks_per_quarter),
+        score.meter,
+        score.key,
+    );
+    render_musicxml_tempo(output, score.tempo_bpm);
+}
+
+fn render_musicxml_timeline_changes(
+    output: &mut String,
+    score: &ScoreIr,
+    measure_start: u32,
+    measure_end: u32,
+) {
+    for change in &score.meter_changes {
+        if change.tick >= measure_start && change.tick < measure_end {
+            render_musicxml_attributes(output, None, Some(change.meter), None);
+        }
+    }
+    for change in &score.key_changes {
+        if change.tick >= measure_start && change.tick < measure_end {
+            render_musicxml_attributes(output, None, None, Some(change.key));
+        }
+    }
+    for change in &score.tempo_changes {
+        if change.tick >= measure_start && change.tick < measure_end {
+            render_musicxml_tempo(output, change.bpm);
+        }
+    }
+    for marker in &score.markers {
+        if marker.tick >= measure_start && marker.tick < measure_end {
+            render_musicxml_marker(output, &marker.label);
+        }
+    }
+    render_musicxml_semantic_events(output, score, measure_start, measure_end);
+}
+
+fn render_musicxml_attributes(
+    output: &mut String,
+    divisions: Option<u32>,
+    meter: Option<Meter>,
+    key: Option<musiclang_core::KeySignature>,
+) {
+    output.push_str("      <attributes>\n");
+    if let Some(divisions) = divisions {
+        output.push_str(&format!("        <divisions>{divisions}</divisions>\n"));
+    }
+    if let Some(meter) = meter {
+        output.push_str("        <time>\n");
+        output.push_str(&format!("          <beats>{}</beats>\n", meter.numerator));
+        output.push_str(&format!(
+            "          <beat-type>{}</beat-type>\n",
+            meter.denominator
+        ));
+        output.push_str("        </time>\n");
+    }
+    if let Some(key) = key {
+        output.push_str("        <key>\n");
+        output.push_str(&format!("          <fifths>{}</fifths>\n", key.fifths));
+        output.push_str(&format!(
+            "          <mode>{}</mode>\n",
+            if key.is_minor { "minor" } else { "major" }
+        ));
+        output.push_str("        </key>\n");
+    }
+    output.push_str("      </attributes>\n");
+}
+
+fn render_musicxml_tempo(output: &mut String, tempo_bpm: u16) {
+    output.push_str(&format!(
+        "      <direction><sound tempo=\"{}\"/></direction>\n",
+        tempo_bpm
+    ));
+}
+
+fn render_musicxml_marker(output: &mut String, label: &str) {
+    output.push_str(&format!(
+        "      <direction><direction-type><words>{}</words></direction-type></direction>\n",
+        escape_xml(label)
+    ));
+}
+
+fn render_musicxml_semantic_events(
+    output: &mut String,
+    score: &ScoreIr,
+    measure_start: u32,
+    measure_end: u32,
+) {
+    for event in &score.form_events {
+        if event.start_tick >= measure_start && event.start_tick < measure_end {
+            render_musicxml_marker(output, &format!("form {} {}", event.kind, event.label));
+        }
+    }
+    for event in &score.phrase_events {
+        if event.start_tick >= measure_start && event.start_tick < measure_end {
+            let label = event.label.as_deref().unwrap_or("unlabeled");
+            render_musicxml_marker(output, &format!("phrase {} {label}", event.kind));
+        }
+    }
+    for event in &score.motif_events {
+        if event.start_tick >= measure_start && event.start_tick < measure_end {
+            let transform = event.transform.as_deref().unwrap_or("literal");
+            render_musicxml_marker(output, &format!("motif {} {transform}", event.name));
+        }
+    }
+    for event in &score.harmonic_events {
+        if event.start_tick >= measure_start && event.start_tick < measure_end {
+            render_musicxml_marker(output, &format!("harmony {}", event.normalized_symbol));
+        }
+    }
+    for event in &score.melodic_events {
+        if event.start_tick >= measure_start && event.start_tick < measure_end {
+            let degree = event
+                .degree
+                .map(|degree| degree.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            render_musicxml_marker(output, &format!("melody {} degree {degree}", event.kind));
+        }
+    }
+}
+
+fn render_musicxml_rest(output: &mut String, duration_ticks: u32) {
+    output.push_str("      <note>\n");
+    output.push_str("        <rest/>\n");
+    output.push_str(&format!("        <duration>{duration_ticks}</duration>\n"));
+    output.push_str("      </note>\n");
+}
+
+fn musicxml_bar_ticks(ticks_per_quarter: u32, meter: Option<Meter>) -> u32 {
+    let meter = meter.unwrap_or_default();
+    ticks_per_quarter * u32::from(meter.numerator) * 4 / u32::from(meter.denominator)
+}
+
+fn musicxml_measure_count(score: &ScoreIr, bar_ticks: u32) -> u32 {
+    let event_ticks = score
+        .tracks
+        .iter()
+        .flat_map(|track| track.events.iter())
+        .map(|event| event.start_tick + event.duration_ticks)
+        .max()
+        .unwrap_or(0);
+    let timeline_ticks = score
+        .tempo_changes
+        .iter()
+        .map(|change| change.tick)
+        .chain(score.meter_changes.iter().map(|change| change.tick))
+        .chain(score.key_changes.iter().map(|change| change.tick))
+        .chain(score.markers.iter().map(|marker| marker.tick))
+        .chain(score.form_events.iter().map(|event| event.start_tick))
+        .chain(score.phrase_events.iter().map(|event| event.start_tick))
+        .chain(score.motif_events.iter().map(|event| event.start_tick))
+        .chain(score.harmonic_events.iter().map(|event| event.start_tick))
+        .chain(score.melodic_events.iter().map(|event| event.start_tick))
+        .max()
+        .unwrap_or(0);
+    let total_ticks = event_ticks.max(timeline_ticks.saturating_add(1));
+    (total_ticks.max(1).saturating_sub(1) / bar_ticks) + 1
+}
+
+fn musicxml_pan(pan: u8) -> i16 {
+    ((i16::from(pan.min(127)) * 180) / 127) - 90
+}
+
+fn render_musicxml_note_with_duration(
+    output: &mut String,
+    event: &NoteEventIr,
+    duration_ticks: u32,
+    chord: bool,
+    tie_start: bool,
+    tie_stop: bool,
+) {
     output.push_str("      <note>\n");
     if chord {
         output.push_str("        <chord/>\n");
@@ -106,18 +339,31 @@ fn render_musicxml_note(output: &mut String, event: &NoteEventIr, chord: bool) {
         event.pitch.octave()
     ));
     output.push_str("        </pitch>\n");
-    output.push_str(&format!(
-        "        <duration>{}</duration>\n",
-        event.duration_ticks
-    ));
-    if let Some(articulation) = event
+    output.push_str(&format!("        <duration>{duration_ticks}</duration>\n"));
+    if tie_stop {
+        output.push_str("        <tie type=\"stop\"/>\n");
+    }
+    if tie_start {
+        output.push_str("        <tie type=\"start\"/>\n");
+    }
+    let articulation = event
         .articulation
         .as_deref()
-        .and_then(musicxml_articulation)
-    {
-        output.push_str("        <notations><articulations>");
-        output.push_str(&format!("<{articulation}/>"));
-        output.push_str("</articulations></notations>\n");
+        .and_then(musicxml_articulation);
+    if tie_start || tie_stop || articulation.is_some() {
+        output.push_str("        <notations>");
+        if tie_stop {
+            output.push_str("<tied type=\"stop\"/>");
+        }
+        if tie_start {
+            output.push_str("<tied type=\"start\"/>");
+        }
+        if let Some(articulation) = articulation {
+            output.push_str("<articulations>");
+            output.push_str(&format!("<{articulation}/>"));
+            output.push_str("</articulations>");
+        }
+        output.push_str("</notations>\n");
     }
     output.push_str("      </note>\n");
 }
@@ -282,8 +528,12 @@ fn escape_xml(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use musiclang_core::{
-        KeySignature, NoteEventIr, Pitch, PitchClass, ScoreIr, TrackIr, DEFAULT_TICKS_PER_QUARTER,
+        FormEventIr, HarmonicEventIr, KeyChangeIr, KeySignature, MarkerIr, MelodicEventIr,
+        MeterChangeIr, MotifEventIr, NoteEventIr, PhraseEventIr, Pitch, PitchClass, ScoreIr,
+        TempoChangeIr, TrackIr, DEFAULT_TICKS_PER_QUARTER,
     };
 
     use super::*;
@@ -299,12 +549,13 @@ mod tests {
                 fifths: -1,
                 is_minor: false,
             }),
+            metadata: BTreeMap::new(),
             tracks: vec![TrackIr {
                 name: "lead".to_string(),
-                channel: 0,
-                program: None,
-                volume: None,
-                pan: None,
+                channel: 1,
+                program: Some(40),
+                volume: Some(96),
+                pan: Some(64),
                 events: vec![NoteEventIr {
                     pitch: Pitch::new(PitchClass::C, 4).unwrap(),
                     start_tick: 0,
@@ -318,6 +569,11 @@ mod tests {
             tempo_changes: Vec::new(),
             meter_changes: Vec::new(),
             key_changes: Vec::new(),
+            harmonic_events: Vec::new(),
+            melodic_events: Vec::new(),
+            form_events: Vec::new(),
+            motif_events: Vec::new(),
+            phrase_events: Vec::new(),
             overrides: Vec::new(),
         }
     }
@@ -328,10 +584,93 @@ mod tests {
 
         assert!(xml.contains("<score-partwise"));
         assert!(xml.contains("<part-name>lead</part-name>"));
+        assert!(xml.contains("<score-instrument id=\"P1-I1\"><instrument-name>lead</instrument-name></score-instrument>"));
+        assert!(xml.contains("<midi-channel>2</midi-channel>"));
+        assert!(xml.contains("<midi-program>41</midi-program>"));
+        assert!(xml.contains("<volume>96</volume>"));
+        assert!(xml.contains("<pan>0</pan>"));
         assert!(xml.contains("<creator type=\"composer\">Ada Lovelace</creator>"));
         assert!(xml.contains("<fifths>-1</fifths>"));
         assert!(xml.contains("<mode>major</mode>"));
         assert!(xml.contains("<staccato/>"));
+    }
+
+    #[test]
+    fn musicxml_escapes_metadata_and_part_names() {
+        let mut score = score();
+        score.title = "A&B <Suite> \"I\"".to_string();
+        score.composer = Some("Ada & Bob's <Duo>".to_string());
+        score
+            .metadata
+            .insert("session & take".to_string(), "A <B> \"C\"".to_string());
+        score.tracks[0].name = "lead & \"alto\" <top>".to_string();
+
+        let xml = render_musicxml(&score);
+
+        assert!(xml.contains("<work-title>A&amp;B &lt;Suite&gt; &quot;I&quot;</work-title>"));
+        assert!(
+            xml.contains("<creator type=\"composer\">Ada &amp; Bob&apos;s &lt;Duo&gt;</creator>")
+        );
+        assert!(xml.contains(
+            "<miscellaneous-field name=\"session &amp; take\">A &lt;B&gt; &quot;C&quot;</miscellaneous-field>"
+        ));
+        assert!(xml.contains("<part-name>lead &amp; &quot;alto&quot; &lt;top&gt;</part-name>"));
+        assert!(!xml.contains("A&B <Suite>"));
+        assert!(!xml.contains("lead & \"alto\" <top>"));
+    }
+
+    #[test]
+    fn musicxml_renders_semantic_event_directions() {
+        let mut score = score();
+        score.form_events = vec![FormEventIr {
+            label: "A&B".to_string(),
+            kind: "section".to_string(),
+            start_tick: 0,
+            duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+            source_span: None,
+        }];
+        score.phrase_events = vec![PhraseEventIr {
+            label: Some("theme".to_string()),
+            kind: "motif_call".to_string(),
+            start_tick: 0,
+            duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+            source_span: None,
+        }];
+        score.motif_events = vec![MotifEventIr {
+            name: "motif".to_string(),
+            transform: Some("transposition".to_string()),
+            start_tick: 0,
+            duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+            source_span: None,
+        }];
+        score.harmonic_events = vec![HarmonicEventIr {
+            symbol: "V7".to_string(),
+            normalized_symbol: "V7".to_string(),
+            degree: Some(5),
+            applied_to: None,
+            function: Some("dominant".to_string()),
+            cadence_role: None,
+            start_tick: 0,
+            duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+            source_span: None,
+        }];
+        score.melodic_events = vec![MelodicEventIr {
+            kind: "scale_degree".to_string(),
+            degree: Some(3),
+            accidental: -1,
+            pitch: Pitch::new(PitchClass::E, 4).unwrap(),
+            start_tick: 0,
+            duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+            source_span: None,
+        }];
+
+        let xml = render_musicxml(&score);
+
+        assert!(xml.contains("form section A&amp;B"));
+        assert!(xml.contains("phrase motif_call theme"));
+        assert!(xml.contains("motif motif transposition"));
+        assert!(xml.contains("harmony V7"));
+        assert!(xml.contains("melody scale_degree degree 3"));
     }
 
     #[test]
@@ -364,6 +703,177 @@ mod tests {
             DEFAULT_TICKS_PER_QUARTER
         )));
         assert!(xml.contains("<chord/>"));
+    }
+
+    #[test]
+    fn musicxml_renders_timeline_changes() {
+        let mut score = score();
+        score.meter = Some(musiclang_core::Meter {
+            numerator: 4,
+            denominator: 4,
+        });
+        score.tempo_changes = vec![TempoChangeIr {
+            bpm: 144,
+            tick: DEFAULT_TICKS_PER_QUARTER * 4,
+        }];
+        score.meter_changes = vec![MeterChangeIr {
+            meter: musiclang_core::Meter {
+                numerator: 3,
+                denominator: 4,
+            },
+            tick: DEFAULT_TICKS_PER_QUARTER * 4,
+        }];
+        score.key_changes = vec![KeyChangeIr {
+            key: KeySignature {
+                fifths: 2,
+                is_minor: true,
+            },
+            tick: DEFAULT_TICKS_PER_QUARTER * 4,
+        }];
+        score.tracks[0].events = vec![NoteEventIr {
+            pitch: Pitch::new(PitchClass::C, 4).unwrap(),
+            start_tick: 0,
+            duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+            velocity: 80,
+            articulation: None,
+            source_span: None,
+        }];
+
+        let xml = render_musicxml(&score);
+
+        assert_eq!(xml.matches("<measure number=").count(), 2);
+        assert!(xml.contains("<beats>4</beats>"));
+        assert!(xml.contains("<beats>3</beats>"));
+        assert!(xml.contains("<fifths>-1</fifths>"));
+        assert!(xml.contains("<fifths>2</fifths>"));
+        assert!(xml.contains("<mode>minor</mode>"));
+        assert!(xml.contains("<sound tempo=\"120\"/>"));
+        assert!(xml.contains("<sound tempo=\"144\"/>"));
+    }
+
+    #[test]
+    fn musicxml_renders_markers_and_marker_only_measures() {
+        let mut score = score();
+        score.meter = Some(musiclang_core::Meter {
+            numerator: 4,
+            denominator: 4,
+        });
+        score.markers = vec![MarkerIr {
+            label: "Bridge & Release".to_string(),
+            tick: DEFAULT_TICKS_PER_QUARTER * 4,
+        }];
+        score.tracks[0].events = vec![NoteEventIr {
+            pitch: Pitch::new(PitchClass::C, 4).unwrap(),
+            start_tick: 0,
+            duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+            velocity: 80,
+            articulation: None,
+            source_span: None,
+        }];
+
+        let xml = render_musicxml(&score);
+
+        assert_eq!(xml.matches("<measure number=").count(), 2);
+        assert!(xml.contains("<words>Bridge &amp; Release</words>"));
+    }
+
+    #[test]
+    fn musicxml_splits_parts_into_measures() {
+        let mut score = score();
+        score.meter = Some(musiclang_core::Meter {
+            numerator: 3,
+            denominator: 4,
+        });
+        score.tracks[0].events = vec![
+            NoteEventIr {
+                pitch: Pitch::new(PitchClass::C, 4).unwrap(),
+                start_tick: 0,
+                duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+                velocity: 80,
+                articulation: None,
+                source_span: None,
+            },
+            NoteEventIr {
+                pitch: Pitch::new(PitchClass::D, 4).unwrap(),
+                start_tick: DEFAULT_TICKS_PER_QUARTER * 3,
+                duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+                velocity: 80,
+                articulation: None,
+                source_span: None,
+            },
+        ];
+
+        let xml = render_musicxml(&score);
+
+        assert!(xml.contains("<measure number=\"1\">"));
+        assert!(xml.contains("<measure number=\"2\">"));
+        assert_eq!(xml.matches("<measure number=").count(), 2);
+        assert_eq!(xml.matches("<attributes>").count(), 1);
+    }
+
+    #[test]
+    fn musicxml_aligns_part_measures_and_fills_trailing_rests() {
+        let mut score = score();
+        score.meter = Some(musiclang_core::Meter {
+            numerator: 3,
+            denominator: 4,
+        });
+        score.tracks[0].events = vec![NoteEventIr {
+            pitch: Pitch::new(PitchClass::C, 4).unwrap(),
+            start_tick: 0,
+            duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+            velocity: 80,
+            articulation: None,
+            source_span: None,
+        }];
+        score.tracks.push(TrackIr {
+            name: "bass".to_string(),
+            channel: 1,
+            program: None,
+            volume: None,
+            pan: None,
+            events: vec![NoteEventIr {
+                pitch: Pitch::new(PitchClass::G, 3).unwrap(),
+                start_tick: DEFAULT_TICKS_PER_QUARTER * 3,
+                duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+                velocity: 80,
+                articulation: None,
+                source_span: None,
+            }],
+        });
+
+        let xml = render_musicxml(&score);
+
+        assert_eq!(xml.matches("<measure number=\"1\">").count(), 2);
+        assert_eq!(xml.matches("<measure number=\"2\">").count(), 2);
+        assert_eq!(xml.matches("<attributes>").count(), 2);
+        assert!(xml.matches("<rest/>").count() >= 3);
+    }
+
+    #[test]
+    fn musicxml_splits_notes_at_measure_boundaries() {
+        let mut score = score();
+        score.meter = Some(musiclang_core::Meter {
+            numerator: 3,
+            denominator: 4,
+        });
+        score.tracks[0].events = vec![NoteEventIr {
+            pitch: Pitch::new(PitchClass::C, 4).unwrap(),
+            start_tick: DEFAULT_TICKS_PER_QUARTER * 2,
+            duration_ticks: DEFAULT_TICKS_PER_QUARTER * 2,
+            velocity: 80,
+            articulation: None,
+            source_span: None,
+        }];
+
+        let xml = render_musicxml(&score);
+
+        assert_eq!(xml.matches("<measure number=").count(), 2);
+        assert_eq!(xml.matches("<duration>480</duration>").count(), 2);
+        assert_eq!(xml.matches("<tie type=\"start\"/>").count(), 1);
+        assert_eq!(xml.matches("<tie type=\"stop\"/>").count(), 1);
+        assert_eq!(xml.matches("<tied type=\"start\"/>").count(), 1);
+        assert_eq!(xml.matches("<tied type=\"stop\"/>").count(), 1);
     }
 
     #[test]

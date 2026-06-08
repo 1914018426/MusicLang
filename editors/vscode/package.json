@@ -1,0 +1,76 @@
+{
+  "name": "musiclang-vscode",
+  "displayName": "MusicLang",
+  "description": "MusicLang language support powered by musiclang-lsp.",
+  "version": "0.1.0",
+  "publisher": "musiclang",
+  "license": "GPL-3.0-only",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:musiclang"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "musiclang",
+        "aliases": [
+          "MusicLang",
+          "musiclang"
+        ],
+        "extensions": [
+          ".music"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "musiclang",
+        "scopeName": "source.musiclang",
+        "path": "./syntaxes/musiclang.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "musiclang",
+        "path": "./snippets/musiclang.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "musiclang.restartServer",
+        "title": "MusicLang: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "MusicLang",
+      "properties": {
+        "musiclang.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the musiclang-lsp executable. Defaults to target/debug/musiclang-lsp in the workspace, then PATH."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.5.0"
+  }
+}

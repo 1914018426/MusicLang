@@ -18,6 +18,56 @@ fn listening_demo_paths() -> [&'static str; 6] {
 }
 
 #[test]
+fn public_facades_parse_diagnose_compile_and_render() {
+    let source = r#"
+score facade_demo {
+  tempo 96
+  meter 4/4
+  key C major
+  voice lead {
+    instrument piano
+    note C4 + M3, 1/4
+  }
+}
+"#;
+
+    let ast = musiclang_parser::parse_source(source).unwrap();
+    let diagnostics = musiclang_compiler::diagnose_source(source);
+    let ir = musiclang_compiler::compile_source(source).unwrap();
+    let midi = musiclang_midi::render_midi(&ir).unwrap();
+
+    assert_eq!(ast.score.name, "facade_demo");
+    assert!(diagnostics.is_empty());
+    assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "E4");
+    assert!(midi.starts_with(b"MThd"));
+}
+
+#[test]
+fn source_file_facades_preserve_source_ids() {
+    let source = r#"
+score source_file_facade {
+  voice lead {
+    note C4, 1/4
+  }
+}
+"#;
+    let mut sources = musiclang_core::SourceMap::new();
+    let source_id = sources.add("facade.music", source.to_string());
+    let source_file = sources.get(source_id).unwrap();
+
+    let ast = musiclang_parser::parse_source_file(source_file).unwrap();
+    let diagnostics = musiclang_compiler::diagnose_source_file(source_file);
+    let ir = musiclang_compiler::compile_source_file(source_file).unwrap();
+
+    assert_eq!(ast.score.span.source_id, source_id);
+    assert!(diagnostics.is_empty());
+    assert_eq!(
+        ir.tracks[0].events[0].source_span.unwrap().source_id,
+        source_id
+    );
+}
+
+#[test]
 fn valid_examples_compile_to_midi() {
     for path in [
         "examples/minimal.music",
@@ -25,6 +75,7 @@ fn valid_examples_compile_to_midi() {
         "examples/control_flow.music",
         "examples/override.music",
         "examples/custom_style.music",
+        "examples/algorithmic_expression.music",
         "examples/drum_groove.music",
         "examples/demo_classical_minuet.music",
         "examples/demo_jazz_blues.music",
@@ -40,6 +91,24 @@ fn valid_examples_compile_to_midi() {
             "{path} did not render MIDI header"
         );
     }
+}
+
+#[test]
+fn algorithmic_expression_example_uses_expression_pipeline() {
+    let source = fs::read_to_string("examples/algorithmic_expression.music").unwrap();
+    let compilation = musiclang_compiler::compile_source_with_diagnostics(&source).unwrap();
+
+    assert!(
+        compilation.diagnostics.is_empty(),
+        "algorithmic expression example has diagnostics: {:?}",
+        compilation.diagnostics
+    );
+    assert_eq!(compilation.ir.tracks[0].events.len(), 9);
+    assert_eq!(compilation.ir.tracks[0].events[0].duration_ticks, 480);
+    assert!(source.contains(" for "));
+    assert!(source.contains("0..5"));
+    assert!(source.contains("not event.skip"));
+    assert!(source.contains("event.with"));
 }
 
 #[test]
@@ -127,11 +196,12 @@ fn repeated_bars(ir: &musiclang_core::ScoreIr) -> RepeatedBarAnalysis {
             for event in &track.events {
                 if event.start_tick >= bar_start && event.start_tick < bar_end {
                     entries.push(format!(
-                        "{}:{}:{}:{}",
+                        "{}:{}:{}:{}:{}",
                         track.name,
                         event.start_tick - bar_start,
                         event.duration_ticks,
-                        event.pitch.midi_number().unwrap_or(0)
+                        event.pitch.octave(),
+                        event.pitch.class().semitone()
                     ));
                 }
             }

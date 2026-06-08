@@ -211,6 +211,8 @@ fn event_order(kind: &TrackEventKind<'_>) -> u8 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use midly::TrackEventKind;
     use musiclang_core::{
@@ -233,6 +235,7 @@ mod tests {
                 fifths: -1,
                 is_minor: false,
             }),
+            metadata: BTreeMap::new(),
             tracks: vec![TrackIr {
                 name: "lead".to_string(),
                 channel: 2,
@@ -270,6 +273,11 @@ mod tests {
                 },
                 tick: DEFAULT_TICKS_PER_QUARTER,
             }],
+            harmonic_events: Vec::new(),
+            melodic_events: Vec::new(),
+            form_events: Vec::new(),
+            motif_events: Vec::new(),
+            phrase_events: Vec::new(),
             overrides: Vec::new(),
         };
         let bytes = render_midi(&score).unwrap();

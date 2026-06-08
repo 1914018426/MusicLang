@@ -5,6 +5,13 @@ use std::str::FromStr;
 
 use thiserror::Error;
 
+mod diagnostic;
+
+pub use diagnostic::{
+    Diagnostic, DiagnosticLabel, DiagnosticRelated, Severity, SourceFile, SourceId, SourceMap,
+    Span, Spanned,
+};
+
 pub const DEFAULT_TICKS_PER_QUARTER: u32 = 480;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -901,169 +908,6 @@ pub enum CoreError {
     InvalidTheoryDomain(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SourceId(pub usize);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Span {
-    pub source_id: SourceId,
-    pub start: usize,
-    pub end: usize,
-    pub line: usize,
-    pub column: usize,
-}
-
-impl Span {
-    pub const fn point(line: usize, column: usize) -> Self {
-        Self {
-            source_id: SourceId(0),
-            start: 0,
-            end: 0,
-            line,
-            column,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Spanned<T> {
-    pub value: T,
-    pub span: Span,
-}
-
-impl<T> Spanned<T> {
-    pub const fn new(value: T, span: Span) -> Self {
-        Self { value, span }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiagnosticLabel {
-    pub span: Span,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiagnosticRelated {
-    pub span: Span,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Diagnostic {
-    pub code: String,
-    pub severity: Severity,
-    pub message: String,
-    pub line: usize,
-    pub column: usize,
-    pub span: Option<Span>,
-    pub labels: Vec<DiagnosticLabel>,
-    pub related: Vec<DiagnosticRelated>,
-    pub rule: Option<String>,
-    pub style: Option<String>,
-    pub help: Option<String>,
-}
-
-impl Diagnostic {
-    pub fn error(
-        code: impl Into<String>,
-        message: impl Into<String>,
-        line: usize,
-        column: usize,
-    ) -> Self {
-        Self {
-            code: code.into(),
-            severity: Severity::Error,
-            message: message.into(),
-            line,
-            column,
-            span: Some(Span::point(line, column)),
-            labels: Vec::new(),
-            related: Vec::new(),
-            rule: None,
-            style: None,
-            help: None,
-        }
-    }
-
-    pub fn warning(
-        code: impl Into<String>,
-        message: impl Into<String>,
-        line: usize,
-        column: usize,
-    ) -> Self {
-        let mut diagnostic = Self::error(code, message, line, column);
-        diagnostic.severity = Severity::Warning;
-        diagnostic
-    }
-
-    pub fn with_severity(mut self, severity: Severity) -> Self {
-        self.severity = severity;
-        self
-    }
-
-    pub fn with_span(mut self, span: Span) -> Self {
-        self.line = span.line;
-        self.column = span.column;
-        self.span = Some(span);
-        self
-    }
-
-    pub fn with_label(mut self, span: Span, message: impl Into<String>) -> Self {
-        self.labels.push(DiagnosticLabel {
-            span,
-            message: message.into(),
-        });
-        self
-    }
-
-    pub fn with_related(mut self, span: Span, message: impl Into<String>) -> Self {
-        self.related.push(DiagnosticRelated {
-            span,
-            message: message.into(),
-        });
-        self
-    }
-
-    pub fn with_rule(mut self, rule: impl Into<String>) -> Self {
-        self.rule = Some(rule.into());
-        self
-    }
-
-    pub fn with_style(mut self, style: impl Into<String>) -> Self {
-        self.style = Some(style.into());
-        self
-    }
-
-    pub fn with_help(mut self, help: impl Into<String>) -> Self {
-        self.help = Some(help.into());
-        self
-    }
-}
-
-impl fmt::Display for Diagnostic {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "{}[{}]: {}", self.severity, self.code, self.message)?;
-        writeln!(f, "  at {}:{}", self.line, self.column)?;
-        if let Some(style) = &self.style {
-            writeln!(f, "  style: {style}")?;
-        }
-        if let Some(rule) = &self.rule {
-            writeln!(f, "  rule: {rule}")?;
-        }
-        if let Some(help) = &self.help {
-            writeln!(f, "  help: {help}")?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Severity {
-    Error,
-    Warning,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MusicType {
     Int,
@@ -1081,15 +925,6 @@ pub enum RuleSeverity {
     Error,
     Warning,
     Off,
-}
-
-impl fmt::Display for Severity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Error => f.write_str("error"),
-            Self::Warning => f.write_str("warning"),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1524,12 +1359,69 @@ pub struct ScoreIr {
     pub tempo_bpm: u16,
     pub meter: Option<Meter>,
     pub key: Option<KeySignature>,
+    pub metadata: BTreeMap<String, String>,
     pub tracks: Vec<TrackIr>,
     pub markers: Vec<MarkerIr>,
     pub tempo_changes: Vec<TempoChangeIr>,
     pub meter_changes: Vec<MeterChangeIr>,
     pub key_changes: Vec<KeyChangeIr>,
+    pub harmonic_events: Vec<HarmonicEventIr>,
+    pub melodic_events: Vec<MelodicEventIr>,
+    pub form_events: Vec<FormEventIr>,
+    pub motif_events: Vec<MotifEventIr>,
+    pub phrase_events: Vec<PhraseEventIr>,
     pub overrides: Vec<OverrideTrace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhraseEventIr {
+    pub label: Option<String>,
+    pub kind: String,
+    pub start_tick: u32,
+    pub duration_ticks: u32,
+    pub source_span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormEventIr {
+    pub label: String,
+    pub kind: String,
+    pub start_tick: u32,
+    pub duration_ticks: u32,
+    pub source_span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MotifEventIr {
+    pub name: String,
+    pub transform: Option<String>,
+    pub start_tick: u32,
+    pub duration_ticks: u32,
+    pub source_span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MelodicEventIr {
+    pub kind: String,
+    pub degree: Option<u8>,
+    pub accidental: i8,
+    pub pitch: Pitch,
+    pub start_tick: u32,
+    pub duration_ticks: u32,
+    pub source_span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarmonicEventIr {
+    pub symbol: String,
+    pub normalized_symbol: String,
+    pub degree: Option<u8>,
+    pub applied_to: Option<String>,
+    pub function: Option<String>,
+    pub cadence_role: Option<String>,
+    pub start_tick: u32,
+    pub duration_ticks: u32,
+    pub source_span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1614,6 +1506,10 @@ pub struct StyleContext {
     pub set_class_vocab: Vec<String>,
     pub rhythm_vocab: Vec<Duration>,
     pub rhythm_concepts: Vec<String>,
+    pub melodic_concepts: Vec<String>,
+    pub phrase_concepts: Vec<String>,
+    pub ensemble_concepts: Vec<String>,
+    pub bass_concepts: Vec<String>,
     pub dynamic_vocab: Vec<String>,
     pub articulation_vocab: Vec<String>,
     pub ornaments: Vec<String>,
@@ -1685,7 +1581,7 @@ pub const BUILT_IN_STYLES: &[StyleDescriptor] = &[
     StyleDescriptor {
         id: "Jazz",
         name: "Jazz lead-sheet",
-        description: "Extended chromatic pitch set with seventh-chord vocabulary, syncopated rhythms, and relaxed motion rules",
+        description: "Chromatic jazz vocabulary with swing/syncopation, blues inflection, call-response, bass support, functional cadence, and voice-leading gates",
     },
     StyleDescriptor {
         id: "Minimalist",
@@ -1704,6 +1600,10 @@ impl StyleContext {
             set_class_vocab: Vec::new(),
             rhythm_vocab: Vec::new(),
             rhythm_concepts: Vec::new(),
+            melodic_concepts: Vec::new(),
+            phrase_concepts: Vec::new(),
+            ensemble_concepts: Vec::new(),
+            bass_concepts: Vec::new(),
             dynamic_vocab: Vec::new(),
             articulation_vocab: Vec::new(),
             ornaments: Vec::new(),
@@ -1840,12 +1740,42 @@ impl StyleContext {
             Duration::new(1, 1).expect("valid duration"),
             Duration::new(1, 2).expect("valid duration"),
             Duration::new(1, 4).expect("valid duration"),
+            Duration::new(1, 6).expect("valid duration"),
             Duration::new(1, 8).expect("valid duration"),
+            Duration::new(1, 12).expect("valid duration"),
             Duration::new(1, 16).expect("valid duration"),
             Duration::new(1, 32).expect("valid duration"),
             Duration::new(1, 64).expect("valid duration"),
         ];
         style.tempo_range = Some((60, 260));
+        style.rhythm_concepts = vec!["swing".to_string(), "syncopation".to_string()];
+        style.melodic_concepts = vec!["blues_inflection".to_string()];
+        style.ensemble_concepts = vec!["call_response".to_string()];
+        style.bass_concepts = vec!["walking_or_riff_bass".to_string()];
+        style.harmonic_progression = vec![
+            "predominant".to_string(),
+            "dominant".to_string(),
+            "tonic".to_string(),
+        ];
+        style.cadences = vec!["authentic".to_string()];
+        style
+            .rule_severity
+            .insert("rhythm_concept".to_string(), RuleSeverity::Warning);
+        style
+            .rule_severity
+            .insert("melodic_concept".to_string(), RuleSeverity::Warning);
+        style
+            .rule_severity
+            .insert("ensemble_concept".to_string(), RuleSeverity::Warning);
+        style
+            .rule_severity
+            .insert("bass_concept".to_string(), RuleSeverity::Warning);
+        style
+            .rule_severity
+            .insert("harmonic_progression".to_string(), RuleSeverity::Warning);
+        style
+            .rule_severity
+            .insert("cadence".to_string(), RuleSeverity::Warning);
         style
             .rule_severity
             .insert("parallel_fifths".to_string(), RuleSeverity::Warning);

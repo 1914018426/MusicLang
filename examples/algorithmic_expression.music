@@ -1,0 +1,32 @@
+fn seed() = [{p:at([C4, D4, E4, G4, A4], i), d:1/8, skip:i == 2} for i in 0..5]
+fn mirror() = [{p:at([A4, G4, E4, D4, C4], i), d:1/8, skip:false} for i in 0..5]
+fn shape(events) = [event.with({d:1/4}) for event in events if not event.skip]
+
+score algorithmic_expression {
+  title "Algorithmic Expression Study"
+  composer "MusicLang"
+  tempo 104
+  meter 4/4
+  key C major
+
+  voice lead {
+    instrument piano
+    channel 1
+    volume 92
+    pan 64
+    play shape(seed())
+    play shape(mirror())
+  }
+
+  voice bass {
+    instrument bass
+    channel 2
+    volume 86
+    pan 42
+    note C2, 1/2
+    note G2, 1/2
+    note A2, 1/2
+    note G2, 1/2
+    note C2, 1/1
+  }
+}

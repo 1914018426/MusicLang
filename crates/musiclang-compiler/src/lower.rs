@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
+
 use musiclang_core::{
-    KeyChangeIr, KeySignature, MarkerIr, Meter, MeterChangeIr, OverrideTrace, ScoreIr,
-    TempoChangeIr, TrackIr, DEFAULT_TICKS_PER_QUARTER,
+    FormEventIr, HarmonicEventIr, KeyChangeIr, KeySignature, MarkerIr, MelodicEventIr, Meter,
+    MeterChangeIr, MotifEventIr, OverrideTrace, PhraseEventIr, ScoreIr, TempoChangeIr, TrackIr,
+    DEFAULT_TICKS_PER_QUARTER,
 };
 use musiclang_parser::{Program, ScoreMeta};
 
@@ -45,15 +48,26 @@ pub(super) struct ScoreMetadata {
     pub key: Option<KeySignature>,
 }
 
-pub(super) fn score_ir(
-    metadata: ScoreMetadata,
-    tracks: Vec<TrackIr>,
-    markers: Vec<MarkerIr>,
-    tempo_changes: Vec<TempoChangeIr>,
-    meter_changes: Vec<MeterChangeIr>,
-    key_changes: Vec<KeyChangeIr>,
-    overrides: Vec<OverrideTrace>,
-) -> ScoreIr {
+pub(super) struct ScoreLoweringParts {
+    pub tracks: Vec<TrackIr>,
+    pub markers: Vec<MarkerIr>,
+    pub tempo_changes: Vec<TempoChangeIr>,
+    pub meter_changes: Vec<MeterChangeIr>,
+    pub key_changes: Vec<KeyChangeIr>,
+    pub harmonic_events: Vec<HarmonicEventIr>,
+    pub melodic_events: Vec<MelodicEventIr>,
+    pub form_events: Vec<FormEventIr>,
+    pub motif_events: Vec<MotifEventIr>,
+    pub phrase_events: Vec<PhraseEventIr>,
+    pub overrides: Vec<OverrideTrace>,
+}
+
+pub(super) fn score_ir(metadata: ScoreMetadata, parts: ScoreLoweringParts) -> ScoreIr {
+    let mut metadata_map = BTreeMap::from([("title".to_string(), metadata.title.clone())]);
+    if let Some(composer) = &metadata.composer {
+        metadata_map.insert("composer".to_string(), composer.clone());
+    }
+
     ScoreIr {
         title: metadata.title,
         composer: metadata.composer,
@@ -61,11 +75,17 @@ pub(super) fn score_ir(
         tempo_bpm: metadata.tempo_bpm,
         meter: metadata.meter,
         key: metadata.key,
-        tracks,
-        markers,
-        tempo_changes,
-        meter_changes,
-        key_changes,
-        overrides,
+        metadata: metadata_map,
+        tracks: parts.tracks,
+        markers: parts.markers,
+        tempo_changes: parts.tempo_changes,
+        meter_changes: parts.meter_changes,
+        key_changes: parts.key_changes,
+        harmonic_events: parts.harmonic_events,
+        melodic_events: parts.melodic_events,
+        form_events: parts.form_events,
+        motif_events: parts.motif_events,
+        phrase_events: parts.phrase_events,
+        overrides: parts.overrides,
     }
 }

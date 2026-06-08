@@ -8,6 +8,8 @@ The built-in registry currently exposes `Classical`, `Modal`, `Jazz`, and `Minim
 
 `style Classical` enables C-major scale membership, common triad vocabulary, default 4/4 meter, and a broad classical tempo range.
 
+`style Jazz` is intentionally not a loose chromatic pass-through. It allows chromatic pitch material and common jazz sonorities, but also requires audible style identity through swing and syncopation rhythm concepts, blues-inflected melody, call-and-response ensemble writing, walking/riff bass support, functional predominant-dominant-tonic motion, and an authentic cadence. These identity checks are warning-severity in normal compilation so sketches can still render, but strict commands reject them for listening/publishable output. Pitch-based counterpoint and harmonic-cadence checks ignore General MIDI channel 9 drum tracks because drum note numbers encode percussion instruments rather than tonal voices.
+
 Custom styles can configure rule inputs and inherit from other styles:
 
 ```musiclang
@@ -32,6 +34,7 @@ style Chamber extends Classical {
   historical_era: baroque classical jazz
   harmonic_function: tonic predominant dominant
   max_melodic_leap: P5
+  voice_spacing: P8
   contrapuntal_motion: contrary oblique similar
   cadence: authentic plagal deceptive half
   harmonic_progression: tonic predominant dominant tonic
@@ -54,6 +57,10 @@ style Chamber extends Classical {
 - `tempo_range`: score `tempo` metadata must stay within the configured BPM range.
 - `rhythm_vocab`: note and chord durations must belong to the configured rhythmic vocabulary.
 - `rhythm_concept`: score rhythm pattern must satisfy configured concepts from the `rhythms` theory catalog (`ostinato` requires a repeating duration cell, `syncopation` requires an offbeat attack, `hemiola` requires a three-in-two duration pattern, and `swing` requires a long-short 2:1 duration pair).
+- `melodic_concept`: score melody must satisfy configured idioms; currently `blues_inflection` requires at least one blues pitch-class inflection such as flat third, flat fifth, or flat seventh in C-centered material.
+- `phrase_concept`: score phrase structure must satisfy configured idioms; currently `periodic_phrase` requires at least two section phrases, and `motivic_development` requires a transformed motif call.
+- `ensemble_concept`: score ensemble writing must satisfy configured idioms; currently `call_response` requires a pitched non-rhythm-section voice to answer another pitched non-rhythm-section voice within a short phrase window.
+- `bass_concept`: score bass writing must satisfy configured idioms; currently `walking_or_riff_bass` requires a named bass track with quarter-note scalar/arpeggiated motion or a repeated pitch-class riff.
 - `dynamic_vocab`: `dynamic` statements must use configured entries from the `dynamics` theory catalog.
 - `articulation_vocab`: `articulation` statements must use configured entries from the `ornaments` theory catalog.
 - `ornament`: `ornament` annotation blocks must use configured entries from the `ornaments` theory catalog; `trill` blocks must emit rapid alternation between two pitch classes, `mordent` blocks must move main-neighbor-main, and `turn` blocks must outline upper-main-lower-main.
@@ -63,6 +70,7 @@ style Chamber extends Classical {
 - `historical_era`: `historical_era` annotation blocks must use configured entries from the `style_eras` theory catalog.
 - `harmonic_function`: `harmonic_function` annotation blocks must use configured entries from the `harmonic_functions` theory catalog.
 - `max_melodic_leap`: consecutive notes in a voice must not exceed the configured interval.
+- `voice_spacing`: simultaneous pitched voice pairs must stay within the configured maximum interval.
 - `contrapuntal_motion`: simultaneous voice pairs must move only through allowed motion types (`parallel`, `similar`, `contrary`, `oblique`).
 - `instrument_range`: notes in a voice with `program` must fit the configured MIDI program range.
 - `parallel_fifths`: simultaneous voice pairs must not move through consecutive perfect fifths.
@@ -76,7 +84,7 @@ Unknown override rules fail with `ML_STYLE_UNKNOWN_RULE`.
 
 ## Theory knowledge base
 
-The enforced rules are backed by `musiclang-core::theory_catalog()`, a first-class queryable theory knowledge base exposed through the core API and `music theory` CLI command. It covers intervals, scales, modes, chord qualities, cadences, meters, rhythm concepts, dynamics, forms, textures, ornaments, contrapuntal motion, non-chord tones, harmonic functions, post-tonal set classes, tuning systems, world-tradition modal/rhythmic systems, and historical/style eras.
+The enforced rules are backed by `musiclang-core::theory_catalog()`, a first-class queryable theory knowledge base exposed through the core API and `music theory` CLI command. It covers intervals, scales, modes, chord qualities, cadences, meters, rhythm concepts, dynamics, forms, textures, ornaments, contrapuntal motion, non-chord tones, harmonic functions, post-tonal set classes, tuning systems, world-tradition modal/rhythmic systems, and historical/style eras. Idiom-style concept entries that are not theory-catalog domains are discoverable with `music idioms`, machine-readable `music idioms --json`, and REPL `:idioms`.
 
 Every theory catalog domain is also a valid style key. The compiler validates referenced theory IDs during style loading and emits `ML_STYLE_UNKNOWN_THEORY_ENTRY` for unknown entries or `ML_STYLE_UNKNOWN_KEY` for unknown style keys.
 
@@ -158,6 +166,9 @@ Published listening demos should compile with no diagnostics, no `severity_*: of
 - `ML_STYLE_TEMPO_RANGE`
 - `ML_STYLE_RHYTHM_VOCAB`
 - `ML_STYLE_RHYTHM_CONCEPT`
+- `ML_STYLE_MELODIC_CONCEPT`
+- `ML_STYLE_ENSEMBLE_CONCEPT`
+- `ML_STYLE_BASS_CONCEPT`
 - `ML_STYLE_DYNAMIC_VOCAB`
 - `ML_STYLE_ARTICULATION_VOCAB`
 - `ML_STYLE_ORNAMENT`
@@ -167,6 +178,7 @@ Published listening demos should compile with no diagnostics, no `severity_*: of
 - `ML_STYLE_HISTORICAL_ERA`
 - `ML_STYLE_HARMONIC_FUNCTION`
 - `ML_STYLE_MAX_MELODIC_LEAP`
+- `ML_STYLE_VOICE_SPACING`
 - `ML_STYLE_CONTRAPUNTAL_MOTION`
 - `ML_STYLE_INSTRUMENT_RANGE`
 - `ML_STYLE_PARALLEL_FIFTHS`
@@ -176,3 +188,8 @@ Published listening demos should compile with no diagnostics, no `severity_*: of
 - `ML_STYLE_TEXTURE`
 - `ML_STYLE_FORM`
 - `ML_STYLE_UNKNOWN_RULE`
+- `ML_STYLE_UNKNOWN_KEY`
+- `ML_STYLE_UNKNOWN_NAME`
+- `ML_STYLE_UNKNOWN_THEORY_ENTRY`
+- `ML_STYLE_UNKNOWN_IDIOM_ENTRY`
+- `ML_STYLE_INHERITANCE_CYCLE`

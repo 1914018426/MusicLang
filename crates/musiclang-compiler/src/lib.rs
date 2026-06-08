@@ -1,17 +1,19 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use musiclang_core::{
-    Chord, CustomStyleRule, CustomTheoryDomain, Diagnostic, Duration, InstrumentRange, Interval,
-    KeyChangeIr, KeySignature, MarkerIr, Meter, MeterChangeIr, Note, NoteEventIr, OverrideTrace,
-    Pitch, PitchClass, RuleSeverity, ScoreIr, Severity, Span, StyleContext, TempoChangeIr,
-    TheoryDomain, TheoryReference, TrackIr, DEFAULT_TICKS_PER_QUARTER,
+    Chord, CustomStyleRule, CustomTheoryDomain, Diagnostic, Duration, FormEventIr, HarmonicEventIr,
+    InstrumentRange, Interval, KeyChangeIr, KeySignature, MarkerIr, MelodicEventIr, Meter,
+    MeterChangeIr, MotifEventIr, Note, NoteEventIr, OverrideTrace, PhraseEventIr, Pitch,
+    PitchClass, RuleSeverity, ScoreIr, Severity, SourceFile, SourceId, Span, StyleContext,
+    TempoChangeIr, TheoryDomain, TheoryReference, TrackIr, DEFAULT_TICKS_PER_QUARTER,
 };
 use musiclang_parser::{
-    parse_source, ArpeggioStmt, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt,
-    DrumStmt, DynamicStmt, Expr, ExprKind, FunctionDecl, GlissandoStmt, ModulateStmt, NoteStmt,
-    OstinatoStmt, OverrideStmt, PedalStmt, PlayStmt, Program, ProgressionStmt, RestStmt, RomanStmt,
-    ScaleStmt, ScoreMeta, SequenceStmt, Stmt, StrumStmt, StyleDecl, TransposeStmt, TremoloStmt,
-    TupletStmt, VoiceDecl, WithStyleStmt,
+    parse_source_file, parse_source_with_source_id, ArpeggioStmt, ArticulationStmt, BinaryOp,
+    CadenceStmt, ChordStmt, DegreeStmt, DrumStmt, DynamicStmt, Expr, ExprKind, FunctionDecl,
+    GlissandoStmt, ModulateStmt, NoteStmt, OstinatoStmt, OverrideStmt, PedalStmt, PlayStmt,
+    Program, ProgressionStmt, RestStmt, RomanStmt, ScaleStmt, ScoreMeta, SequenceStmt, Stmt,
+    StrumStmt, StyleDecl, TransposeStmt, TremoloStmt, TupletStmt, UnaryOp, VoiceDecl,
+    WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,13 +26,50 @@ pub fn compile_source(source: &str) -> Result<ScoreIr, Vec<Diagnostic>> {
     compile_source_with_diagnostics(source).map(|compilation| compilation.ir)
 }
 
+pub fn compile_source_with_source_id(
+    source_id: SourceId,
+    source: &str,
+) -> Result<ScoreIr, Vec<Diagnostic>> {
+    compile_source_with_diagnostics_and_source_id(source_id, source)
+        .map(|compilation| compilation.ir)
+}
+
+pub fn compile_source_file(source_file: &SourceFile) -> Result<ScoreIr, Vec<Diagnostic>> {
+    compile_source_file_with_diagnostics(source_file).map(|compilation| compilation.ir)
+}
+
 pub fn compile_source_with_diagnostics(source: &str) -> Result<Compilation, Vec<Diagnostic>> {
-    let program = parse_source(source)?;
+    compile_source_with_diagnostics_and_source_id(SourceId(0), source)
+}
+
+pub fn compile_source_with_diagnostics_and_source_id(
+    source_id: SourceId,
+    source: &str,
+) -> Result<Compilation, Vec<Diagnostic>> {
+    let program = parse_source_with_source_id(source_id, source)?;
+    Compiler::new(program).compile()
+}
+
+pub fn compile_source_file_with_diagnostics(
+    source_file: &SourceFile,
+) -> Result<Compilation, Vec<Diagnostic>> {
+    let program = parse_source_file(source_file)?;
     Compiler::new(program).compile()
 }
 
 pub fn diagnose_source(source: &str) -> Vec<Diagnostic> {
-    match compile_source_with_diagnostics(source) {
+    diagnose_source_with_source_id(SourceId(0), source)
+}
+
+pub fn diagnose_source_with_source_id(source_id: SourceId, source: &str) -> Vec<Diagnostic> {
+    match compile_source_with_diagnostics_and_source_id(source_id, source) {
+        Ok(compilation) => compilation.diagnostics,
+        Err(diagnostics) => diagnostics,
+    }
+}
+
+pub fn diagnose_source_file(source_file: &SourceFile) -> Vec<Diagnostic> {
+    match compile_source_file_with_diagnostics(source_file) {
         Ok(compilation) => compilation.diagnostics,
         Err(diagnostics) => diagnostics,
     }
@@ -40,11 +79,95 @@ mod context;
 mod eval;
 mod lower;
 mod stylecheck;
+mod track;
 
 use eval::Value;
+use track::TrackBuilder;
 
 fn is_phrase_function_transform(callee: &str) -> bool {
     matches!(callee, "map" | "filter" | "mapi")
+}
+
+fn motif_transform(args: &[Value]) -> Option<String> {
+    match args {
+        [Value::Pitch(_)] => Some("transposition".to_string()),
+        [Value::Duration(_)] => Some("rhythmic_variation".to_string()),
+        [Value::Pitch(_), Value::Duration(_)] | [Value::Duration(_), Value::Pitch(_)] => {
+            Some("transposition+rhythmic_variation".to_string())
+        }
+        _ => None,
+    }
+}
+
+struct BuiltinSignature {
+    arg_count: usize,
+    type_message: &'static str,
+}
+
+fn is_note_tuple(values: &[Value]) -> bool {
+    matches!(values, [Value::Pitch(_), Value::Duration(_)])
+}
+
+fn is_transform_collection(value: &Value) -> bool {
+    match value {
+        Value::List(_) => true,
+        Value::Tuple(values) => !is_note_tuple(values),
+        _ => false,
+    }
+}
+
+fn builtin_signature(name: &str) -> Option<BuiltinSignature> {
+    match name {
+        "map" => Some(BuiltinSignature {
+            arg_count: 2,
+            type_message: "expects collection and function name",
+        }),
+        "filter" => Some(BuiltinSignature {
+            arg_count: 2,
+            type_message: "expects collection and function name",
+        }),
+        "mapi" => Some(BuiltinSignature {
+            arg_count: 2,
+            type_message: "expects collection and function name",
+        }),
+        "transpose" => Some(BuiltinSignature {
+            arg_count: 2,
+            type_message: "expects value and interval",
+        }),
+        "repeat" => Some(BuiltinSignature {
+            arg_count: 2,
+            type_message: "expects value and integer count",
+        }),
+        "stretch" => Some(BuiltinSignature {
+            arg_count: 2,
+            type_message: "expects value and integer factor",
+        }),
+        "duration" => Some(BuiltinSignature {
+            arg_count: 1,
+            type_message: "expects duration string",
+        }),
+        "pitch" => Some(BuiltinSignature {
+            arg_count: 1,
+            type_message: "expects pitch string",
+        }),
+        "first" => Some(BuiltinSignature {
+            arg_count: 1,
+            type_message: "expects non-empty collection",
+        }),
+        "len" => Some(BuiltinSignature {
+            arg_count: 1,
+            type_message: "expects list or tuple",
+        }),
+        "at" => Some(BuiltinSignature {
+            arg_count: 2,
+            type_message: "expects collection and integer index",
+        }),
+        "with" | "merge" => Some(BuiltinSignature {
+            arg_count: 2,
+            type_message: "expects dict arguments",
+        }),
+        _ => None,
+    }
 }
 
 struct Compiler {
@@ -56,12 +179,19 @@ struct Compiler {
     diagnostics: Vec<Diagnostic>,
     override_rules: Vec<String>,
     score_override_rules: HashSet<String>,
+    phrase_concept_override_phrases: HashSet<usize>,
+    phrase_concept_override_motifs: HashSet<usize>,
     override_traces: Vec<OverrideTrace>,
     section_labels: Vec<String>,
     markers: Vec<MarkerIr>,
     tempo_changes: Vec<TempoChangeIr>,
     meter_changes: Vec<MeterChangeIr>,
     key_changes: Vec<KeyChangeIr>,
+    harmonic_events: Vec<HarmonicEventIr>,
+    melodic_events: Vec<MelodicEventIr>,
+    form_events: Vec<FormEventIr>,
+    motif_events: Vec<MotifEventIr>,
+    phrase_events: Vec<PhraseEventIr>,
     pending_non_chord_tones: Vec<PendingNonChordTone>,
     score_key: Option<KeySignature>,
     pitch_transpose_semitones: i16,
@@ -98,12 +228,19 @@ impl Compiler {
             diagnostics,
             override_rules: Vec::new(),
             score_override_rules: HashSet::new(),
+            phrase_concept_override_phrases: HashSet::new(),
+            phrase_concept_override_motifs: HashSet::new(),
             override_traces: Vec::new(),
             section_labels: Vec::new(),
             markers: Vec::new(),
             tempo_changes: Vec::new(),
             meter_changes: Vec::new(),
             key_changes: Vec::new(),
+            harmonic_events: Vec::new(),
+            melodic_events: Vec::new(),
+            form_events: Vec::new(),
+            motif_events: Vec::new(),
+            phrase_events: Vec::new(),
             pending_non_chord_tones: Vec::new(),
             score_key: None,
             pitch_transpose_semitones: 0,
@@ -147,7 +284,7 @@ impl Compiler {
                 other => {
                     let mut track = TrackBuilder::new("main", None, None, None, None);
                     self.compile_statement(&other, &mut track);
-                    if !track.events.is_empty() {
+                    if !track.is_empty() {
                         tracks.push(track.finish());
                     }
                 }
@@ -157,9 +294,18 @@ impl Compiler {
         self.check_counterpoint_rules(&tracks);
         self.check_texture(&tracks);
         self.check_rhythm_concepts(&tracks);
-        self.check_form();
-        self.check_harmonic_progression(&tracks);
-        self.check_cadence(&tracks);
+        let melodic_events = self.melodic_events.clone();
+        self.check_melodic_concepts(&tracks, &melodic_events);
+        let phrase_events = self.phrase_events.clone();
+        let motif_events = self.motif_events.clone();
+        self.check_phrase_concepts(&phrase_events, &motif_events);
+        self.check_ensemble_concepts(&tracks);
+        self.check_bass_concepts(&tracks);
+        let form_events = self.form_events.clone();
+        self.check_form(&form_events);
+        let harmonic_events = self.harmonic_events.clone();
+        self.check_harmonic_progression(&tracks, &harmonic_events);
+        self.check_cadence(&tracks, &harmonic_events);
 
         if self
             .diagnostics
@@ -178,12 +324,19 @@ impl Compiler {
                     meter,
                     key,
                 },
-                tracks,
-                self.markers,
-                self.tempo_changes,
-                self.meter_changes,
-                self.key_changes,
-                self.override_traces,
+                lower::ScoreLoweringParts {
+                    tracks,
+                    markers: self.markers,
+                    tempo_changes: self.tempo_changes,
+                    meter_changes: self.meter_changes,
+                    key_changes: self.key_changes,
+                    harmonic_events: self.harmonic_events,
+                    melodic_events: self.melodic_events,
+                    form_events: self.form_events,
+                    motif_events: self.motif_events,
+                    phrase_events: self.phrase_events,
+                    overrides: self.override_traces,
+                },
             ),
             diagnostics: self.diagnostics,
         })
@@ -234,7 +387,10 @@ impl Compiler {
                         *line,
                         *column,
                     )
-                    .with_span(*span),
+                    .with_span(*span)
+                    .with_help(
+                        "define the function before calling it or correct the function name",
+                    ),
                 );
             }
         }
@@ -256,7 +412,17 @@ impl Compiler {
         match &expr.kind {
             ExprKind::Call { callee, args } => {
                 if let Some(function) = self.functions.get(callee) {
-                    if function.body_expr().is_some() && function.params.len() != args.len() {
+                    if function.body_expr().is_none() {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "ML_TYPE_MISMATCH",
+                                format!("function `{callee}` is not expression-bodied"),
+                                line,
+                                column,
+                            )
+                            .with_span(expr.span),
+                        );
+                    } else if function.params.len() != args.len() {
                         self.diagnostics.push(
                             Diagnostic::error(
                                 "ML_TYPE_MISMATCH",
@@ -277,8 +443,15 @@ impl Compiler {
                     self.check_function_arity_in_expr(arg, line, column);
                 }
             }
-            ExprKind::MethodCall { target, args, .. } => {
+            ExprKind::MethodCall {
+                target,
+                method,
+                args,
+            } => {
                 self.check_function_arity_in_expr(target, line, column);
+                if is_phrase_function_transform(method) && args.len() == 1 {
+                    return;
+                }
                 for arg in args {
                     self.check_function_arity_in_expr(arg, line, column);
                 }
@@ -290,6 +463,18 @@ impl Compiler {
             ExprKind::List(values) | ExprKind::Tuple(values) => {
                 for value in values {
                     self.check_function_arity_in_expr(value, line, column);
+                }
+            }
+            ExprKind::ListComprehension {
+                item,
+                source,
+                condition,
+                ..
+            } => {
+                self.check_function_arity_in_expr(item, line, column);
+                self.check_function_arity_in_expr(source, line, column);
+                if let Some(condition) = condition {
+                    self.check_function_arity_in_expr(condition, line, column);
                 }
             }
             ExprKind::Dict(entries) => {
@@ -308,6 +493,11 @@ impl Compiler {
             }
             ExprKind::Access { target, .. } => {
                 self.check_function_arity_in_expr(target, line, column)
+            }
+            ExprKind::Unary { expr, .. } => self.check_function_arity_in_expr(expr, line, column),
+            ExprKind::Range { start, end } => {
+                self.check_function_arity_in_expr(start, line, column);
+                self.check_function_arity_in_expr(end, line, column);
             }
             ExprKind::Binary { left, right, .. } => {
                 self.check_function_arity_in_expr(left, line, column);
@@ -457,8 +647,15 @@ impl Compiler {
                     self.collect_expression_calls(arg, line, column, calls);
                 }
             }
-            ExprKind::MethodCall { target, args, .. } => {
+            ExprKind::MethodCall {
+                target,
+                method,
+                args,
+            } => {
                 self.collect_expression_calls(target, line, column, calls);
+                if is_phrase_function_transform(method) && args.len() == 1 {
+                    return;
+                }
                 for arg in args {
                     self.collect_expression_calls(arg, line, column, calls);
                 }
@@ -470,6 +667,18 @@ impl Compiler {
             ExprKind::List(values) | ExprKind::Tuple(values) => {
                 for value in values {
                     self.collect_expression_calls(value, line, column, calls);
+                }
+            }
+            ExprKind::ListComprehension {
+                item,
+                source,
+                condition,
+                ..
+            } => {
+                self.collect_expression_calls(item, line, column, calls);
+                self.collect_expression_calls(source, line, column, calls);
+                if let Some(condition) = condition {
+                    self.collect_expression_calls(condition, line, column, calls);
                 }
             }
             ExprKind::Dict(entries) => {
@@ -488,6 +697,13 @@ impl Compiler {
             }
             ExprKind::Access { target, .. } => {
                 self.collect_expression_calls(target, line, column, calls)
+            }
+            ExprKind::Unary { expr, .. } => {
+                self.collect_expression_calls(expr, line, column, calls)
+            }
+            ExprKind::Range { start, end } => {
+                self.collect_expression_calls(start, line, column, calls);
+                self.collect_expression_calls(end, line, column, calls);
             }
             ExprKind::Binary { left, right, .. } => {
                 self.collect_expression_calls(left, line, column, calls);
@@ -638,7 +854,9 @@ impl Compiler {
             format!("unknown style `{name}`"),
             line,
             column,
-        );
+        )
+        .with_style(name)
+        .with_help("declare the style before selecting it or choose a built-in style name");
         if let Some(span) = span {
             diagnostic = diagnostic.with_span(span);
         }
@@ -718,16 +936,21 @@ impl Compiler {
             )
             .with_span(override_stmt.span)
             .with_rule(override_stmt.rule.clone())
+            .with_help("use a built-in rule id or declare a custom rule with rule_<id> in the active style")
             .with_style(self.style.name.clone()),
         );
     }
 
     fn check_expression_names(&mut self) {
         let score_statements = self.program.score.statements.clone();
-        self.check_expression_names_in_statements(&score_statements, &mut vec![HashSet::new()]);
+        self.check_expression_names_in_statements(&score_statements, &mut vec![HashMap::new()]);
         let functions = self.program.functions.clone();
         for function in functions {
-            let mut scopes = vec![function.params.iter().cloned().collect()];
+            let mut scopes = vec![function
+                .params
+                .iter()
+                .map(|param| (param.clone(), function.span))
+                .collect()];
             self.check_expression_names_in_statements(function.statements(), &mut scopes);
             if let Some(expr) = function.body_expr() {
                 self.check_expression_name(expr, function.line, function.column, &scopes);
@@ -738,7 +961,7 @@ impl Compiler {
     fn check_expression_names_in_statements(
         &mut self,
         statements: &[Stmt],
-        scopes: &mut Vec<HashSet<String>>,
+        scopes: &mut Vec<HashMap<String, Span>>,
     ) {
         for statement in statements {
             match statement {
@@ -981,7 +1204,7 @@ impl Compiler {
                     );
                 }
                 Stmt::For(for_stmt) => {
-                    scopes.push(HashSet::new());
+                    scopes.push(HashMap::new());
                     self.check_duplicate_binding(
                         &for_stmt.variable,
                         for_stmt.line,
@@ -1044,12 +1267,12 @@ impl Compiler {
         line: usize,
         column: usize,
         span: Span,
-        scopes: &mut [HashSet<String>],
+        scopes: &mut [HashMap<String, Span>],
     ) {
         let Some(scope) = scopes.last_mut() else {
             return;
         };
-        if !scope.insert(name.to_string()) {
+        if let Some(original_span) = scope.insert(name.to_string(), span) {
             self.diagnostics.push(
                 Diagnostic::error(
                     "ML_RESOLVE_DUPLICATE_NAME",
@@ -1057,7 +1280,9 @@ impl Compiler {
                     line,
                     column,
                 )
-                .with_span(span),
+                .with_span(span)
+                .with_related(original_span, "first binding")
+                .with_help("rename one binding or move it into a nested scope"),
             );
         }
     }
@@ -1067,11 +1292,11 @@ impl Compiler {
         expr: &Expr,
         line: usize,
         column: usize,
-        scopes: &[HashSet<String>],
+        scopes: &[HashMap<String, Span>],
     ) {
         match &expr.kind {
             ExprKind::Ident(name) => {
-                if !scopes.iter().rev().any(|scope| scope.contains(name)) {
+                if !scopes.iter().rev().any(|scope| scope.contains_key(name)) {
                     self.diagnostics.push(
                         Diagnostic::error(
                             "ML_RESOLVE_UNKNOWN_NAME",
@@ -1079,13 +1304,30 @@ impl Compiler {
                             line,
                             column,
                         )
-                        .with_span(expr.span),
+                        .with_span(expr.span)
+                        .with_help(
+                            "define the referenced name before using it or correct the identifier",
+                        ),
                     );
                 }
             }
             ExprKind::List(values) | ExprKind::Tuple(values) => {
                 for value in values {
                     self.check_expression_name(value, line, column, scopes);
+                }
+            }
+            ExprKind::ListComprehension {
+                item,
+                binding,
+                source,
+                condition,
+            } => {
+                self.check_expression_name(source, line, column, scopes);
+                let mut scopes = scopes.to_vec();
+                scopes.push(HashMap::from([(binding.clone(), expr.span)]));
+                self.check_expression_name(item, line, column, &scopes);
+                if let Some(condition) = condition {
+                    self.check_expression_name(condition, line, column, &scopes);
                 }
             }
             ExprKind::Dict(entries) => {
@@ -1104,6 +1346,14 @@ impl Compiler {
             }
             ExprKind::Access { target, .. } => {
                 self.check_expression_name(target, line, column, scopes);
+            }
+            ExprKind::MethodCall {
+                target,
+                method,
+                args,
+            } if is_phrase_function_transform(method) && args.len() == 1 => {
+                self.check_expression_name(target, line, column, scopes);
+                self.check_function_reference_name(&args[0], line, column);
             }
             ExprKind::MethodCall { target, args, .. } => {
                 self.check_expression_name(target, line, column, scopes);
@@ -1132,6 +1382,11 @@ impl Compiler {
                 for arg in args {
                     self.check_expression_name(arg, line, column, scopes);
                 }
+            }
+            ExprKind::Unary { expr, .. } => self.check_expression_name(expr, line, column, scopes),
+            ExprKind::Range { start, end } => {
+                self.check_expression_name(start, line, column, scopes);
+                self.check_expression_name(end, line, column, scopes);
             }
             ExprKind::Binary { left, right, .. } => {
                 self.check_expression_name(left, line, column, scopes);
@@ -1168,7 +1423,8 @@ impl Compiler {
                         line,
                         column,
                     )
-                    .with_span(expr.span),
+                    .with_span(expr.span)
+                    .with_help("define an expression-bodied function or correct the function name"),
                 );
             }
             _ => self.diagnostics.push(
@@ -1256,11 +1512,27 @@ impl Compiler {
             }
             Stmt::Section(section) => {
                 self.section_labels.push(section.label.clone());
+                let start_tick = track.cursor_tick();
                 self.markers.push(MarkerIr {
                     label: section.label.clone(),
-                    tick: track.cursor_tick(),
+                    tick: start_tick,
                 });
                 self.compile_statements(&section.statements, track);
+                let duration_ticks = track.cursor_tick() - start_tick;
+                self.form_events.push(FormEventIr {
+                    label: section.label.clone(),
+                    kind: "section".to_string(),
+                    start_tick,
+                    duration_ticks,
+                    source_span: Some(section.span),
+                });
+                self.phrase_events.push(PhraseEventIr {
+                    label: Some(section.label.clone()),
+                    kind: "section".to_string(),
+                    start_tick,
+                    duration_ticks,
+                    source_span: Some(section.span),
+                });
             }
             Stmt::Ornament(ornament) => {
                 self.check_ornament(&ornament.kind, ornament.line, ornament.column);
@@ -1360,6 +1632,8 @@ impl Compiler {
                     else {
                         return;
                     };
+                    let transform = motif_transform(&args);
+                    let start_tick = track.cursor_tick();
                     self.function_call_stack.push(call.name.clone());
                     self.push_scope();
                     for (param, value) in function.params.iter().zip(args) {
@@ -1368,6 +1642,21 @@ impl Compiler {
                     self.compile_statements(function.statements(), track);
                     self.pop_scope();
                     self.function_call_stack.pop();
+                    let duration_ticks = track.cursor_tick() - start_tick;
+                    self.motif_events.push(MotifEventIr {
+                        name: call.name.clone(),
+                        transform: transform.clone(),
+                        start_tick,
+                        duration_ticks,
+                        source_span: Some(call.span),
+                    });
+                    self.phrase_events.push(PhraseEventIr {
+                        label: Some(call.name.clone()),
+                        kind: "motif_call".to_string(),
+                        start_tick,
+                        duration_ticks,
+                        source_span: Some(call.span),
+                    });
                 }
             }
             Stmt::Override(override_stmt) => self.compile_override(override_stmt, track),
@@ -1399,7 +1688,7 @@ impl Compiler {
         self.check_pitch_style(pitch, note.line, note.column, Some(note.span));
         self.check_rhythm_vocab(duration, note.line, note.column, Some(note.span));
         self.check_instrument_range(
-            track.program,
+            track.program(),
             pitch,
             note.line,
             note.column,
@@ -1429,18 +1718,15 @@ impl Compiler {
                 }
             }
             Value::Tuple(values) => {
-                if let [Value::Pitch(pitch), Value::Duration(duration)] = values.as_slice() {
+                if is_note_tuple(&values) {
+                    let [Value::Pitch(pitch), Value::Duration(duration)] = values.as_slice() else {
+                        unreachable!();
+                    };
                     self.push_play_note(*pitch, *duration, line, column, span, track);
                 } else {
-                    self.diagnostics.push(
-                        Diagnostic::error(
-                            "ML_TYPE_MISMATCH",
-                            "expected play tuple `(pitch, duration)`",
-                            line,
-                            column,
-                        )
-                        .with_span(span),
-                    );
+                    for value in values {
+                        self.compile_play_value(value, line, column, span, track);
+                    }
                 }
             }
             Value::Dict(values) => {
@@ -1485,7 +1771,7 @@ impl Compiler {
     ) {
         self.check_pitch_style(pitch, line, column, Some(span));
         self.check_rhythm_vocab(duration, line, column, Some(span));
-        self.check_instrument_range(track.program, pitch, line, column, Some(span));
+        self.check_instrument_range(track.program(), pitch, line, column, Some(span));
         track.push_note(Note::new(pitch, duration), Some(span));
     }
 
@@ -1570,7 +1856,7 @@ impl Compiler {
                 Some(glissando.span),
             );
             self.check_instrument_range(
-                track.program,
+                track.program(),
                 pitch,
                 glissando.line,
                 glissando.column,
@@ -1632,7 +1918,7 @@ impl Compiler {
             let pitch = if index % 2 == 0 { first } else { second };
             self.check_pitch_style(pitch, tremolo.line, tremolo.column, Some(tremolo.span));
             self.check_instrument_range(
-                track.program,
+                track.program(),
                 pitch,
                 tremolo.line,
                 tremolo.column,
@@ -1684,13 +1970,26 @@ impl Compiler {
         self.check_pitch_style(pitch, degree.line, degree.column, Some(degree.span));
         self.check_rhythm_vocab(duration, degree.line, degree.column, Some(degree.span));
         self.check_instrument_range(
-            track.program,
+            track.program(),
             pitch,
             degree.line,
             degree.column,
             Some(degree.span),
         );
+        let start_tick = track.cursor_tick();
+        let duration_ticks = track.scaled_ticks(duration);
         track.push_note(Note::new(pitch, duration), Some(degree.span));
+        if let Some((degree_index, accidental)) = parse_scale_degree(&degree.degree) {
+            self.melodic_events.push(MelodicEventIr {
+                kind: "scale_degree".to_string(),
+                degree: Some((degree_index + 1) as u8),
+                accidental: accidental as i8,
+                pitch,
+                start_tick,
+                duration_ticks,
+                source_span: Some(degree.span),
+            });
+        }
     }
 
     fn scale_degree_pitch(&mut self, degree: &DegreeStmt) -> Option<Pitch> {
@@ -1749,16 +2048,27 @@ impl Compiler {
             return;
         };
         self.check_rhythm_vocab(duration, scale.line, scale.column, Some(scale.span));
-        for pitch in pitches {
+        for (index, pitch) in pitches.into_iter().enumerate() {
             self.check_pitch_style(pitch, scale.line, scale.column, Some(scale.span));
             self.check_instrument_range(
-                track.program,
+                track.program(),
                 pitch,
                 scale.line,
                 scale.column,
                 Some(scale.span),
             );
+            let start_tick = track.cursor_tick();
+            let duration_ticks = track.scaled_ticks(duration);
             track.push_note(Note::new(pitch, duration), Some(scale.span));
+            self.melodic_events.push(MelodicEventIr {
+                kind: "scale_run".to_string(),
+                degree: Some((index % 7 + 1) as u8),
+                accidental: 0,
+                pitch,
+                start_tick,
+                duration_ticks,
+                source_span: Some(scale.span),
+            });
         }
     }
 
@@ -1828,7 +2138,7 @@ impl Compiler {
         self.check_pitch_style(pitch, pedal.line, pedal.column, Some(pedal.span));
         self.check_rhythm_vocab(duration, pedal.line, pedal.column, Some(pedal.span));
         self.check_instrument_range(
-            track.program,
+            track.program(),
             pitch,
             pedal.line,
             pedal.column,
@@ -2025,7 +2335,7 @@ impl Compiler {
             line: chord.line,
             column: chord.column,
             span: chord.span,
-            program: track.program,
+            program: track.program(),
         };
         let pitches = self.collect_chord_pitches(
             chord.root_expr.as_ref(),
@@ -2056,7 +2366,7 @@ impl Compiler {
             line: arpeggio.line,
             column: arpeggio.column,
             span: arpeggio.span,
-            program: track.program,
+            program: track.program(),
         };
         let pitches = self.collect_chord_pitches(
             arpeggio.root_expr.as_ref(),
@@ -2104,7 +2414,7 @@ impl Compiler {
             line: strum.line,
             column: strum.column,
             span: strum.span,
-            program: track.program,
+            program: track.program(),
         };
         let pitches = self.collect_chord_pitches(
             strum.root_expr.as_ref(),
@@ -2363,14 +2673,30 @@ impl Compiler {
         };
         for pitch in &pitches {
             self.check_pitch_style(*pitch, line, column, Some(span));
-            self.check_instrument_range(track.program, *pitch, line, column, Some(span));
+            self.check_instrument_range(track.program(), *pitch, line, column, Some(span));
         }
         self.check_chord_vocab(&pitches, line, column, Some(span));
         self.check_chord_quality_vocab(&pitches, line, column, Some(span));
         self.check_set_class_vocab(&pitches, line, column, Some(span));
         self.check_rhythm_vocab(duration, line, column, Some(span));
         match Chord::new(pitches, duration) {
-            Ok(compiled_chord) => track.push_chord(compiled_chord, Some(span)),
+            Ok(compiled_chord) => {
+                let start_tick = track.cursor_tick();
+                let duration_ticks = track.scaled_ticks(duration);
+                track.push_chord(compiled_chord, Some(span));
+                let analysis = analyze_roman_symbol(symbol);
+                self.harmonic_events.push(HarmonicEventIr {
+                    symbol: symbol.to_string(),
+                    normalized_symbol: analysis.normalized_symbol,
+                    degree: analysis.degree,
+                    applied_to: analysis.applied_to,
+                    function: analysis.function.map(ToString::to_string),
+                    cadence_role: analysis.cadence_role.map(ToString::to_string),
+                    start_tick,
+                    duration_ticks,
+                    source_span: Some(span),
+                });
+            }
             Err(error) => self.diagnostics.push(
                 Diagnostic::error("ML_CORE_CHORD", error.to_string(), line, column).with_span(span),
             ),
@@ -2402,7 +2728,8 @@ impl Compiler {
             RuleSeverity::Error => {
                 let mut diagnostic = Diagnostic::error(code, message, line, column)
                     .with_rule(rule)
-                    .with_style(self.style.name.clone());
+                    .with_style(self.style.name.clone())
+                    .with_help(format!("adjust the active style rule `{rule}` or use an explicit audited override for intentional local exceptions"));
                 if let Some(span) = span {
                     diagnostic = diagnostic.with_span(span);
                 }
@@ -2411,7 +2738,8 @@ impl Compiler {
             RuleSeverity::Warning => {
                 let mut diagnostic = Diagnostic::warning(code, message, line, column)
                     .with_rule(rule)
-                    .with_style(self.style.name.clone());
+                    .with_style(self.style.name.clone())
+                    .with_help(format!("adjust the active style rule `{rule}` or use an explicit audited override for intentional local exceptions"));
                 if let Some(span) = span {
                     diagnostic = diagnostic.with_span(span);
                 }
@@ -2721,15 +3049,25 @@ impl Compiler {
     }
 
     fn check_counterpoint_rules(&mut self, tracks: &[TrackIr]) {
-        if tracks.len() < 2 {
+        let pitched_tracks = tracks
+            .iter()
+            .filter(|track| track.channel != 9)
+            .collect::<Vec<_>>();
+        if pitched_tracks.len() < 2 {
             return;
         }
-        for upper_index in 0..tracks.len() {
-            for lower_index in (upper_index + 1)..tracks.len() {
-                self.check_voice_crossing(&tracks[upper_index], &tracks[lower_index]);
-                self.check_voice_spacing(&tracks[upper_index], &tracks[lower_index]);
-                self.check_parallel_fifths(&tracks[upper_index], &tracks[lower_index]);
-                self.check_contrapuntal_motion(&tracks[upper_index], &tracks[lower_index]);
+        for upper_index in 0..pitched_tracks.len() {
+            for lower_index in (upper_index + 1)..pitched_tracks.len() {
+                self.check_voice_crossing(pitched_tracks[upper_index], pitched_tracks[lower_index]);
+                self.check_voice_spacing(pitched_tracks[upper_index], pitched_tracks[lower_index]);
+                self.check_parallel_fifths(
+                    pitched_tracks[upper_index],
+                    pitched_tracks[lower_index],
+                );
+                self.check_contrapuntal_motion(
+                    pitched_tracks[upper_index],
+                    pitched_tracks[lower_index],
+                );
             }
         }
     }
@@ -2941,14 +3279,151 @@ impl Compiler {
         }
     }
 
-    fn check_form(&mut self) {
+    fn check_melodic_concepts(&mut self, tracks: &[TrackIr], melodic_events: &[MelodicEventIr]) {
+        if self.style.melodic_concepts.is_empty()
+            || self.has_override("melodic_concept")
+            || self.has_score_override("melodic_concept")
+        {
+            return;
+        }
+        for concept in self.style.melodic_concepts.clone() {
+            let valid = match concept.as_str() {
+                "blues_inflection" => explicit_blues_inflection(melodic_events)
+                    .unwrap_or_else(|| tracks.iter().any(track_has_blues_inflection)),
+                _ => true,
+            };
+            if !valid {
+                self.push_style_diagnostic(
+                    "melodic_concept",
+                    "ML_STYLE_MELODIC_CONCEPT",
+                    format!("score melody does not satisfy required {concept} concept"),
+                    self.program.score.line,
+                    self.program.score.column,
+                );
+                return;
+            }
+        }
+    }
+
+    fn check_phrase_concepts(
+        &mut self,
+        phrase_events: &[PhraseEventIr],
+        motif_events: &[MotifEventIr],
+    ) {
+        if self.style.phrase_concepts.is_empty() || self.has_score_override("phrase_concept") {
+            return;
+        }
+        for concept in self.style.phrase_concepts.clone() {
+            let valid = match concept.as_str() {
+                "periodic_phrase" => {
+                    let section_count = phrase_events
+                        .iter()
+                        .filter(|event| event.kind == "section")
+                        .count();
+                    let checked_section_count = phrase_events
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, event)| {
+                            event.kind == "section"
+                                && !self.phrase_concept_override_phrases.contains(index)
+                        })
+                        .count();
+                    (section_count > 0 && checked_section_count == 0) || checked_section_count >= 2
+                }
+                "motivic_development" => {
+                    let checked_motif_count = motif_events
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| !self.phrase_concept_override_motifs.contains(index))
+                        .count();
+                    (checked_motif_count == 0 && !motif_events.is_empty())
+                        || motif_events
+                            .iter()
+                            .enumerate()
+                            .filter(|(index, _)| {
+                                !self.phrase_concept_override_motifs.contains(index)
+                            })
+                            .filter_map(|(_, event)| event.transform.as_deref())
+                            .any(|transform| transform != "literal")
+                }
+                _ => true,
+            };
+            if !valid {
+                self.push_style_diagnostic(
+                    "phrase_concept",
+                    "ML_STYLE_PHRASE_CONCEPT",
+                    format!("score phrase structure does not satisfy required {concept} concept"),
+                    self.program.score.line,
+                    self.program.score.column,
+                );
+                return;
+            }
+        }
+    }
+
+    fn check_ensemble_concepts(&mut self, tracks: &[TrackIr]) {
+        if self.style.ensemble_concepts.is_empty()
+            || self.has_override("ensemble_concept")
+            || self.has_score_override("ensemble_concept")
+        {
+            return;
+        }
+        for concept in self.style.ensemble_concepts.clone() {
+            let valid = match concept.as_str() {
+                "call_response" => tracks_have_call_response(tracks),
+                _ => true,
+            };
+            if !valid {
+                self.push_style_diagnostic(
+                    "ensemble_concept",
+                    "ML_STYLE_ENSEMBLE_CONCEPT",
+                    format!("score ensemble writing does not satisfy required {concept} concept"),
+                    self.program.score.line,
+                    self.program.score.column,
+                );
+                return;
+            }
+        }
+    }
+
+    fn check_bass_concepts(&mut self, tracks: &[TrackIr]) {
+        if self.style.bass_concepts.is_empty()
+            || self.has_override("bass_concept")
+            || self.has_score_override("bass_concept")
+        {
+            return;
+        }
+        for concept in self.style.bass_concepts.clone() {
+            let valid = match concept.as_str() {
+                "walking_or_riff_bass" => tracks.iter().any(track_has_walking_or_riff_bass),
+                _ => true,
+            };
+            if !valid {
+                self.push_style_diagnostic(
+                    "bass_concept",
+                    "ML_STYLE_BASS_CONCEPT",
+                    format!("score bass writing does not satisfy required {concept} concept"),
+                    self.program.score.line,
+                    self.program.score.column,
+                );
+                return;
+            }
+        }
+    }
+
+    fn check_form(&mut self, form_events: &[FormEventIr]) {
         let Some(form) = self.style.form.clone() else {
             return;
         };
         if self.has_override("form") || self.has_score_override("form") {
             return;
         }
-        if !form_labels_match_catalog(&self.section_labels, &form) {
+        let labels = form_events
+            .iter()
+            .filter(|event| event.kind == "section")
+            .map(|event| event.label.clone())
+            .collect::<Vec<_>>();
+        if !form_labels_match_catalog(&labels, &form) {
             self.push_style_diagnostic(
                 "form",
                 "ML_STYLE_FORM",
@@ -2959,18 +3434,34 @@ impl Compiler {
         }
     }
 
-    fn check_harmonic_progression(&mut self, tracks: &[TrackIr]) {
+    fn check_harmonic_progression(
+        &mut self,
+        tracks: &[TrackIr],
+        harmonic_events: &[HarmonicEventIr],
+    ) {
         if self.style.harmonic_progression.is_empty()
             || self.has_override("harmonic_progression")
             || self.has_score_override("harmonic_progression")
         {
             return;
         }
-        let actual = harmonic_functions(tracks);
-        if actual.len() < self.style.harmonic_progression.len() {
+        let actual = explicit_harmonic_functions(harmonic_events)
+            .filter(|functions| !functions.is_empty())
+            .unwrap_or_else(|| harmonic_functions(tracks));
+        let expected = self.style.harmonic_progression.as_slice();
+        if actual.len() < expected.len() {
+            self.push_style_diagnostic(
+                "harmonic_progression",
+                "ML_STYLE_HARMONIC_PROGRESSION",
+                format!(
+                    "score does not contain enough functional harmony for required progression `{}`",
+                    expected.join(" ")
+                ),
+                self.program.score.line,
+                self.program.score.column,
+            );
             return;
         }
-        let expected = self.style.harmonic_progression.as_slice();
         if !actual
             .windows(expected.len())
             .any(|window| window == expected)
@@ -2988,23 +3479,30 @@ impl Compiler {
         }
     }
 
-    fn check_cadence(&mut self, tracks: &[TrackIr]) {
+    fn check_cadence(&mut self, tracks: &[TrackIr], harmonic_events: &[HarmonicEventIr]) {
         if self.style.cadences.is_empty()
             || self.has_override("cadence")
             || self.has_score_override("cadence")
         {
             return;
         }
-        let sonorities = final_sonorities(tracks);
-        let Some((penultimate, final_sonority)) = sonorities else {
-            return;
-        };
-        if !self
-            .style
-            .cadences
-            .iter()
-            .any(|cadence| cadence_matches(cadence, &penultimate, &final_sonority))
-        {
+        let explicit = final_harmonic_symbols(harmonic_events);
+        let sonorities = explicit
+            .is_none()
+            .then(|| final_sonorities(tracks))
+            .flatten();
+        if !self.style.cadences.iter().any(|cadence| {
+            explicit
+                .as_ref()
+                .is_some_and(|(penultimate, final_symbol)| {
+                    cadence_matches_symbols(cadence, penultimate, final_symbol)
+                })
+                || sonorities
+                    .as_ref()
+                    .is_some_and(|(penultimate, final_sonority)| {
+                        cadence_matches(cadence, penultimate, final_sonority)
+                    })
+        }) {
             self.push_style_diagnostic(
                 "cadence",
                 "ML_STYLE_CADENCE",
@@ -3125,7 +3623,7 @@ impl Compiler {
                 other => {
                     let mut track = TrackBuilder::new("main", None, None, None, None);
                     self.compile_statement(other, &mut track);
-                    if !track.events.is_empty() {
+                    if !track.is_empty() {
                         tracks.push(track.finish());
                     }
                 }
@@ -3147,8 +3645,16 @@ impl Compiler {
             column: override_stmt.column,
         });
         let start_event = track.event_count();
+        let start_phrase_event = self.phrase_events.len();
+        let start_motif_event = self.motif_events.len();
         self.compile_statements(&override_stmt.statements, track);
         track.mark_rule_override(start_event, &override_stmt.rule);
+        if override_stmt.rule == "phrase_concept" {
+            self.phrase_concept_override_phrases
+                .extend(start_phrase_event..self.phrase_events.len());
+            self.phrase_concept_override_motifs
+                .extend(start_motif_event..self.motif_events.len());
+        }
         self.override_rules.pop();
     }
 
@@ -3162,7 +3668,10 @@ impl Compiler {
                         line,
                         column,
                     )
-                    .with_span(expr.span),
+                    .with_span(expr.span)
+                    .with_help(
+                        "define the referenced name before using it or correct the identifier",
+                    ),
                 );
                 None
             }),
@@ -3204,6 +3713,14 @@ impl Compiler {
                 .map(|value| self.eval_expr(value, line, column))
                 .collect::<Option<Vec<_>>>()
                 .map(Value::List),
+            ExprKind::ListComprehension {
+                item,
+                binding,
+                source,
+                condition,
+            } => {
+                self.eval_list_comprehension(item, binding, source, condition.as_deref(), expr.span)
+            }
             ExprKind::Tuple(values) => values
                 .iter()
                 .map(|value| self.eval_expr(value, line, column))
@@ -3246,8 +3763,20 @@ impl Compiler {
                 method,
                 args,
             } => {
+                let value = self.eval_expr(target, line, column)?;
+                if is_phrase_function_transform(method) && args.len() == 1 {
+                    let function_name = self.expr_function_name(&args[0], line, column)?;
+                    return self.eval_phrase_function_transform(
+                        method,
+                        value,
+                        &function_name,
+                        line,
+                        column,
+                        expr.span,
+                    );
+                }
                 let mut values = Vec::with_capacity(args.len() + 1);
-                values.push(self.eval_expr(target, line, column)?);
+                values.push(value);
                 values.extend(
                     args.iter()
                         .map(|arg| self.eval_expr(arg, line, column))
@@ -3278,6 +3807,11 @@ impl Compiler {
                     .collect::<Option<Vec<_>>>()?;
                 self.eval_call(callee, args, line, column, expr.span)
             }
+            ExprKind::Unary { op, expr } => {
+                let value = self.eval_expr(expr, line, column)?;
+                self.eval_unary(*op, value, line, column, expr.span)
+            }
+            ExprKind::Range { start, end } => self.eval_range(start, end, line, column, expr.span),
             ExprKind::Binary { op, left, right } => {
                 let left = self.eval_expr(left, line, column)?;
                 let right = self.eval_expr(right, line, column)?;
@@ -3306,7 +3840,8 @@ impl Compiler {
                         line,
                         column,
                     )
-                    .with_span(expr.span),
+                    .with_span(expr.span)
+                    .with_help("define an expression-bodied function or correct the function name"),
                 );
                 None
             }
@@ -3318,6 +3853,106 @@ impl Compiler {
                 None
             }
         }
+    }
+
+    fn eval_range(
+        &mut self,
+        start: &Expr,
+        end: &Expr,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        match (
+            self.eval_expr(start, line, column)?,
+            self.eval_expr(end, line, column)?,
+        ) {
+            (Value::Int(start), Value::Int(end)) => {
+                let values = if start <= end {
+                    (start..end).map(Value::Int).collect()
+                } else {
+                    (end + 1..=start).rev().map(Value::Int).collect()
+                };
+                Some(Value::List(values))
+            }
+            _ => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected int range bounds",
+                        line,
+                        column,
+                    )
+                    .with_span(span),
+                );
+                None
+            }
+        }
+    }
+
+    fn eval_list_comprehension(
+        &mut self,
+        item: &Expr,
+        binding: &str,
+        source: &Expr,
+        condition: Option<&Expr>,
+        span: Span,
+    ) -> Option<Value> {
+        let line = span.line;
+        let column = span.column;
+        let values = match self.eval_expr(source, line, column)? {
+            Value::List(values) => values,
+            Value::Tuple(values) if !is_note_tuple(&values) => values,
+            _ => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected collection source",
+                        line,
+                        column,
+                    )
+                    .with_span(span),
+                );
+                return None;
+            }
+        };
+        let mut output = Vec::new();
+        for value in values {
+            self.push_scope();
+            self.set_var(binding, value);
+            let keep = match condition {
+                Some(condition) => match self.eval_expr(condition, line, column) {
+                    Some(Value::Bool(value)) => value,
+                    Some(_) => {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "ML_TYPE_MISMATCH",
+                                "expected comprehension condition to be bool",
+                                line,
+                                column,
+                            )
+                            .with_span(condition.span),
+                        );
+                        self.pop_scope();
+                        return None;
+                    }
+                    None => {
+                        self.pop_scope();
+                        return None;
+                    }
+                },
+                None => true,
+            };
+            if keep {
+                let Some(value) = self.eval_expr(item, line, column) else {
+                    self.pop_scope();
+                    return None;
+                };
+                output.push(value);
+            }
+            self.pop_scope();
+        }
+        Some(Value::List(output))
     }
 
     fn eval_access(
@@ -3436,9 +4071,7 @@ impl Compiler {
         span: Span,
     ) -> Option<Option<Value>> {
         let function = self.functions.get(callee)?.clone();
-        let Some(body_expr) = function.body_expr().cloned() else {
-            return None;
-        };
+        let body_expr = function.body_expr().cloned()?;
         if function.params.len() != args.len() {
             self.diagnostics.push(
                 Diagnostic::error(
@@ -3588,6 +4221,7 @@ impl Compiler {
         for arg in args {
             match arg {
                 Value::List(items) => values.extend(items),
+                Value::Tuple(items) if !is_note_tuple(&items) => values.extend(items),
                 value => values.push(value),
             }
         }
@@ -3640,6 +4274,13 @@ impl Compiler {
                 })
                 .collect::<Option<Vec<_>>>()
                 .map(Value::List),
+            Value::Tuple(values) if !is_note_tuple(&values) => values
+                .into_iter()
+                .map(|value| {
+                    self.eval_mapi_value_with_index(value, function_name, index, line, column, span)
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(Value::Tuple),
             value => {
                 let current_index = *index;
                 *index += 1;
@@ -3668,6 +4309,11 @@ impl Compiler {
                 .map(|value| self.eval_map_value(value, function_name, line, column, span))
                 .collect::<Option<Vec<_>>>()
                 .map(Value::List),
+            Value::Tuple(values) if !is_note_tuple(&values) => values
+                .into_iter()
+                .map(|value| self.eval_map_value(value, function_name, line, column, span))
+                .collect::<Option<Vec<_>>>()
+                .map(Value::Tuple),
             value => self.eval_user_function_call_or_unknown(
                 function_name,
                 vec![value],
@@ -3691,13 +4337,9 @@ impl Compiler {
                 let mut kept = Vec::new();
                 for value in values {
                     match value {
-                        Value::List(_) => kept.push(self.eval_filter_value(
-                            value,
-                            function_name,
-                            line,
-                            column,
-                            span,
-                        )?),
+                        value if is_transform_collection(&value) => kept.push(
+                            self.eval_filter_value(value, function_name, line, column, span)?,
+                        ),
                         value => match self.eval_user_function_call_or_unknown(
                             function_name,
                             vec![value.clone()],
@@ -3723,6 +4365,39 @@ impl Compiler {
                     }
                 }
                 Some(Value::List(kept))
+            }
+            Value::Tuple(values) => {
+                let mut kept = Vec::new();
+                for value in values {
+                    match value {
+                        value if is_transform_collection(&value) => kept.push(
+                            self.eval_filter_value(value, function_name, line, column, span)?,
+                        ),
+                        value => match self.eval_user_function_call_or_unknown(
+                            function_name,
+                            vec![value.clone()],
+                            line,
+                            column,
+                            span,
+                        )? {
+                            Value::Bool(true) => kept.push(value),
+                            Value::Bool(false) => {}
+                            _ => {
+                                self.diagnostics.push(
+                                    Diagnostic::error(
+                                        "ML_TYPE_MISMATCH",
+                                        "expected filter predicate to return bool",
+                                        line,
+                                        column,
+                                    )
+                                    .with_span(span),
+                                );
+                                return None;
+                            }
+                        },
+                    }
+                }
+                Some(Value::Tuple(kept))
             }
             value => match self.eval_user_function_call_or_unknown(
                 function_name,
@@ -3767,7 +4442,10 @@ impl Compiler {
                         line,
                         column,
                     )
-                    .with_span(span),
+                    .with_span(span)
+                    .with_help(
+                        "define the function before calling it or correct the function name",
+                    ),
                 );
                 None
             }
@@ -3842,13 +4520,20 @@ impl Compiler {
                     None
                 }
             },
-            ("first", [Value::List(values)]) => values.first().cloned().or_else(|| {
-                self.diagnostics.push(
-                    Diagnostic::error("ML_TYPE_MISMATCH", "expected non-empty list", line, column)
+            ("first", [Value::List(values)] | [Value::Tuple(values)]) => {
+                values.first().cloned().or_else(|| {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_TYPE_MISMATCH",
+                            "expected non-empty collection",
+                            line,
+                            column,
+                        )
                         .with_span(span),
-                );
-                None
-            }),
+                    );
+                    None
+                })
+            }
             ("len", [Value::List(values)]) => Some(Value::Int(values.len() as i32)),
             ("len", [Value::Tuple(values)]) => Some(Value::Int(values.len() as i32)),
             ("at", [Value::List(values), Value::Int(index)]) => {
@@ -3856,6 +4541,39 @@ impl Compiler {
             }
             ("at", [Value::Tuple(values), Value::Int(index)]) => {
                 self.eval_indexed_value(values, *index, line, column, span)
+            }
+            ("with" | "merge", [Value::Dict(values), Value::Dict(patch)]) => {
+                let mut values = values.clone();
+                values.extend(patch.clone());
+                Some(Value::Dict(values))
+            }
+            ("with" | "merge", [_, _]) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        format!("builtin `{callee}` expects dict arguments"),
+                        line,
+                        column,
+                    )
+                    .with_span(span),
+                );
+                None
+            }
+            (name, _) if builtin_signature(name).is_some() => {
+                let signature = builtin_signature(name).unwrap();
+                let message = if args.len() == signature.arg_count {
+                    format!("builtin `{name}` {}", signature.type_message)
+                } else {
+                    format!(
+                        "builtin `{name}` expects {} arguments, got {}",
+                        signature.arg_count,
+                        args.len()
+                    )
+                };
+                self.diagnostics.push(
+                    Diagnostic::error("ML_TYPE_MISMATCH", message, line, column).with_span(span),
+                );
+                None
             }
             _ => {
                 self.diagnostics.push(
@@ -3904,6 +4622,26 @@ impl Compiler {
             );
             None
         })
+    }
+
+    fn eval_unary(
+        &mut self,
+        op: UnaryOp,
+        value: Value,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        match (op, value) {
+            (UnaryOp::Not, Value::Bool(value)) => Some(Value::Bool(!value)),
+            _ => {
+                self.diagnostics.push(
+                    Diagnostic::error("ML_TYPE_MISMATCH", "expected bool operand", line, column)
+                        .with_span(span),
+                );
+                None
+            }
+        }
     }
 
     fn eval_binary(
@@ -3965,10 +4703,34 @@ impl Compiler {
             (BinaryOp::Eq, Value::Bool(left), Value::Bool(right)) => {
                 Some(Value::Bool(left == right))
             }
+            (BinaryOp::Eq, Value::String(left), Value::String(right)) => {
+                Some(Value::Bool(left == right))
+            }
+            (BinaryOp::Eq, Value::Pitch(left), Value::Pitch(right)) => {
+                Some(Value::Bool(left == right))
+            }
+            (BinaryOp::Eq, Value::Duration(left), Value::Duration(right)) => {
+                Some(Value::Bool(left == right))
+            }
+            (BinaryOp::Eq, Value::Interval(left), Value::Interval(right)) => {
+                Some(Value::Bool(left == right))
+            }
             (BinaryOp::NotEq, Value::Int(left), Value::Int(right)) => {
                 Some(Value::Bool(left != right))
             }
             (BinaryOp::NotEq, Value::Bool(left), Value::Bool(right)) => {
+                Some(Value::Bool(left != right))
+            }
+            (BinaryOp::NotEq, Value::String(left), Value::String(right)) => {
+                Some(Value::Bool(left != right))
+            }
+            (BinaryOp::NotEq, Value::Pitch(left), Value::Pitch(right)) => {
+                Some(Value::Bool(left != right))
+            }
+            (BinaryOp::NotEq, Value::Duration(left), Value::Duration(right)) => {
+                Some(Value::Bool(left != right))
+            }
+            (BinaryOp::NotEq, Value::Interval(left), Value::Interval(right)) => {
                 Some(Value::Bool(left != right))
             }
             (BinaryOp::Lt, Value::Int(left), Value::Int(right)) => Some(Value::Bool(left < right)),
@@ -4011,7 +4773,10 @@ impl Compiler {
                         line,
                         column,
                     )
-                    .with_span(expr.span),
+                    .with_span(expr.span)
+                    .with_help(
+                        "define the referenced name before using it or correct the identifier",
+                    ),
                 );
                 None
             }
@@ -4070,7 +4835,10 @@ impl Compiler {
                         line,
                         column,
                     )
-                    .with_span(expr.span),
+                    .with_span(expr.span)
+                    .with_help(
+                        "define the referenced name before using it or correct the identifier",
+                    ),
                 );
                 None
             }
@@ -4327,7 +5095,9 @@ fn style_from_program_inner(
                 style.line,
                 style.column,
             )
-            .with_span(style.span)],
+            .with_span(style.span)
+            .with_style(&style.name)
+            .with_help("break the extends cycle by removing or changing one parent style")],
         );
     }
     visiting.push(style.name.clone());
@@ -4347,7 +5117,11 @@ fn style_from_program_inner(
                     style.line,
                     style.column,
                 )
-                .with_span(style.span)],
+                .with_span(style.span)
+                .with_style(parent_name)
+                .with_help(
+                    "declare the parent style before extending it or correct the parent style name",
+                )],
             )
         }
     } else {
@@ -4439,6 +5213,43 @@ fn style_from_program_inner(
                     .map(ToString::to_string)
                     .collect();
                 validate_vocab_entries(style, entry, TheoryDomain::Rhythms, &mut diagnostics);
+            }
+            "melodic_concept" => {
+                context.melodic_concepts = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_idiom_entries(style, entry, &["blues_inflection"], &mut diagnostics);
+            }
+            "phrase_concept" => {
+                context.phrase_concepts = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_idiom_entries(
+                    style,
+                    entry,
+                    &["periodic_phrase", "motivic_development"],
+                    &mut diagnostics,
+                );
+            }
+            "ensemble_concept" => {
+                context.ensemble_concepts = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_idiom_entries(style, entry, &["call_response"], &mut diagnostics);
+            }
+            "bass_concept" => {
+                context.bass_concepts = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_idiom_entries(style, entry, &["walking_or_riff_bass"], &mut diagnostics);
             }
             "dynamic_vocab" => {
                 context.dynamic_vocab = entry
@@ -4643,6 +5454,29 @@ fn validate_vocab_entries(
     }
 }
 
+fn validate_idiom_entries(
+    style: &StyleDecl,
+    entry: &musiclang_parser::StyleEntry,
+    known_entries: &[&str],
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for entry_id in entry.value.split_whitespace() {
+        if !known_entries.contains(&entry_id) {
+            diagnostics.push(
+                Diagnostic::error(
+                    "ML_STYLE_UNKNOWN_IDIOM_ENTRY",
+                    format!("unknown idiom entry `{entry_id}` for `{}`", entry.key),
+                    entry.line,
+                    entry.column,
+                )
+                .with_span(entry.span)
+                .with_rule(entry.key.clone())
+                .with_style(style.name.clone()),
+            );
+        }
+    }
+}
+
 fn validate_builtin_theory_references(
     style: &StyleDecl,
     entry: &musiclang_parser::StyleEntry,
@@ -4795,6 +5629,113 @@ fn track_has_swing(track: &TrackIr) -> bool {
         .any(|events| events[0].duration_ticks == events[1].duration_ticks * 2)
 }
 
+fn track_has_blues_inflection(track: &TrackIr) -> bool {
+    track.events.iter().any(|event| {
+        matches!(
+            event.pitch.class(),
+            PitchClass::Ds | PitchClass::Fs | PitchClass::As
+        )
+    })
+}
+
+fn explicit_blues_inflection(events: &[MelodicEventIr]) -> Option<bool> {
+    (!events.is_empty()).then(|| {
+        events
+            .iter()
+            .any(|event| matches!(event.degree, Some(3 | 5 | 7)) && event.accidental < 0)
+    })
+}
+
+fn tracks_have_call_response(tracks: &[TrackIr]) -> bool {
+    let pitched_tracks = tracks
+        .iter()
+        .filter(|track| track_is_call_response_voice(track))
+        .collect::<Vec<_>>();
+    for caller in &pitched_tracks {
+        for responder in &pitched_tracks {
+            if caller.name == responder.name {
+                continue;
+            }
+            if tracks_form_call_response(caller, responder) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn track_is_call_response_voice(track: &TrackIr) -> bool {
+    if track.channel == 9 || track.events.is_empty() {
+        return false;
+    }
+    let name = track.name.to_ascii_lowercase();
+    if name.contains("piano") || name.contains("bass") || name.contains("comp") {
+        return false;
+    }
+    if let Some(program) = track.program {
+        if program <= 7 || (32..=39).contains(&program) {
+            return false;
+        }
+    }
+    true
+}
+
+fn tracks_form_call_response(caller: &TrackIr, responder: &TrackIr) -> bool {
+    caller.events.iter().any(|call| {
+        let call_end = call.start_tick + call.duration_ticks;
+        responder.events.iter().any(|response| {
+            response.start_tick >= call_end
+                && response.start_tick <= call_end + DEFAULT_TICKS_PER_QUARTER * 2
+                && response.duration_ticks <= DEFAULT_TICKS_PER_QUARTER
+                && response.pitch.class() != call.pitch.class()
+        })
+    })
+}
+
+fn track_has_walking_or_riff_bass(track: &TrackIr) -> bool {
+    if track.channel == 9 {
+        return false;
+    }
+    let name = track.name.to_ascii_lowercase();
+    if !name.contains("bass") {
+        return false;
+    }
+    track_has_quarter_bass_motion(track) || track_has_repeated_pitch_riff(track)
+}
+
+fn track_has_quarter_bass_motion(track: &TrackIr) -> bool {
+    track.events.windows(4).any(|events| {
+        events
+            .iter()
+            .all(|event| event.duration_ticks == DEFAULT_TICKS_PER_QUARTER)
+            && events.windows(2).all(|pair| {
+                let Ok(first) = pair[0].pitch.midi_number().map(i16::from) else {
+                    return false;
+                };
+                let Ok(second) = pair[1].pitch.midi_number().map(i16::from) else {
+                    return false;
+                };
+                matches!((second - first).abs(), 1 | 2 | 3 | 4 | 5 | 7)
+            })
+    })
+}
+
+fn track_has_repeated_pitch_riff(track: &TrackIr) -> bool {
+    let classes = track
+        .events
+        .iter()
+        .map(|event| event.pitch.class())
+        .collect::<Vec<_>>();
+    classes.len() >= 6
+        && classes.windows(2).any(|cell| {
+            classes
+                .windows(2)
+                .filter(|candidate| *candidate == cell)
+                .count()
+                >= 2
+        })
+}
+
 fn events_form_trill(events: &[NoteEventIr]) -> bool {
     if events.len() < 3 {
         return false;
@@ -4874,6 +5815,142 @@ fn pitch_distance_is_step(distance: i16) -> bool {
     matches!(distance.abs(), 1 | 2)
 }
 
+fn explicit_harmonic_functions(events: &[HarmonicEventIr]) -> Option<Vec<String>> {
+    let functions = events
+        .iter()
+        .filter_map(|event| event.function.clone())
+        .collect::<Vec<_>>();
+    (!functions.is_empty()).then_some(functions)
+}
+
+fn final_harmonic_symbols(events: &[HarmonicEventIr]) -> Option<(String, String)> {
+    let symbols = events
+        .iter()
+        .filter(|event| !event.normalized_symbol.is_empty())
+        .map(|event| event.normalized_symbol.clone())
+        .collect::<Vec<_>>();
+    let [.., penultimate, final_symbol] = symbols.as_slice() else {
+        return None;
+    };
+    Some((penultimate.clone(), final_symbol.clone()))
+}
+
+fn cadence_matches_symbols(cadence: &str, penultimate: &str, final_symbol: &str) -> bool {
+    match cadence {
+        "authentic" => is_dominant_symbol(penultimate) && is_tonic_symbol(final_symbol),
+        "plagal" => penultimate == "IV" && is_tonic_symbol(final_symbol),
+        "deceptive" => is_dominant_symbol(penultimate) && final_symbol == "vi",
+        "half" => is_dominant_symbol(final_symbol),
+        _ => true,
+    }
+}
+
+struct RomanAnalysis {
+    normalized_symbol: String,
+    degree: Option<u8>,
+    applied_to: Option<String>,
+    function: Option<&'static str>,
+    cadence_role: Option<&'static str>,
+}
+
+fn analyze_roman_symbol(symbol: &str) -> RomanAnalysis {
+    let normalized_symbol = normalize_roman_symbol(symbol);
+    let (base, applied_to) = normalized_symbol
+        .split_once('/')
+        .map_or((normalized_symbol.as_str(), None), |(base, target)| {
+            (base, Some(target.to_string()))
+        });
+    let degree = roman_degree(base);
+    let function = roman_harmonic_function(&normalized_symbol);
+    let cadence_role = if is_tonic_symbol(base) {
+        Some("arrival")
+    } else if is_dominant_symbol(base) {
+        Some("dominant_preparation")
+    } else if matches!(base, "IV" | "iv" | "ii" | "II") {
+        Some("predominant_preparation")
+    } else {
+        None
+    };
+    RomanAnalysis {
+        normalized_symbol,
+        degree,
+        applied_to,
+        function,
+        cadence_role,
+    }
+}
+
+fn roman_harmonic_function(symbol: &str) -> Option<&'static str> {
+    let normalized = normalize_roman_symbol(symbol);
+    let base = normalized
+        .split_once('/')
+        .map_or(normalized.as_str(), |(base, _)| base);
+    if is_tonic_symbol(base) {
+        Some("tonic")
+    } else if matches!(base, "ii" | "II" | "IV" | "iv") {
+        Some("predominant")
+    } else if normalized.contains('/') {
+        Some("secondary_dominant")
+    } else if is_dominant_symbol(base) {
+        Some("dominant")
+    } else if base == "vi" || base == "VI" {
+        Some("submediant")
+    } else {
+        None
+    }
+}
+
+fn roman_degree(symbol: &str) -> Option<u8> {
+    let base = symbol.trim_end_matches("dim");
+    match base.to_ascii_uppercase().as_str() {
+        "I" => Some(1),
+        "II" => Some(2),
+        "III" => Some(3),
+        "IV" => Some(4),
+        "V" => Some(5),
+        "VI" => Some(6),
+        "VII" => Some(7),
+        _ => None,
+    }
+}
+
+fn is_tonic_symbol(symbol: &str) -> bool {
+    matches!(symbol, "I" | "i")
+}
+
+fn is_dominant_symbol(symbol: &str) -> bool {
+    matches!(symbol, "V" | "v" | "viidim" | "vii") || symbol.starts_with("V/")
+}
+
+fn normalize_roman_symbol(symbol: &str) -> String {
+    let (base, target) = symbol
+        .split_once('/')
+        .map_or((symbol, None), |(base, target)| (base, Some(target)));
+    let mut body = base.trim();
+    while let Some(stripped) = body.strip_prefix('b') {
+        body = stripped;
+    }
+    while let Some(stripped) = body.strip_prefix('#') {
+        body = stripped;
+    }
+    for suffix in ["64", "65", "43", "42", "6", "7"] {
+        if let Some(stripped) = body.strip_suffix(suffix) {
+            body = stripped;
+            break;
+        }
+    }
+    let mut normalized = body.trim_end_matches('°').trim_end_matches('+').to_string();
+    if body.ends_with('°') || body.ends_with("dim") {
+        normalized = normalized.trim_end_matches("dim").to_string();
+        normalized.push_str("dim");
+    }
+    if let Some(target) = target {
+        normalized.push('/');
+        normalized.push_str(target.trim());
+    }
+    normalized
+}
+
 fn cadence_matches(
     cadence: &str,
     penultimate: &[PitchClass],
@@ -4937,7 +6014,11 @@ fn harmonic_function(classes: &[PitchClass]) -> Option<&'static str> {
 }
 
 fn sonority_sequence(tracks: &[TrackIr]) -> Vec<Vec<PitchClass>> {
-    let mut ticks = tracks
+    let harmonic_tracks = tracks
+        .iter()
+        .filter(|track| track.channel != 9)
+        .collect::<Vec<_>>();
+    let mut ticks = harmonic_tracks
         .iter()
         .flat_map(|track| track.events.iter().map(|event| event.start_tick))
         .collect::<Vec<_>>();
@@ -4945,27 +6026,22 @@ fn sonority_sequence(tracks: &[TrackIr]) -> Vec<Vec<PitchClass>> {
     ticks.dedup();
     ticks
         .into_iter()
-        .map(|tick| sonority_at(tracks, tick))
+        .map(|tick| sonority_at(&harmonic_tracks, tick))
         .collect()
 }
 
 fn final_sonorities(tracks: &[TrackIr]) -> Option<(Vec<PitchClass>, Vec<PitchClass>)> {
-    let mut ticks = tracks
-        .iter()
-        .flat_map(|track| track.events.iter().map(|event| event.start_tick))
+    let functional = sonority_sequence(tracks)
+        .into_iter()
+        .filter(|classes| harmonic_function(classes).is_some())
         .collect::<Vec<_>>();
-    ticks.sort_unstable();
-    ticks.dedup();
-    let [.., penultimate_tick, final_tick] = ticks.as_slice() else {
+    let [.., penultimate, final_sonority] = functional.as_slice() else {
         return None;
     };
-    Some((
-        sonority_at(tracks, *penultimate_tick),
-        sonority_at(tracks, *final_tick),
-    ))
+    Some((penultimate.clone(), final_sonority.clone()))
 }
 
-fn sonority_at(tracks: &[TrackIr], tick: u32) -> Vec<PitchClass> {
+fn sonority_at(tracks: &[&TrackIr], tick: u32) -> Vec<PitchClass> {
     tracks
         .iter()
         .flat_map(|track| &track.events)
@@ -5431,177 +6507,11 @@ fn drum_midi_number(name: &str) -> Option<u8> {
     }
 }
 
-struct TrackBuilder {
-    name: String,
-    program: Option<u8>,
-    channel: Option<u8>,
-    volume: Option<u8>,
-    pan: Option<u8>,
-    cursor_tick: u32,
-    velocity: u8,
-    articulation: Option<String>,
-    events: Vec<NoteEventIr>,
-    overridden_event_rules: HashMap<String, HashSet<u32>>,
-    time_scales: Vec<(u32, u32)>,
-}
-
-impl TrackBuilder {
-    fn new(
-        name: &str,
-        program: Option<u8>,
-        channel: Option<u8>,
-        volume: Option<u8>,
-        pan: Option<u8>,
-    ) -> Self {
-        Self {
-            name: name.to_string(),
-            program,
-            channel,
-            volume,
-            pan,
-            cursor_tick: 0,
-            velocity: 80,
-            articulation: None,
-            events: Vec::new(),
-            overridden_event_rules: HashMap::new(),
-            time_scales: Vec::new(),
-        }
-    }
-
-    fn scaled_ticks(&self, duration: Duration) -> u32 {
-        let mut ticks = u64::from(duration.ticks(DEFAULT_TICKS_PER_QUARTER));
-        for (count, space_ticks) in &self.time_scales {
-            ticks = ticks * u64::from(*space_ticks) / (u64::from(*count) * 240);
-        }
-        ticks.max(1).min(u64::from(u32::MAX)) as u32
-    }
-
-    fn push_time_scale(&mut self, count: u32, space_ticks: u32) {
-        self.time_scales.push((count, space_ticks));
-    }
-
-    fn pop_time_scale(&mut self) {
-        self.time_scales.pop();
-    }
-
-    fn advance(&mut self, duration: Duration) {
-        self.cursor_tick += self.scaled_ticks(duration);
-    }
-
-    fn push_note(&mut self, note: Note, source_span: Option<Span>) {
-        let duration_ticks = self.scaled_ticks(note.duration());
-        self.events.push(NoteEventIr {
-            pitch: note.pitch(),
-            start_tick: self.cursor_tick,
-            duration_ticks,
-            velocity: self.velocity,
-            articulation: self.articulation.clone(),
-            source_span,
-        });
-        self.cursor_tick += duration_ticks;
-    }
-
-    fn push_midi_note(&mut self, midi: u8, duration: Duration, source_span: Option<Span>) {
-        let duration_ticks = self.scaled_ticks(duration);
-        self.events.push(NoteEventIr {
-            pitch: Pitch::from_midi_number(i16::from(midi)).expect("valid GM drum note"),
-            start_tick: self.cursor_tick,
-            duration_ticks,
-            velocity: self.velocity,
-            articulation: self.articulation.clone(),
-            source_span,
-        });
-        self.cursor_tick += duration_ticks;
-    }
-
-    fn set_velocity(&mut self, velocity: u8) {
-        self.velocity = velocity.min(127);
-    }
-
-    fn set_articulation(&mut self, articulation: &str) {
-        self.articulation = Some(articulation.to_string());
-    }
-
-    fn event_count(&self) -> usize {
-        self.events.len()
-    }
-
-    fn events(&self) -> &[NoteEventIr] {
-        &self.events
-    }
-
-    fn cursor_tick(&self) -> u32 {
-        self.cursor_tick
-    }
-
-    fn is_event_overridden(&self, rule: &str, start_tick: u32) -> bool {
-        self.overridden_event_rules
-            .get(rule)
-            .is_some_and(|ticks| ticks.contains(&start_tick))
-    }
-
-    fn mark_rule_override(&mut self, start_event: usize, rule: &str) {
-        let ticks = self
-            .overridden_event_rules
-            .entry(rule.to_string())
-            .or_default();
-        for event in &self.events[start_event..] {
-            ticks.insert(event.start_tick);
-        }
-    }
-
-    fn push_chord(&mut self, chord: Chord, source_span: Option<Span>) {
-        let duration_ticks = self.scaled_ticks(chord.duration());
-        for pitch in chord.pitches() {
-            self.events.push(NoteEventIr {
-                pitch: *pitch,
-                start_tick: self.cursor_tick,
-                duration_ticks,
-                velocity: self.velocity,
-                articulation: self.articulation.clone(),
-                source_span,
-            });
-        }
-        self.cursor_tick += duration_ticks;
-    }
-
-    fn push_strum(
-        &mut self,
-        pitches: &[Pitch],
-        duration: Duration,
-        offset: Duration,
-        source_span: Option<Span>,
-    ) {
-        let duration_ticks = self.scaled_ticks(duration);
-        let offset_ticks = self.scaled_ticks(offset);
-        for (index, pitch) in pitches.iter().enumerate() {
-            self.events.push(NoteEventIr {
-                pitch: *pitch,
-                start_tick: self.cursor_tick + offset_ticks * index as u32,
-                duration_ticks,
-                velocity: self.velocity,
-                articulation: self.articulation.clone(),
-                source_span,
-            });
-        }
-        self.cursor_tick += duration_ticks;
-    }
-
-    fn finish(self) -> TrackIr {
-        TrackIr {
-            name: self.name,
-            channel: self.channel.unwrap_or(0),
-            program: self.program,
-            volume: self.volume,
-            pan: self.pan,
-            events: self.events,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use musiclang_core::SourceMap;
 
     #[test]
     fn compiles_minimal_score_to_ir() {
@@ -6325,6 +7235,14 @@ score demo {
 
         assert_eq!(ir.title, "String Quartet");
         assert_eq!(ir.composer.as_deref(), Some("Ada Lovelace"));
+        assert_eq!(
+            ir.metadata.get("title").map(String::as_str),
+            Some("String Quartet")
+        );
+        assert_eq!(
+            ir.metadata.get("composer").map(String::as_str),
+            Some("Ada Lovelace")
+        );
     }
 
     #[test]
@@ -6364,6 +7282,64 @@ score demo {
 
         assert_eq!(span.start, expected_start);
         assert_eq!(span.end, expected_start + "note".len());
+    }
+
+    #[test]
+    fn source_id_aware_facade_preserves_diagnostic_spans() {
+        let diagnostics = diagnose_source_with_source_id(
+            SourceId(5),
+            r#"
+style Classical
+score demo {
+  voice lead {
+    note F#4, 1/4
+  }
+}
+"#,
+        );
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "ML_STYLE_SCALE")
+            .unwrap();
+
+        assert_eq!(diagnostic.span.unwrap().source_id, SourceId(5));
+    }
+
+    #[test]
+    fn source_file_facade_preserves_registered_source_id() {
+        let mut sources = SourceMap::new();
+        sources.add("valid.music", "score ok { voice lead { note C4, 1/4 } }");
+        let id = sources.add(
+            "violation.music",
+            r#"
+style Classical
+score demo {
+  voice lead {
+    note F#4, 1/4
+  }
+}
+"#,
+        );
+        let source_file = sources.get(id).unwrap();
+        let diagnostics = diagnose_source_file(source_file);
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "ML_STYLE_SCALE")
+            .unwrap();
+
+        assert_eq!(source_file.id, SourceId(1));
+        assert_eq!(diagnostic.span.unwrap().source_id, source_file.id);
+    }
+
+    #[test]
+    fn source_file_facade_compiles_registered_file() {
+        let mut sources = SourceMap::new();
+        let id = sources.add("valid.music", "score ok { voice lead { note C4, 1/4 } }");
+        let source_file = sources.get(id).unwrap();
+        let ir = compile_source_file(source_file).unwrap();
+
+        assert_eq!(ir.title, "ok");
+        assert_eq!(ir.tracks[0].events[0].source_span.unwrap().source_id, id);
     }
 
     #[test]
@@ -6545,6 +7521,94 @@ score demo {
     }
 
     #[test]
+    fn first_accepts_tuple_values() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    note first((C4, E4, G4)), 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events[0].pitch, "C4".parse().unwrap());
+    }
+
+    #[test]
+    fn first_rejects_empty_list_with_collection_diagnostic() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice lead {
+    note first([]), 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "expected non-empty collection"
+        }));
+    }
+
+    #[test]
+    fn compares_music_expression_values() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    if "lead" == "lead" {
+      note C4, 1/8
+    }
+    if C4 == C4 {
+      note D4, 1/8
+    }
+    if 1/8 != 1/4 {
+      note E4, 1/8
+    }
+    if M3 == M3 {
+      note F4, 1/8
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let pitches = ir.tracks[0]
+            .events
+            .iter()
+            .map(|event| event.pitch.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(pitches, vec!["C4", "D4", "E4", "F4"]);
+    }
+
+    #[test]
+    fn rejects_mismatched_expression_comparisons() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice lead {
+    if C4 == "C4" {
+      note C4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "unsupported expression operand types"
+        }));
+    }
+
+    #[test]
     fn supports_chord_from_pitch_list_expression() {
         let ir = compile_source(
             r#"
@@ -6677,6 +7741,33 @@ score demo {{
     }
 
     #[test]
+    fn idiom_style_rule_inputs_validate_entries() {
+        for key in [
+            "melodic_concept",
+            "phrase_concept",
+            "ensemble_concept",
+            "bass_concept",
+        ] {
+            let invalid_source = format!(
+                r#"
+style Idiom {{
+  {key}: imaginary_entry
+}}
+score demo style Idiom {{
+  voice lead {{
+    note C4, 1/4
+  }}
+}}
+"#
+            );
+            let diagnostics = compile_source(&invalid_source).unwrap_err();
+
+            assert_eq!(diagnostics[0].code, "ML_STYLE_UNKNOWN_IDIOM_ENTRY");
+            assert_eq!(diagnostics[0].rule.as_deref(), Some(key));
+        }
+    }
+
+    #[test]
     fn unknown_style_key_fails() {
         let source = r#"
 style TheoryRich {
@@ -6790,10 +7881,19 @@ score demo {
 "#;
         let diagnostics = compile_source(source).unwrap_err();
 
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "ML_RESOLVE_DUPLICATE_NAME"
-                && diagnostic.message == "duplicate binding `d`"
-        }));
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| {
+                diagnostic.code == "ML_RESOLVE_DUPLICATE_NAME"
+                    && diagnostic.message == "duplicate binding `d`"
+            })
+            .unwrap();
+        assert_eq!(diagnostic.related.len(), 1);
+        assert_eq!(diagnostic.related[0].message, "first binding");
+        assert_eq!(
+            diagnostic.related[0].span.start,
+            source.find("let d").unwrap()
+        );
     }
 
     #[test]
@@ -6892,6 +7992,26 @@ score demo {
     }
 
     #[test]
+    fn concat_flattens_tuple_phrase_values() {
+        let ir = compile_source(
+            r#"
+fn left(root) = ((root, 1/8), (root |> transpose(M3), 1/8))
+fn right(root) = ({p:root, d:1/8}, {p:root |> transpose(P5), d:1/8})
+fn phrase(root) = concat(left(root), right(G4))
+score demo {
+  voice lead {
+    play first(phrase(C4))
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+    }
+
+    #[test]
     fn expression_bodied_function_returns_value() {
         let ir = compile_source(
             r#"
@@ -6977,6 +8097,90 @@ score demo {
     }
 
     #[test]
+    fn direct_transform_calls_accept_bare_function_names() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [{p:root, d:1/8}, {p:root |> transpose(M3), d:1/8}, {p:root |> transpose(P5), d:1/8}]
+fn mark(i, event) = event.with({middle:i == 1})
+fn keep(event) = event.middle == true
+fn lift(event) = event |> transpose(M2)
+score demo {
+  voice lead {
+    play map(filter(mapi(riff(C4), mark), keep), lift)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "F#4");
+    }
+
+    #[test]
+    fn method_transform_calls_accept_bare_function_names() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [{p:root, d:1/8}, {p:root |> transpose(M3), d:1/8}, {p:root |> transpose(P5), d:1/8}]
+fn mark(i, event) = event.with({middle:i == 1})
+fn keep(event) = event.middle == true
+fn lift(event) = event |> transpose(M2)
+score demo {
+  voice lead {
+    play riff(C4).mapi(mark).filter(keep).map(lift)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "F#4");
+    }
+
+    #[test]
+    fn method_transform_calls_accept_string_function_names() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [{p:root, d:1/8}, {p:root |> transpose(M3), d:1/8}, {p:root |> transpose(P5), d:1/8}]
+fn mark(i, event) = event.with({middle:i == 1})
+fn keep(event) = event.middle == true
+fn lift(event) = event |> transpose(M2)
+score demo {
+  voice lead {
+    play riff(C4).mapi("mark").filter("keep").map("lift")
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "F#4");
+    }
+
+    #[test]
+    fn maps_filters_and_indexes_tuple_phrase_values() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = ({p:root, d:1/8}, {p:root |> transpose(M3), d:1/8}, {p:root |> transpose(P5), d:1/8})
+fn mark(i, event) = event.with({middle:i == 1})
+fn keep(event) = event.middle == true
+fn lift(event) = event |> transpose(M2)
+score demo {
+  voice lead {
+    play riff(C4) |> mapi(mark) |> filter(keep) |> map(lift)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "F#4");
+    }
+
+    #[test]
     fn conditional_expression_shapes_phrase_transform() {
         let ir = compile_source(
             r#"
@@ -7048,6 +8252,185 @@ score demo {
         assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
         assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "E4");
         assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "G4");
+    }
+
+    #[test]
+    fn range_comprehension_generates_indexed_phrase_material() {
+        let ir = compile_source(
+            r#"
+fn line() = [{p:at([C4, D4, E4, G4], i), d:1/8} for i in 0..4]
+score demo {
+  voice lead {
+    play line()
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 4);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "D4");
+        assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "E4");
+        assert_eq!(ir.tracks[0].events[3].pitch.to_string(), "G4");
+    }
+
+    #[test]
+    fn descending_range_comprehension_generates_material() {
+        let ir = compile_source(
+            r#"
+fn line() = [{p:at([C4, D4, E4, G4], i), d:1/8} for i in 3..0]
+score demo {
+  voice lead {
+    play line()
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 3);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "G4");
+        assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "D4");
+    }
+
+    #[test]
+    fn range_rejects_non_int_bounds() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad() = [i for i in C4..4]
+score demo {
+  voice lead {
+    let x = bad()
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "expected int range bounds"
+        }));
+    }
+
+    #[test]
+    fn list_comprehension_shapes_phrase_material() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [{p:root, d:1/8, skip:false}, {p:root |> transpose(M2), d:1/8, skip:true}, {p:root |> transpose(M3), d:1/8, skip:false}]
+fn lift(events) = [event.with({d:1/2}) for event in events if not event.skip]
+score demo {
+  voice lead {
+    play lift(riff(C4))
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 2);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+        assert_eq!(ir.tracks[0].events[0].duration_ticks, 960);
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "E4");
+        assert_eq!(ir.tracks[0].events[1].duration_ticks, 960);
+    }
+
+    #[test]
+    fn tuple_comprehension_shapes_phrase_material() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = ({p:root, d:1/8, skip:false}, {p:root |> transpose(M2), d:1/8, skip:true}, {p:root |> transpose(M3), d:1/8, skip:false})
+fn lift(events) = [event.with({d:1/2}) for event in events if not event.skip]
+score demo {
+  voice lead {
+    play lift(riff(C4))
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 2);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+        assert_eq!(ir.tracks[0].events[0].duration_ticks, 960);
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "E4");
+        assert_eq!(ir.tracks[0].events[1].duration_ticks, 960);
+    }
+
+    #[test]
+    fn list_comprehension_rejects_non_collection_source() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(p) = [event for event in p]
+score demo {
+  voice lead {
+    let x = bad(C4)
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "expected collection source"
+        }));
+    }
+
+    #[test]
+    fn list_comprehension_rejects_non_bool_condition() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(events) = [event for event in events if event.p]
+score demo {
+  voice lead {
+    let x = bad([{p:C4, d:1/4}])
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "expected comprehension condition to be bool"
+        }));
+    }
+
+    #[test]
+    fn unary_not_inverts_boolean_predicate() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [{p:root, d:1/8, keep:true}, {p:root |> transpose(M2), d:1/8, keep:false}, {p:root |> transpose(M3), d:1/8, keep:true}]
+fn keep(event) = not event.keep == false
+score demo {
+  voice lead {
+    play riff(C4) |> filter(keep)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 2);
+        assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "C4");
+        assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "E4");
+    }
+
+    #[test]
+    fn unary_not_non_bool_reports_type_mismatch() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(p) = not p
+score demo {
+  voice lead {
+    let x = bad(C4)
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH" && diagnostic.message == "expected bool operand"
+        }));
     }
 
     #[test]
@@ -7131,6 +8514,199 @@ score demo {
     }
 
     #[test]
+    fn dict_merge_builtin_produces_updated_phrase_events() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [{p:root, d:1/8}, {p:root |> transpose(M3), d:1/8}, {p:root |> transpose(P5), d:1/4}]
+fn lift(event) = merge(event, {d:1/2})
+score demo {
+  voice lead {
+    play riff(C4) |> map(lift)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 3);
+        assert_eq!(ir.tracks[0].events[0].duration_ticks, 960);
+        assert_eq!(ir.tracks[0].events[1].duration_ticks, 960);
+        assert_eq!(ir.tracks[0].events[2].duration_ticks, 960);
+    }
+
+    #[test]
+    fn method_style_dict_with_updates_phrase_events() {
+        let ir = compile_source(
+            r#"
+fn riff(root) = [{p:root, d:1/8}, {p:root |> transpose(P5), d:1/4}]
+fn long(event) = event.with({d:1/2})
+score demo {
+  voice lead {
+    play riff(C4) |> map(long)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 2);
+        assert_eq!(ir.tracks[0].events[0].duration_ticks, 960);
+        assert_eq!(ir.tracks[0].events[1].duration_ticks, 960);
+    }
+
+    #[test]
+    fn dict_non_dict_with_reports_type_mismatch() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(event) = with(event, 42)
+score demo {
+  voice lead {
+    let x = bad({p:C4, d:1/4})
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "builtin `with` expects dict arguments"
+        }));
+    }
+
+    #[test]
+    fn builtin_wrong_argument_count_reports_type_mismatch() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(events) = at(events)
+score demo {
+  voice lead {
+    let x = bad([C4])
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "builtin `at` expects 2 arguments, got 1"
+        }));
+    }
+
+    #[test]
+    fn builtin_wrong_argument_type_reports_type_mismatch() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(events) = at(events, "zero")
+score demo {
+  voice lead {
+    let x = bad([C4])
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "builtin `at` expects collection and integer index"
+        }));
+    }
+
+    #[test]
+    fn non_at_builtin_wrong_argument_type_reports_type_mismatch() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(events) = repeat(events, "twice")
+score demo {
+  voice lead {
+    let x = bad([C4])
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "builtin `repeat` expects value and integer count"
+        }));
+    }
+
+    #[test]
+    fn pipe_builtin_wrong_argument_type_reports_type_mismatch() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(events) = events |> repeat("twice")
+score demo {
+  voice lead {
+    let x = bad([C4])
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "builtin `repeat` expects value and integer count"
+        }));
+    }
+
+    #[test]
+    fn pipe_builtin_wrong_argument_count_reports_type_mismatch() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(events) = events |> at()
+score demo {
+  voice lead {
+    let x = bad([C4])
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "builtin `at` expects 2 arguments, got 1"
+        }));
+    }
+
+    #[test]
+    fn method_builtin_wrong_argument_type_reports_type_mismatch() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(event) = event.with(42)
+score demo {
+  voice lead {
+    let x = bad({p:C4, d:1/4})
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "builtin `with` expects dict arguments"
+        }));
+    }
+
+    #[test]
+    fn method_builtin_wrong_argument_count_reports_type_mismatch() {
+        let diagnostics = diagnose_source(
+            r#"
+fn bad(event) = event.with()
+score demo {
+  voice lead {
+    let x = bad({p:C4, d:1/4})
+  }
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "builtin `with` expects 2 arguments, got 1"
+        }));
+    }
+
+    #[test]
     fn function_accepts_compact_dict_argument() {
         let ir = compile_source(
             r#"
@@ -7193,6 +8769,48 @@ score demo {
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "ML_TYPE_MISMATCH"
                 && diagnostic.message == "function `motif` expects 2 arguments, got 1"
+        }));
+    }
+
+    #[test]
+    fn wrong_expression_function_argument_count_uses_stable_diagnostic_code() {
+        let diagnostics = compile_source(
+            r#"
+fn pick(root, dur) = {p:root, d:dur}
+score demo {
+  voice lead {
+    play [pick(C4)]
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "function `pick` expects 2 arguments, got 1"
+        }));
+    }
+
+    #[test]
+    fn expression_call_to_block_function_uses_stable_diagnostic_code() {
+        let diagnostics = compile_source(
+            r#"
+fn motif(root) {
+  note root, 1/4
+}
+score demo {
+  voice lead {
+    play [motif(C4)]
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_TYPE_MISMATCH"
+                && diagnostic.message == "function `motif` is not expression-bodied"
         }));
     }
 
@@ -7278,6 +8896,15 @@ score demo {
         let expected_start = source.rfind("fn motif").unwrap();
         assert_eq!(span.start, expected_start);
         assert_eq!(span.end, expected_start + "fn".len());
+        assert_eq!(diagnostics[0].related.len(), 1);
+        assert_eq!(
+            diagnostics[0].related[0].message,
+            "first function definition"
+        );
+        assert_eq!(
+            diagnostics[0].related[0].span.start,
+            source.find("fn motif").unwrap()
+        );
     }
 
     #[test]
@@ -7419,6 +9046,10 @@ score demo {
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_UNKNOWN_RULE");
         assert_eq!(diagnostics[0].rule.as_deref(), Some("imaginary"));
+        assert_eq!(
+            diagnostics[0].help.as_deref(),
+            Some("use a built-in rule id or declare a custom rule with rule_<id> in the active style")
+        );
         let span = diagnostics[0].span.unwrap();
         let expected_start = source.find("override imaginary").unwrap();
         assert_eq!(span.start, expected_start);
@@ -7493,6 +9124,286 @@ score demo {
         assert_eq!(ir.key.unwrap().fifths, -1);
         assert!(!ir.key.unwrap().is_minor);
         assert_eq!(ir.tracks[0].program, Some(40));
+    }
+
+    #[test]
+    fn lowers_scale_degree_to_melodic_event() {
+        let ir = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    degree #4 4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.melodic_events.len(), 1);
+        assert_eq!(ir.melodic_events[0].kind, "scale_degree");
+        assert_eq!(ir.melodic_events[0].degree, Some(4));
+        assert_eq!(ir.melodic_events[0].accidental, 1);
+        assert_eq!(ir.melodic_events[0].start_tick, 0);
+        assert_eq!(ir.melodic_events[0].duration_ticks, 240);
+    }
+
+    #[test]
+    fn lowers_scale_run_to_melodic_events() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    scale C major 4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let degrees = ir
+            .melodic_events
+            .iter()
+            .map(|event| event.degree)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            degrees,
+            vec![
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(4),
+                Some(5),
+                Some(6),
+                Some(7),
+                Some(1)
+            ]
+        );
+        assert!(ir
+            .melodic_events
+            .iter()
+            .all(|event| event.kind == "scale_run"));
+    }
+
+    #[test]
+    fn lowers_section_to_form_event() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    section A {
+      note C4, 1/4
+      note D4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.form_events.len(), 1);
+        assert_eq!(ir.form_events[0].kind, "section");
+        assert_eq!(ir.form_events[0].label, "A");
+        assert_eq!(ir.form_events[0].start_tick, 0);
+        assert_eq!(ir.form_events[0].duration_ticks, 960);
+        assert!(ir.form_events[0].source_span.is_some());
+        assert_eq!(ir.phrase_events.len(), 1);
+        assert_eq!(ir.phrase_events[0].kind, "section");
+        assert_eq!(ir.phrase_events[0].label.as_deref(), Some("A"));
+        assert_eq!(ir.phrase_events[0].start_tick, 0);
+        assert_eq!(ir.phrase_events[0].duration_ticks, 960);
+        assert!(ir.phrase_events[0].source_span.is_some());
+    }
+
+    #[test]
+    fn lowers_function_call_to_motif_event() {
+        let ir = compile_source(
+            r#"
+fn motif(root) {
+  note root, 1/8
+  note root + M2, 1/8
+}
+
+score demo {
+  voice lead {
+    call motif(C4)
+    call motif(G4)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let names = ir
+            .motif_events
+            .iter()
+            .map(|event| event.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["motif", "motif"]);
+        assert_eq!(
+            ir.motif_events[0].transform.as_deref(),
+            Some("transposition")
+        );
+        assert_eq!(ir.motif_events[0].start_tick, 0);
+        assert_eq!(ir.motif_events[0].duration_ticks, 480);
+        assert_eq!(
+            ir.motif_events[1].transform.as_deref(),
+            Some("transposition")
+        );
+        assert_eq!(ir.motif_events[1].start_tick, 480);
+        assert_eq!(ir.motif_events[1].duration_ticks, 480);
+        assert!(ir
+            .motif_events
+            .iter()
+            .all(|event| event.source_span.is_some()));
+        let phrase_labels = ir
+            .phrase_events
+            .iter()
+            .map(|event| event.label.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(phrase_labels, vec![Some("motif"), Some("motif")]);
+        assert!(ir
+            .phrase_events
+            .iter()
+            .all(|event| event.kind == "motif_call"));
+        assert_eq!(ir.phrase_events[0].start_tick, 0);
+        assert_eq!(ir.phrase_events[0].duration_ticks, 480);
+        assert_eq!(ir.phrase_events[1].start_tick, 480);
+        assert_eq!(ir.phrase_events[1].duration_ticks, 480);
+    }
+
+    #[test]
+    fn classifies_duration_argument_as_motif_rhythmic_variation() {
+        let ir = compile_source(
+            r#"
+fn motif(d) {
+  note C4, d
+}
+
+score demo {
+  voice lead {
+    call motif(1/8)
+    call motif(1/4)
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let transforms = ir
+            .motif_events
+            .iter()
+            .map(|event| event.transform.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            transforms,
+            vec![Some("rhythmic_variation"), Some("rhythmic_variation")]
+        );
+    }
+
+    #[test]
+    fn lowers_roman_progression_to_harmonic_events() {
+        let ir = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    progression I ii V7 I, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let functions = ir
+            .harmonic_events
+            .iter()
+            .filter_map(|event| event.function.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(functions, vec!["tonic", "predominant", "dominant", "tonic"]);
+        assert_eq!(ir.harmonic_events[2].symbol, "V7");
+        assert_eq!(ir.harmonic_events[2].normalized_symbol, "V");
+        assert_eq!(ir.harmonic_events[2].degree, Some(5));
+        assert_eq!(
+            ir.harmonic_events[2].cadence_role.as_deref(),
+            Some("dominant_preparation")
+        );
+        assert_eq!(ir.harmonic_events[2].start_tick, 960);
+        assert_eq!(ir.harmonic_events[2].duration_ticks, 480);
+    }
+
+    #[test]
+    fn applied_roman_preserves_target_and_secondary_function() {
+        let ir = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    roman V7/V, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let event = &ir.harmonic_events[0];
+        assert_eq!(event.normalized_symbol, "V/V");
+        assert_eq!(event.degree, Some(5));
+        assert_eq!(event.applied_to.as_deref(), Some("V"));
+        assert_eq!(event.function.as_deref(), Some("secondary_dominant"));
+    }
+
+    #[test]
+    fn harmonic_progression_style_prefers_explicit_roman_function() {
+        let compilation = compile_source_with_diagnostics(
+            r#"
+style Functional {
+  harmonic_progression: tonic predominant dominant tonic
+}
+score demo style Functional {
+  key C major
+  voice lead {
+    progression I ii V7 I, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert!(compilation.diagnostics.is_empty());
+        assert_eq!(compilation.ir.harmonic_events.len(), 4);
+    }
+
+    #[test]
+    fn explicit_harmonic_events_support_cadence_checks() {
+        let compilation = compile_source_with_diagnostics(
+            r#"
+style Cadential {
+  cadence: authentic
+}
+score demo style Cadential {
+  key C major
+  voice lead {
+    cadence authentic, 1/2
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert!(compilation.diagnostics.is_empty());
+        assert_eq!(
+            compilation.ir.harmonic_events[0].function.as_deref(),
+            Some("dominant")
+        );
+        assert_eq!(
+            compilation.ir.harmonic_events[1].function.as_deref(),
+            Some("tonic")
+        );
+        assert_eq!(
+            compilation.ir.harmonic_events[1].cadence_role.as_deref(),
+            Some("arrival")
+        );
     }
 
     #[test]
@@ -8287,6 +10198,279 @@ score demo style SwingFeel {
     }
 
     #[test]
+    fn builtin_jazz_warns_without_swing_identity() {
+        let compilation = compile_source_with_diagnostics(
+            r#"
+score demo style Jazz {
+  voice lead {
+    note C4, 1/8
+    note D4, 1/8
+    note E4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert!(compilation
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.rule.as_deref() == Some("rhythm_concept")));
+    }
+
+    #[test]
+    fn builtin_jazz_warns_without_functional_harmony() {
+        let compilation = compile_source_with_diagnostics(
+            r#"
+score demo style Jazz {
+  voice lead {
+    note C4, 1/6
+    note D4, 1/12
+    rest 1/8
+    note Eb4, 1/8
+    note E4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert!(compilation
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.rule.as_deref() == Some("harmonic_progression")));
+    }
+
+    #[test]
+    fn builtin_jazz_warns_without_blues_inflection() {
+        let compilation = compile_source_with_diagnostics(
+            r#"
+score demo style Jazz {
+  voice horn {
+    note C5, 1/6
+    note D5, 1/12
+    rest 1/8
+    note E5, 1/8
+    rest 1/4
+  }
+  voice lead {
+    rest 1/2
+    note E4, 1/8
+    note G4, 1/8
+    note B4, 1/4
+  }
+  voice piano {
+    chord D3 minor7, 1/4
+    chord G3 dominant7, 1/4
+    chord C3 major7, 1/4
+    chord G3 dominant7, 1/4
+    chord C3 major7, 1/2
+  }
+  voice bass {
+    note C2, 1/4
+    note E2, 1/4
+    note G2, 1/4
+    note B2, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert!(compilation
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.rule.as_deref() == Some("melodic_concept")));
+    }
+
+    #[test]
+    fn melodic_concept_prefers_explicit_degree_inflection() {
+        let compilation = compile_source_with_diagnostics(
+            r#"
+style BluesDegree {
+  melodic_concept: blues_inflection
+}
+score demo style BluesDegree {
+  key C major
+  voice lead {
+    degree b3 4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert!(!compilation
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.rule.as_deref() == Some("melodic_concept")));
+    }
+
+    #[test]
+    fn builtin_jazz_warns_without_call_response() {
+        let compilation = compile_source_with_diagnostics(
+            r#"
+score demo style Jazz {
+  voice lead {
+    note C5, 1/6
+    note D5, 1/12
+    rest 1/8
+    note Eb5, 1/8
+    rest 1/4
+  }
+  voice piano {
+    chord D3 minor7, 1/4
+    chord G3 dominant7, 1/4
+    chord C3 major7, 1/4
+    chord G3 dominant7, 1/4
+    chord C3 major7, 1/2
+  }
+  voice bass {
+    note C2, 1/4
+    note E2, 1/4
+    note G2, 1/4
+    note B2, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert!(compilation
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.rule.as_deref() == Some("ensemble_concept")));
+    }
+
+    #[test]
+    fn builtin_jazz_warns_without_bass_support() {
+        let compilation = compile_source_with_diagnostics(
+            r#"
+score demo style Jazz {
+  voice horn {
+    note C5, 1/6
+    note D5, 1/12
+    rest 1/8
+    note Eb5, 1/8
+    rest 1/4
+  }
+  voice lead {
+    rest 1/2
+    note Eb4, 1/8
+    note G4, 1/8
+    note Bb4, 1/4
+  }
+  voice piano {
+    chord D3 minor7, 1/4
+    chord G3 dominant7, 1/4
+    chord C3 major7, 1/4
+    chord G3 dominant7, 1/4
+    chord C3 major7, 1/2
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert!(compilation
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.rule.as_deref() == Some("bass_concept")));
+    }
+
+    #[test]
+    fn builtin_jazz_accepts_swing_syncopation_and_functional_cadence() {
+        let compilation = compile_source_with_diagnostics(
+            r#"
+score demo style Jazz {
+  voice horn {
+    note C5, 1/6
+    note D5, 1/12
+    rest 1/8
+    note Eb5, 1/8
+    rest 1/4
+  }
+  voice lead {
+    rest 1/2
+    note Eb4, 1/8
+    note G4, 1/8
+    note Bb4, 1/4
+  }
+  voice piano {
+    chord D3 minor7, 1/4
+    chord G3 dominant7, 1/4
+    chord C3 major7, 1/4
+    chord G3 dominant7, 1/4
+    chord C3 major7, 1/2
+  }
+  voice bass {
+    note C2, 1/4
+    note E2, 1/4
+    note G2, 1/4
+    note B2, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert!(
+            compilation.diagnostics.is_empty(),
+            "unexpected jazz diagnostics: {:?}",
+            compilation.diagnostics
+        );
+    }
+
+    #[test]
+    fn jazz_cadence_ignores_drum_track_pitches() {
+        let compilation = compile_source_with_diagnostics(
+            r#"
+score demo style Jazz {
+  voice horn {
+    note C5, 1/6
+    note D5, 1/12
+    rest 1/8
+    note Eb5, 1/8
+    rest 1/4
+  }
+  voice lead {
+    rest 1/2
+    note Eb4, 1/8
+    note G4, 1/8
+    note Bb4, 1/4
+  }
+  voice piano {
+    chord D3 minor7, 1/4
+    chord G3 dominant7, 1/4
+    chord C3 major7, 1/4
+    chord G3 dominant7, 1/4
+    chord C3 major7, 1/2
+  }
+  voice bass {
+    note C2, 1/4
+    note E2, 1/4
+    note G2, 1/4
+    note B2, 1/4
+  }
+  voice kit {
+    instrument drums
+    channel 9
+    rest 1/1
+    drum kick, 1/2
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert!(
+            compilation.diagnostics.is_empty(),
+            "unexpected jazz diagnostics: {:?}",
+            compilation.diagnostics
+        );
+    }
+
+    #[test]
     fn dynamic_vocab_accepts_catalog_mark() {
         let ir = compile_source(
             r#"
@@ -8654,6 +10838,94 @@ score demo style Ornamented {
     }
 
     #[test]
+    fn phrase_concept_periodic_phrase_accepts_two_sections() {
+        let ir = compile_source(
+            r#"
+style Periodic {
+  phrase_concept: periodic_phrase
+}
+score demo style Periodic {
+  voice lead {
+    section A {
+      note C4, 1/4
+    }
+    section B {
+      note D4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.phrase_events.len(), 2);
+    }
+
+    #[test]
+    fn phrase_concept_periodic_phrase_rejects_single_section() {
+        let diagnostics = compile_source(
+            r#"
+style Periodic {
+  phrase_concept: periodic_phrase
+}
+score demo style Periodic {
+  voice lead {
+    section A {
+      note C4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_PHRASE_CONCEPT");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("phrase_concept"));
+    }
+
+    #[test]
+    fn phrase_concept_motivic_development_accepts_transformed_motif() {
+        compile_source(
+            r#"
+fn motif(root) {
+  note root, 1/4
+}
+style Developed {
+  phrase_concept: motivic_development
+}
+score demo style Developed {
+  voice lead {
+    call motif(C4)
+    call motif(G4)
+  }
+}
+"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn phrase_concept_can_be_overridden() {
+        compile_source(
+            r#"
+style Periodic {
+  phrase_concept: periodic_phrase
+}
+score demo style Periodic {
+  voice lead {
+    override phrase_concept allow reason "intro fragment" {
+      section A {
+        note C4, 1/4
+      }
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn form_rule_accepts_matching_sections() {
         let ir = compile_source(
             r#"
@@ -8677,6 +10949,9 @@ score demo style BinarySong {
         assert_eq!(ir.markers.len(), 2);
         assert_eq!(ir.markers[0].label, "A");
         assert_eq!(ir.markers[1].label, "B");
+        assert_eq!(ir.form_events.len(), 2);
+        assert_eq!(ir.form_events[0].label, "A");
+        assert_eq!(ir.form_events[1].label, "B");
     }
 
     #[test]
@@ -8786,6 +11061,27 @@ score demo {
         .unwrap_err();
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_VOICE_CROSSING");
+    }
+
+    #[test]
+    fn counterpoint_rules_ignore_unpitched_drum_track() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice bass {
+    note C2, 1/4
+  }
+  voice kit {
+    instrument drums
+    channel 9
+    drum snare, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks.len(), 2);
     }
 
     #[test]
@@ -9592,6 +11888,61 @@ style Open {
 score demo style Open {
   voice lead {
     note D4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
+    }
+
+    #[test]
+    fn non_scale_style_warning_does_not_block_compile() {
+        let compilation = compile_source_with_diagnostics(
+            r#"
+style Tiny {
+  instrument_range: 40 C4 C5
+  severity_instrument_range: warning
+}
+score demo style Tiny {
+  voice lead {
+    program 40
+    note C6, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let diagnostic = compilation
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "ML_STYLE_INSTRUMENT_RANGE")
+            .unwrap();
+        assert_eq!(diagnostic.severity, Severity::Warning);
+        assert_eq!(diagnostic.rule.as_deref(), Some("instrument_range"));
+        assert_eq!(diagnostic.style.as_deref(), Some("Tiny"));
+        assert!(diagnostic
+            .help
+            .as_deref()
+            .unwrap()
+            .contains("audited override"));
+        assert_eq!(compilation.ir.tracks[0].events.len(), 1);
+    }
+
+    #[test]
+    fn non_scale_style_off_suppresses_rule() {
+        let ir = compile_source(
+            r#"
+style Tiny {
+  instrument_range: 40 C4 C5
+  severity_instrument_range: off
+}
+score demo style Tiny {
+  voice lead {
+    program 40
+    note C6, 1/4
   }
 }
 "#,

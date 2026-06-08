@@ -15,3 +15,4 @@ musiclang-parser = { path = "../musiclang-parser" }
 musiclang-compiler = { path = "../musiclang-compiler" }
 musiclang-midi = { path = "../musiclang-midi" }
 musiclang-render = { path = "../musiclang-render" }
+serde_json.workspace = true

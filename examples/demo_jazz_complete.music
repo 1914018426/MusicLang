@@ -110,6 +110,67 @@ fn tenor_tag {
   note C5, 1/1
 }
 
+fn trumpet_head_response {
+  rest 1/2
+  note E5, 1/8
+  note G5, 1/8
+  note Bb5, 1/4
+  rest 1/2
+  note A5, 1/8
+  note C6, 1/8
+  note D6, 1/4
+  rest 1/2
+  note F5, 1/8
+  note A5, 1/8
+  note C6, 1/4
+  rest 1/2
+  note B5, 1/8
+  note D6, 1/8
+  note C6, 1/4
+}
+
+fn trumpet_solo_response {
+  rest 1/2
+  note Bb5, 1/8
+  note G5, 1/8
+  note E5, 1/4
+  rest 1/2
+  note C6, 1/8
+  note A5, 1/8
+  note F5, 1/4
+  rest 1/2
+  note D6, 1/8
+  note B5, 1/8
+  note G5, 1/4
+  rest 1/2
+  note C6, 1/4
+  note G5, 1/4
+}
+
+fn trumpet_shout {
+  rest 1/4
+  note G5, 1/8
+  note Bb5, 1/8
+  note C6, 1/4
+  rest 1/4
+  note F5, 1/8
+  note A5, 1/8
+  note C6, 1/4
+  rest 1/4
+  note G5, 1/8
+  note B5, 1/8
+  note D6, 1/4
+  rest 1/4
+  note E6, 1/2
+}
+
+fn trumpet_tag {
+  rest 1/2
+  note F5, 1/4
+  note B5, 1/4
+  note E6, 1/1
+}
+
 fn piano_comp_a {
   strum C3 dominant7, 1/2 by 1/32
   rest 1/2
@@ -244,11 +305,33 @@ fn bass_tag {
 }
 
 score mature_jazz_listening style Jazz {
-  title "Blue Terminal Trio"
+  title "Blue Terminal Quartet"
   composer "MusicLang"
   tempo 112
   meter 4/4
   key C major
+
+  voice trumpet {
+    instrument trumpet
+    channel 4
+    volume 74
+    pan 86
+    dynamic mf
+    section Head {
+      call trumpet_head_response
+      call trumpet_head_response
+    }
+    section Solo {
+      call trumpet_solo_response
+      call trumpet_solo_response
+    }
+    section Shout {
+      call trumpet_shout
+    }
+    section Tag {
+      call trumpet_tag
+    }
+  }
 
   voice tenor {
     instrument sax

@@ -25,7 +25,9 @@ pub(super) fn style(program: &Program) -> (StyleContext, Vec<Diagnostic>) {
                 program.score.line,
                 program.score.column,
             )
-            .with_span(program.score.span)],
+            .with_span(program.score.span)
+            .with_style(active_style)
+            .with_help("declare the style before selecting it or choose a built-in style name")],
         );
     }
     program
@@ -39,10 +41,7 @@ pub(super) fn functions(program: &Program) -> (HashMap<String, FunctionDecl>, Ve
     let mut functions = HashMap::new();
     let mut diagnostics = Vec::new();
     for function in &program.functions {
-        if functions
-            .insert(function.name.clone(), function.clone())
-            .is_some()
-        {
+        if let Some(original) = functions.insert(function.name.clone(), function.clone()) {
             diagnostics.push(
                 Diagnostic::error(
                     "ML_RESOLVE_DUPLICATE_NAME",
@@ -50,7 +49,9 @@ pub(super) fn functions(program: &Program) -> (HashMap<String, FunctionDecl>, Ve
                     function.line,
                     function.column,
                 )
-                .with_span(function.span),
+                .with_span(function.span)
+                .with_related(original.span, "first function definition")
+                .with_help("rename one function or remove the duplicate definition"),
             );
         }
     }

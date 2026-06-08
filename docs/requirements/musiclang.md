@@ -1,6 +1,6 @@
 # MusicLang 技术需求文档
 
-> 状态：Draft | Author：Claude | Date：2026-06-07
+> 状态：Implemented baseline + evolving requirements | Author：Claude | Date：2026-06-07
 
 ## 1. 背景与目标
 
@@ -29,15 +29,15 @@ MusicLang 是一门面向 vibe coding 时代的音乐编程语言。它不是用
 | G-02 | 支持 REPL 交互式音乐开发 | Agent 能在 REPL 中输入代码并快速听到修改结果 |
 | G-03 | 建立风格驱动的类型约束系统 | 声明 style 后，编译器能根据风格规则检查音乐代码 |
 | G-04 | 支持局部 override | 违反风格约束时默认报错，但可用显式语法局部放行 |
-| G-05 | MIDI 优先输出，同时保留多后端扩展 | MVP 支持 MIDI；架构预留 MusicXML、音频、实时播放后端 |
+| G-05 | MIDI 优先输出，同时保留多后端扩展 | 当前已支持 MIDI、MusicXML 与 WAV；实时播放后端仍保留扩展空间 |
 
 ### 非目标
 
-- MVP 不做黑盒音乐生成模型。
-- MVP 不让编译器自动补全、自动和声化或自动作曲。
-- MVP 不要求完整覆盖所有人类乐理知识，但架构必须支持逐步扩展到大型乐理知识库。
-- MVP 不优先开发完整 IDE 插件；REPL 和 CLI 优先。
-- MVP 不追求专业级音频合成质量；MIDI 可听、可导入 DAW 优先。
+- 不做黑盒音乐生成模型。
+- 不让编译器自动补全、自动和声化或自动作曲。
+- 不要求完整覆盖所有人类乐理知识，但当前理论目录和风格系统已支持逐步扩展到大型乐理知识库。
+- 当前已提供 CLI、REPL、LSP 与 VS Code 扩展基础能力。
+- 当前 WAV 渲染用于快速试听，不追求专业级音频合成质量；MIDI/MusicXML 仍是导入 DAW 和记谱软件的主要交换格式。
 
 ## 2. 用户故事
 
@@ -70,7 +70,7 @@ MusicLang 是一门面向 vibe coding 时代的音乐编程语言。它不是用
 | US-05 | As an Agent, I want to locally override style constraints, so that intentional rule-breaking is explicit and reviewable. | P0 |
 | US-06 | As a user, I want MIDI output, so that generated music can be played and imported into a DAW. | P0 |
 | US-07 | As a researcher, I want the system to support multiple and custom styles, so that MusicLang can model diverse musical traditions over time. | P1 |
-| US-08 | As a user, I want future MusicXML/audio output, so that MusicLang can support notation and direct listening workflows. | P2 |
+| US-08 | As a user, I want MusicXML/audio output, so that MusicLang can support notation and direct listening workflows. | P2 |
 
 ### 关键用户旅程：局部 override Demo
 
@@ -98,13 +98,13 @@ MusicLang 是一门面向 vibe coding 时代的音乐编程语言。它不是用
 | F-06 | 支持配置式风格规则 | P0 | 风格可由 scale、chord、rhythm、range、voice-leading 等配置字段描述 |
 | F-07 | 支持风格驱动类型约束 | P0 | 违反当前风格硬约束时默认编译失败 |
 | F-08 | 支持局部 override | P0 | 局部代码块可显式关闭、替换或放宽某些风格规则 |
-| F-09 | 支持 REPL | P0 | Agent 可输入 MusicLang 片段并触发解析、检查、渲染和试听/输出 |
+| F-09 | 支持 REPL | P0 | Agent 可输入 MusicLang 片段并触发解析、检查、style 切换、IR 查看、MIDI 输出和异步播放启动 |
 | F-10 | 支持 MIDI 输出 | P0 | 通过 CLI/REPL 可输出可播放 `.mid` 文件 |
 | F-11 | 提供清晰错误信息 | P0 | 错误包含行列、规则名、当前 style、错误原因和建议的显式处理方式 |
 | F-12 | 支持多个内置风格的扩展框架 | P1 | 新增风格不需要修改 parser，只需添加风格配置与规则实现 |
 | F-13 | 支持 MusicXML 输出 | P2 | 可输出基础乐谱结构，用于导入记谱软件 |
-| F-14 | 支持音频输出 | P2 | 可通过 SoundFont 或外部合成器从 MIDI 渲染音频 |
-| F-15 | 支持不中断实时播放 | P2 | 代码变更可影响后续播放片段，不要求 MVP 实现 |
+| F-14 | 支持音频输出 | P2 | 可通过内置 WAV 渲染器输出快速试听音频，后续仍可接入 SoundFont 或外部合成器 |
+| F-15 | 支持不中断实时播放 | P2 | REPL `:play` 将当前 buffer 渲染为临时 MIDI，并在配置 `MUSICLANG_PLAYER` 时异步启动播放器；后续代码变更会影响下一次 `:play` artifact，`:stop` 可终止当前播放器进程 |
 
 ### 3.2 详细规则
 
@@ -116,22 +116,22 @@ MusicLang 应支持至少三种风格作用域：
 2. **局部风格**：作用于某个 block、voice、section 或 phrase。
 3. **自定义风格**：通过配置式规则定义新的风格上下文。
 
-示意语法仅供需求表达，最终语法待设计：
+当前语法示例：
 
 ```musiclang
-style Classical {
-  scale: major(C)
-  harmony: functional
-  parallel_fifths: error
+style StrictClassical extends Classical {
+  scale_pattern: C major
+  chord_quality_vocab: major minor dominant7
+  severity_parallel_fifths: error
 }
 
-score demo {
+score demo style StrictClassical {
   voice soprano {
     note C4, 1/4
     note E4, 1/4
   }
 
-  override parallel_fifths: allow {
+  override parallel_fifths allow reason "intentional open fifth color" {
     chord [C4, G4], 1/2
   }
 }
@@ -146,38 +146,36 @@ score demo {
 
 #### 3.2.3 配置式自定义风格
 
-MVP 的自定义风格以配置式为主，不要求用户写任意检查函数。
+当前自定义风格以配置式为主，不执行用户提供的任意检查函数。
 
-候选字段：
+已支持的代表性字段：
 
 | 字段 | 含义 |
 |------|------|
-| `scale` | 允许或偏好的音阶/调式 |
-| `chord_vocab` | 允许或偏好的和弦集合 |
-| `progression` | 和声进行规则 |
-| `rhythm_patterns` | 允许或偏好的节奏型 |
-| `meter` | 拍号与重音结构 |
+| `scale` / `scale_pattern` / `mode_pattern` | 允许或偏好的音阶/调式 |
+| `chord_vocab` / `chord_quality_vocab` / `set_class_vocab` | 允许或偏好的和弦、和弦质量与集合类 |
+| `harmonic_progression` / `cadence` / `harmonic_function` | 和声进行、终止式与功能规则 |
+| `rhythm_vocab` / `rhythm_concept` | 允许或偏好的节奏值与节奏概念 |
+| `meter` / `meter_catalog` | 拍号与拍号目录 |
 | `tempo_range` | 推荐速度范围 |
-| `instrument_ranges` | 乐器音域约束 |
-| `voice_leading` | 声部连接规则 |
-| `texture` | 单声部、复调、主调、循环层等织体约束 |
-| `strictness` | 规则严格程度或 error/warn/off 策略 |
+| `instrument_range` | 乐器音域约束 |
+| `max_melodic_leap` / `voice_spacing` / `contrapuntal_motion` / `parallel_fifths` / `voice_crossing` | 旋律、声部间距与对位规则 |
+| `texture` / `form` / `phrase_concept` | 织体、曲式与乐句组织 |
+| `dynamic_vocab` / `articulation_vocab` / `ornament` | 力度、奏法与装饰音词表 |
+| `non_chord_tone` / `tuning_system` / `world_tradition` / `historical_era` | 非和声音、调律、地域传统与历史风格标注 |
+| `severity_<rule>` | 规则严格程度：`error`、`warning` 或 `off` |
 
 #### 3.2.4 “集成所有人类乐理知识”的落地方式
 
-长期愿景是尽可能容纳人类已有乐理体系，但不应在 MVP 中一次性实现。
-
-推荐分层：
+当前已完成的分层实现：
 
 1. **Core Theory Kernel**：音高、音程、时值、和弦、音阶、节拍、声部、时间线。
-2. **Western Tonal Pack**：大小调、功能和声、常见终止式、基础声部连接。
-3. **Jazz Pack**：七和弦/扩展和弦、调式、ii-V-I、替代和弦。
-4. **Electronic/Rhythm Pack**：pattern、loop、drum grid、swing、syncopation。
-5. **Atonal/Experimental Pack**：集合理论、序列、非功能和声、不规则节奏。
-6. **World/Microtonal Packs**：非十二平均律、微分音、地域性调式与节奏系统。
-7. **User-defined Pack**：项目级自定义风格规则。
-
-MVP 应至少完成第 1 层，并选择 1-2 个风格包做端到端演示。
+2. **Western Tonal Pack**：大小调、功能和声、常见终止式、声部连接与对位规则。
+3. **Jazz Pack**：swing/syncopation、blues inflection、call-response、walking/riff bass、functional harmony、authentic cadence。
+4. **Electronic/Rhythm Pack**：pattern、loop、ostinato、drum grid、swing、syncopation。
+5. **Atonal/Experimental Pack**：集合理论与 set_class_vocab。
+6. **World/Microtonal Packs**：world_tradition、tuning_system 语义标注与理论目录查询。
+7. **User-defined Pack**：项目级自定义风格规则与 local theory 扩展。
 
 ## 4. 非功能需求
 
@@ -195,7 +193,7 @@ MVP 应至少完成第 1 层，并选择 1-2 个风格包做端到端演示。
 |----|------|--------|
 | NFR-04 | MusicLang 代码不应默认执行宿主系统命令 | P0 |
 | NFR-05 | REPL 不应允许任意文件系统写入，除显式导出路径外 | P0 |
-| NFR-06 | 自定义风格 MVP 采用配置式，避免执行不可信用户代码 | P0 |
+| NFR-06 | 自定义风格采用配置式，避免执行不可信用户代码 | P0 |
 
 ### 可用性
 
@@ -271,7 +269,7 @@ Render Backends
 | `class` | C, D#, Bb | 音级/变音 |
 | `octave` | 4 | 八度 |
 | `midi_number` | 60 | 可选规范化表示 |
-| `tuning` | 12-TET | 长期扩展字段 |
+| `tuning` | 12-TET | 当前支持 `tuning_system` 风格/语义标注；微分音调律仍属扩展方向 |
 
 #### Duration
 
@@ -287,7 +285,7 @@ Render Backends
 | `pitch` | C4 | 音高 |
 | `duration` | 1/4 | 时值 |
 | `velocity` | 80 | MIDI 力度 |
-| `articulation` | staccato | 长期扩展 |
+| `articulation` | staccato | 已支持 articulation 语句、风格词表检查、IR 元数据、MIDI 力度/时值调整与 MusicXML articulations |
 
 #### StyleContext
 
@@ -295,7 +293,7 @@ Render Backends
 |------|------|
 | `name` | 风格名称 |
 | `rules` | 当前启用的规则集合 |
-| `severity` | error/warn/off 策略，MVP 默认 error |
+| `severity` | error/warning/off 策略，默认 error；strict gates 拒绝 warning 与 off suppression |
 | `parent` | 继承来源，可选 |
 | `overrides` | 局部覆盖记录 |
 
@@ -313,21 +311,23 @@ music export input.music --format midi
 #### REPL 命令
 
 ```text
-:style Classical
 :load examples/override.music
-:play
-:export demo.mid
+:style Classical
 :diagnose
+:styles
+:formats
+:idioms
+:theory scales
+:play
+:stop
+:show source
+:show ir
+:export demo.mid
 :reset
+:quit
 ```
 
-REPL 状态模型仍待最终确认，候选方案：
-
-1. 累积状态：适合作曲过程。
-2. 单次片段：实现简单。
-3. 双模式：默认累积，同时支持临时试听片段。
-
-当前建议：MVP 采用双模式，但需用户最终确认。
+当前 REPL 采用累积 source buffer 模型：普通输入追加到 buffer，`:load` 替换 buffer，`:style StyleName` 将当前 session 的 style 声明注入 buffer，`:reset` 清空 buffer，`:diagnose` / `:show ir` / `:export` / `:play` 基于当前 buffer 执行。`:play` 写出临时 MIDI 并非阻塞启动 `MUSICLANG_PLAYER`；未配置播放器时仍输出 artifact 路径。
 
 ### 5.5 关键技术选型
 
@@ -431,17 +431,17 @@ REPL 状态模型仍待最终确认，候选方案：
 7. 导出并播放 MIDI。
 8. 展示诊断报告中保留了 override 记录。
 
-## 8. 开放问题
+## 8. 当前设计决策
 
-| ID | 问题 | 当前建议 |
+| ID | 决策 | 当前实现 |
 |----|------|----------|
-| Q-01 | REPL 状态模型采用累积、单次还是双模式？ | 建议双模式：默认累积，支持临时片段试听 |
-| Q-02 | MVP 第一批内置风格包具体选哪些？ | 建议 Core Theory + Classical 或 Core Theory + Electronic，避免一次性实现全部 |
-| Q-03 | MusicLang 语法是否类 Rust、类 Python，还是自定义声明式语法？ | 需要下一轮专门设计 |
-| Q-04 | 风格类型约束的最小规则集合是什么？ | 建议从 scale、chord_vocab、meter、instrument_range 开始 |
-| Q-05 | MIDI 播放由内置播放器、系统播放器还是仅导出文件完成？ | MVP 可先导出文件，REPL 调用外部播放器待定 |
-| Q-06 | 是否支持多风格叠加冲突解决？ | 建议 MVP 只支持嵌套覆盖，不做复杂合并 |
-| Q-07 | override 是否需要理由字段？ | 建议支持可选 reason，便于研究展示和 Agent 审查 |
+| D-01 | REPL 状态模型 | 累积 source buffer；`:load` 替换，`:style` 注入 style，`:reset` 清空 |
+| D-02 | 第一批内置风格包 | `Classical`、`Modal`、`Jazz`、`Minimalist`，并支持项目内 custom style |
+| D-03 | MusicLang 语法风格 | 自定义声明式语法，优先 AI/Agent 易写、低 token、可诊断 |
+| D-04 | 风格类型约束集合 | 已覆盖 scale、chord/meter/rhythm/tempo/range/counterpoint/cadence/form/texture/idiom 等规则 |
+| D-05 | 输出与试听 | CLI/REPL 导出 MIDI；CLI 支持 MIDI、MusicXML、WAV；WAV 用于快速试听 |
+| D-06 | 多风格作用域 | 支持 score style、`with style` 局部作用域、style inheritance 与 override audit trace |
+| D-07 | override 理由 | `override <rule> allow reason "..." { ... }` 记录审计理由；strict gates 拒绝 suppression |
 
 ## 附录
 
@@ -453,10 +453,9 @@ REPL 状态模型仍待最终确认，候选方案：
 - 创作自由。
 - Guard/Style 规则可选、可覆盖。
 
-### B. 推荐下一步
+### B. 当前后续方向
 
-1. 确定 MusicLang 语法风格。
-2. 确定 REPL 状态模型。
-3. 定义 Core Theory Kernel 的最小类型和规则。
-4. 设计 style/override 的最小语法。
-5. 生成架构设计文档与 MVP 任务拆分。
+1. 扩展更细的音乐理论目录与风格包，而不是重做核心语法。
+2. 增强 listening demos 与真实编曲质量，避免通过 override 或 severity 关闭规则。
+3. 继续提升 LSP/VS Code 编辑体验与 Agent 可修复诊断。
+4. 如需专业音色，后续可接入 SoundFont 或外部合成器；当前 WAV renderer 作为快速试听后端。

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "MusicLang",
+  "scopeName": "source.musiclang",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#keywords" },
+    { "include": "#musicLiterals" },
+    { "include": "#numbers" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.musiclang",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.musiclang",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.musiclang",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.musiclang",
+          "match": "\\b(?:for|in|if|then|else|and|or|not|with|to|by)\\b"
+        },
+        {
+          "name": "keyword.declaration.musiclang",
+          "match": "\\b(?:style|score|voice|section|fn|let)\\b"
+        },
+        {
+          "name": "keyword.other.musiclang",
+          "match": "\\b(?:title|composer|tempo|meter|key|program|instrument|channel|volume|pan|note|chord|drum|rest|glissando|tremolo|degree|scale|pedal|ostinato|sequence|tuplet|transpose|arpeggio|strum|roman|progression|cadence|modulate|dynamic|velocity|articulation|ornament|non_chord_tone|tuning_system|world_tradition|historical_era|harmonic_function|call|override|allow|reason|play|duration|pitch|first|at|len|cat|concat|map|filter|mapi|merge|stretch|repeat|inv|steps|repeats)\\b"
+        },
+        {
+          "name": "constant.language.boolean.musiclang",
+          "match": "\\b(?:true|false)\\b"
+        }
+      ]
+    },
+    "musicLiterals": {
+      "patterns": [
+        {
+          "name": "constant.numeric.duration.musiclang",
+          "match": "\\b\\d+/\\d+\\b"
+        },
+        {
+          "name": "constant.other.interval.musiclang",
+          "match": "\\b(?:m2|M2|m3|M3|P4|TT|P5|m6|M6|m7|M7|P8)\\b"
+        },
+        {
+          "name": "constant.other.pitch.musiclang",
+          "match": "\\b[A-G](?:#|b)?-?\\d+\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.integer.musiclang",
+          "match": "\\b\\d+\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.musiclang",
+          "match": "==|!=|<=|>=|\\.\\.|[=<>+\\-*/:,.|]"
+        },
+        {
+          "name": "punctuation.bracket.musiclang",
+          "match": "[{}\\[\\]()]"
+        }
+      ]
+    }
+  }
+}

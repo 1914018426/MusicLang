@@ -10,11 +10,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci --prefix editors/vscode
+      - run: npm run --prefix editors/vscode compile
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: |
           for demo in \
+            examples/algorithmic_expression.music \
             examples/demo_classical_minuet.music \
             examples/demo_jazz_blues.music \
             examples/demo_jazz_complete.music \
@@ -26,6 +34,7 @@ jobs:
           done
       - run: |
           for demo in \
+            examples/algorithmic_expression.music \
             examples/demo_classical_minuet.music \
             examples/demo_jazz_blues.music \
             examples/demo_jazz_complete.music \

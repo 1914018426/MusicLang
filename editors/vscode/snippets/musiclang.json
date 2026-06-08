@@ -1,0 +1,103 @@
+{
+  "Score": {
+    "prefix": "score",
+    "body": [
+      "score ${1:name} {",
+      "  title \"${2:Title}\"",
+      "  composer \"${3:Composer}\"",
+      "  tempo ${4:120}",
+      "  meter ${5:4/4}",
+      "  key ${6:C major}",
+      "",
+      "  voice ${7:lead} {",
+      "    instrument ${8:piano}",
+      "    channel ${9:0}",
+      "    volume ${10:96}",
+      "    pan ${11:64}",
+      "    note ${12:C4}, ${13:1/4}",
+      "  }",
+      "}"
+    ],
+    "description": "Create a MusicLang score with metadata and one voice."
+  },
+  "Voice": {
+    "prefix": "voice",
+    "body": [
+      "voice ${1:name} {",
+      "  instrument ${2:piano}",
+      "  channel ${3:0}",
+      "  volume ${4:96}",
+      "  pan ${5:64}",
+      "  ${0:note C4, 1/4}",
+      "}"
+    ],
+    "description": "Create a voice block."
+  },
+  "Note": {
+    "prefix": "note",
+    "body": "note ${1:C4}, ${2:1/4}",
+    "description": "Insert a note statement."
+  },
+  "Chord": {
+    "prefix": "chord",
+    "body": "chord [${1:C4, E4, G4}], ${2:1/2}",
+    "description": "Insert a literal chord statement."
+  },
+  "Named Chord": {
+    "prefix": "namedchord",
+    "body": "chord ${1:C4} ${2:major7}, ${3:1/2}",
+    "description": "Insert a named chord statement."
+  },
+  "Style": {
+    "prefix": "style",
+    "body": [
+      "style ${1:MyStyle} {",
+      "  scale_pattern: ${2:C major}",
+      "  meter: ${3:4/4}",
+      "  chord_quality_vocab: ${4:major minor dominant7}",
+      "  rhythm_vocab: ${5:1/4 1/8}",
+      "}"
+    ],
+    "description": "Create a style rule block."
+  },
+  "Override": {
+    "prefix": "override",
+    "body": [
+      "override ${1:scale} allow reason \"${2:explain why this musical exception is intentional}\" {",
+      "  ${0:note C#4, 1/4}",
+      "}"
+    ],
+    "description": "Create an audited style-rule override block."
+  },
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:motif} {",
+      "  note ${2:C4}, ${3:1/4}",
+      "  note ${4:E4}, ${5:1/4}",
+      "  note ${6:G4}, ${7:1/2}",
+      "}"
+    ],
+    "description": "Create a reusable musical function block."
+  },
+  "Expression Function": {
+    "prefix": "fnexpr",
+    "body": "fn ${1:motif}() = [{p:at([${2:C4, E4, G4}], i), d:${3:1/8}} for i in 0..${4:3}]",
+    "description": "Create an expression-bodied function that returns generated phrase material."
+  },
+  "Play": {
+    "prefix": "play",
+    "body": "play ${1:motif}()",
+    "description": "Play phrase material or a function result."
+  },
+  "Phrase Transform Chain": {
+    "prefix": "transform",
+    "body": "${1:phrase}.mapi(${2:mark}).filter(${3:keep}).map(${4:lift})",
+    "description": "Chain map/filter/mapi transforms with bare function names."
+  },
+  "Direct Phrase Transform": {
+    "prefix": "mapfilter",
+    "body": "map(filter(mapi(${1:phrase}, ${2:mark}), ${3:keep}), ${4:lift})",
+    "description": "Apply mapi/filter/map transforms with direct builtin calls."
+  }
+}

@@ -3,6 +3,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command as ProcessCommand};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
 
@@ -81,8 +83,22 @@ enum Command {
 
         #[arg(long)]
         find: Option<String>,
+
+        #[arg(long)]
+        json: bool,
     },
-    Styles,
+    Idioms {
+        #[arg(long)]
+        json: bool,
+    },
+    Styles {
+        #[arg(long)]
+        json: bool,
+    },
+    Formats {
+        #[arg(long)]
+        json: bool,
+    },
     Repl,
 }
 
@@ -118,8 +134,10 @@ fn run(cli: Cli) -> Result<(), String> {
             json,
             strict,
         } => analyze_file(&input, json, strict),
-        Command::Theory { domain, find } => theory(domain.as_deref(), find.as_deref()),
-        Command::Styles => styles(),
+        Command::Theory { domain, find, json } => theory(domain.as_deref(), find.as_deref(), json),
+        Command::Idioms { json } => idioms(json),
+        Command::Styles { json } => styles(json),
+        Command::Formats { json } => formats(json),
         Command::Repl => repl(),
     }
 }
@@ -172,7 +190,7 @@ fn build_project(manifest: Option<&str>, strict: bool) -> Result<(), String> {
     let manifest_path = manifest.unwrap_or("music.toml");
     let manifest_text = fs::read_to_string(manifest_path)
         .map_err(|error| format!("failed to read {manifest_path}: {error}"))?;
-    let project = parse_manifest(&manifest_text);
+    let project = parse_manifest(&manifest_text)?;
     let root = Path::new(manifest_path).parent().unwrap_or(Path::new("."));
     let input = root.join(&project.source);
     let output = root.join(&project.output);
@@ -190,29 +208,63 @@ fn build_project(manifest: Option<&str>, strict: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_manifest(source: &str) -> ProjectManifest {
+fn strip_manifest_comment(value: &str) -> &str {
+    let mut in_string = false;
+    for (index, ch) in value.char_indices() {
+        match ch {
+            '"' => in_string = !in_string,
+            '#' if !in_string => return &value[..index],
+            _ => {}
+        }
+    }
+    value
+}
+
+fn parse_manifest(source: &str) -> Result<ProjectManifest, String> {
     let mut manifest = ProjectManifest::default();
-    for line in source.lines() {
+    for (line_index, line) in source.lines().enumerate() {
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        let value = value.trim().trim_matches('"').to_string();
+        let value = strip_manifest_comment(value)
+            .trim()
+            .trim_matches('"')
+            .to_string();
         match key.trim() {
             "name" => manifest.name = value,
             "source" => manifest.source = value,
             "output" => manifest.output = value,
             "format" => manifest.format = value,
-            "strict" => manifest.strict = value == "true",
+            "strict" => match value.as_str() {
+                "true" => manifest.strict = true,
+                "false" => manifest.strict = false,
+                _ => {
+                    return Err(format!(
+                        "invalid music.toml strict value at {}: expected true or false",
+                        line_index + 1
+                    ));
+                }
+            },
             _ => {}
         }
     }
-    manifest
+    Ok(manifest)
+}
+
+fn read_source_map(
+    input: &Path,
+) -> Result<(musiclang_core::SourceMap, musiclang_core::SourceId), String> {
+    let source = fs::read_to_string(input)
+        .map_err(|error| format!("failed to read {}: {error}", input.display()))?;
+    let mut sources = musiclang_core::SourceMap::new();
+    let id = sources.add(input.display().to_string(), source);
+    Ok((sources, id))
 }
 
 fn compile_file(input: &str, output: Option<&str>, strict: bool) -> Result<(), String> {
-    let source =
-        fs::read_to_string(input).map_err(|error| format!("failed to read {input}: {error}"))?;
-    let ir = compile_for_output(&source, strict)?;
+    let (sources, source_id) = read_source_map(Path::new(input))?;
+    let source_file = sources.get(source_id).unwrap();
+    let ir = compile_for_output(source_file, strict)?;
     let bytes = musiclang_midi::render_midi(&ir)
         .map_err(|error| format!("failed to render MIDI: {error}"))?;
     let output = output.unwrap_or("output.mid");
@@ -231,23 +283,27 @@ fn compile_file(input: &str, output: Option<&str>, strict: bool) -> Result<(), S
     Ok(())
 }
 
-fn compile_for_output(source: &str, strict: bool) -> Result<musiclang_core::ScoreIr, String> {
+fn compile_for_output(
+    source_file: &musiclang_core::SourceFile,
+    strict: bool,
+) -> Result<musiclang_core::ScoreIr, String> {
     if strict {
-        reject_strict_suppression(source)?;
-        let compilation = musiclang_compiler::compile_source_with_diagnostics(source)
+        reject_strict_suppression(&source_file.text)?;
+        let compilation = musiclang_compiler::compile_source_file_with_diagnostics(source_file)
             .map_err(format_diagnostics)?;
         if !compilation.diagnostics.is_empty() {
             return Err(format_diagnostics(compilation.diagnostics));
         }
         Ok(compilation.ir)
     } else {
-        musiclang_compiler::compile_source(source).map_err(format_diagnostics)
+        musiclang_compiler::compile_source_file(source_file).map_err(format_diagnostics)
     }
 }
 
 fn reject_strict_suppression(source: &str) -> Result<(), String> {
     for (line_index, line) in source.lines().enumerate() {
-        let trimmed = line.trim_start();
+        let source_line = line.split_once("//").map_or(line, |(code, _)| code);
+        let trimmed = source_line.trim_start();
         if trimmed.starts_with("override ") {
             return Err(format!(
                 "strict quality gate rejects override suppression at {}:{}",
@@ -289,9 +345,9 @@ fn export_file_to(
     format: &str,
     strict: bool,
 ) -> Result<(), String> {
-    let source = fs::read_to_string(input)
-        .map_err(|error| format!("failed to read {}: {error}", input.display()))?;
-    let ir = compile_for_output(&source, strict)?;
+    let (sources, source_id) = read_source_map(input)?;
+    let source_file = sources.get(source_id).unwrap();
+    let ir = compile_for_output(source_file, strict)?;
     let (output, bytes) = match format {
         "midi" | "mid" => (
             output.unwrap_or(Path::new("output.mid")).to_path_buf(),
@@ -316,28 +372,28 @@ fn export_file_to(
 }
 
 fn check_file(input: &str, strict: bool) -> Result<(), String> {
-    let source =
-        fs::read_to_string(input).map_err(|error| format!("failed to read {input}: {error}"))?;
+    let (sources, source_id) = read_source_map(Path::new(input))?;
+    let source_file = sources.get(source_id).unwrap();
     if strict {
-        reject_strict_suppression(&source)?;
-        let compilation = musiclang_compiler::compile_source_with_diagnostics(&source)
+        reject_strict_suppression(&source_file.text)?;
+        let compilation = musiclang_compiler::compile_source_file_with_diagnostics(source_file)
             .map_err(format_diagnostics)?;
         if !compilation.diagnostics.is_empty() {
             return Err(format_diagnostics(compilation.diagnostics));
         }
     } else {
-        musiclang_compiler::compile_source(&source).map_err(format_diagnostics)?;
+        musiclang_compiler::compile_source_file(source_file).map_err(format_diagnostics)?;
     }
     println!("ok");
     Ok(())
 }
 
 fn diagnose_file(input: &str, json: bool) -> Result<(), String> {
-    let source =
-        fs::read_to_string(input).map_err(|error| format!("failed to read {input}: {error}"))?;
-    let diagnostics = musiclang_compiler::diagnose_source(&source);
+    let (sources, source_id) = read_source_map(Path::new(input))?;
+    let source_file = sources.get(source_id).unwrap();
+    let diagnostics = musiclang_compiler::diagnose_source_file(source_file);
     if json {
-        print_diagnostics_json(&diagnostics);
+        print_diagnostics_json(&diagnostics, Some(&sources));
     } else if diagnostics.is_empty() {
         println!("ok");
     } else {
@@ -347,17 +403,17 @@ fn diagnose_file(input: &str, json: bool) -> Result<(), String> {
 }
 
 fn ast_file(input: &str) -> Result<(), String> {
-    let source =
-        fs::read_to_string(input).map_err(|error| format!("failed to read {input}: {error}"))?;
-    let ast = musiclang_parser::parse_source(&source).map_err(format_diagnostics)?;
+    let (sources, source_id) = read_source_map(Path::new(input))?;
+    let source_file = sources.get(source_id).unwrap();
+    let ast = musiclang_parser::parse_source_file(source_file).map_err(format_diagnostics)?;
     println!("{ast:#?}");
     Ok(())
 }
 
 fn ir_file(input: &str) -> Result<(), String> {
-    let source =
-        fs::read_to_string(input).map_err(|error| format!("failed to read {input}: {error}"))?;
-    let ir = musiclang_compiler::compile_source(&source).map_err(format_diagnostics)?;
+    let (sources, source_id) = read_source_map(Path::new(input))?;
+    let source_file = sources.get(source_id).unwrap();
+    let ir = musiclang_compiler::compile_source_file(source_file).map_err(format_diagnostics)?;
     println!("{ir:#?}");
     Ok(())
 }
@@ -378,6 +434,22 @@ struct SonorityAnalysis {
     root: Option<String>,
     quality: Option<String>,
     roman: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MotifAnalysis {
+    name: String,
+    count: usize,
+    total_duration_ticks: u32,
+    transforms: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PhraseAnalysis {
+    kind: String,
+    label: Option<String>,
+    start_tick: u32,
+    duration_ticks: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -404,19 +476,34 @@ struct ScoreAnalysis {
     roman_roots: Vec<String>,
     sonorities: Vec<SonorityAnalysis>,
     tracks: Vec<TrackAnalysis>,
+    harmonic_event_count: usize,
+    melodic_event_count: usize,
+    form_event_count: usize,
+    motif_event_count: usize,
+    phrase_event_count: usize,
+    section_phrase_count: usize,
+    motif_phrase_count: usize,
+    periodic_phrase_candidate: bool,
+    longest_phrase_duration_ticks: u32,
+    phrases: Vec<PhraseAnalysis>,
+    distinct_motif_count: usize,
+    repeated_motif_count: usize,
+    transformed_motif_count: usize,
+    longest_motif_run: usize,
+    motifs: Vec<MotifAnalysis>,
     override_count: usize,
     diagnostic_count: usize,
     warning_count: usize,
 }
 
 fn analyze_file(input: &str, json: bool, strict: bool) -> Result<(), String> {
-    let source =
-        fs::read_to_string(input).map_err(|error| format!("failed to read {input}: {error}"))?;
+    let (sources, source_id) = read_source_map(Path::new(input))?;
+    let source_file = sources.get(source_id).unwrap();
     if strict {
-        reject_strict_suppression(&source)?;
+        reject_strict_suppression(&source_file.text)?;
     }
-    let compilation =
-        musiclang_compiler::compile_source_with_diagnostics(&source).map_err(format_diagnostics)?;
+    let compilation = musiclang_compiler::compile_source_file_with_diagnostics(source_file)
+        .map_err(format_diagnostics)?;
     let analysis = analyze_score(&compilation.ir, &compilation.diagnostics);
     if json {
         print_analysis_json(&analysis);
@@ -523,6 +610,8 @@ fn analyze_score(
             }
         })
         .collect();
+    let motif_analysis = analyze_motifs(&ir.motif_events);
+    let phrase_analysis = analyze_phrases(&ir.phrase_events);
     let warning_count = diagnostics
         .iter()
         .filter(|diagnostic| diagnostic.severity == musiclang_core::Severity::Warning)
@@ -550,6 +639,21 @@ fn analyze_score(
         roman_roots,
         sonorities,
         tracks,
+        harmonic_event_count: ir.harmonic_events.len(),
+        melodic_event_count: ir.melodic_events.len(),
+        form_event_count: ir.form_events.len(),
+        motif_event_count: ir.motif_events.len(),
+        phrase_event_count: phrase_analysis.phrases.len(),
+        section_phrase_count: phrase_analysis.section_count,
+        motif_phrase_count: phrase_analysis.motif_count,
+        periodic_phrase_candidate: phrase_analysis.section_count >= 2,
+        longest_phrase_duration_ticks: phrase_analysis.longest_duration_ticks,
+        phrases: phrase_analysis.phrases,
+        distinct_motif_count: motif_analysis.distinct_count,
+        repeated_motif_count: motif_analysis.repeated_count,
+        transformed_motif_count: motif_analysis.transformed_count,
+        longest_motif_run: motif_analysis.longest_run,
+        motifs: motif_analysis.motifs,
         override_count: ir.overrides.len(),
         diagnostic_count: diagnostics.len(),
         warning_count,
@@ -637,6 +741,43 @@ fn print_analysis(analysis: &ScoreAnalysis) {
             sonority.roman.as_deref().unwrap_or("unknown")
         );
     }
+    println!("harmonic_events: {}", analysis.harmonic_event_count);
+    println!("melodic_events: {}", analysis.melodic_event_count);
+    println!("form_events: {}", analysis.form_event_count);
+    println!("motif_events: {}", analysis.motif_event_count);
+    println!("phrase_events: {}", analysis.phrase_event_count);
+    println!("section_phrases: {}", analysis.section_phrase_count);
+    println!("motif_phrases: {}", analysis.motif_phrase_count);
+    println!(
+        "periodic_phrase_candidate: {}",
+        analysis.periodic_phrase_candidate
+    );
+    println!(
+        "longest_phrase_duration_ticks: {}",
+        analysis.longest_phrase_duration_ticks
+    );
+    for phrase in &analysis.phrases {
+        println!(
+            "phrase {}: label={}, start_tick={}, duration_ticks={}",
+            phrase.kind,
+            phrase.label.as_deref().unwrap_or("none"),
+            phrase.start_tick,
+            phrase.duration_ticks
+        );
+    }
+    println!("distinct_motifs: {}", analysis.distinct_motif_count);
+    println!("repeated_motifs: {}", analysis.repeated_motif_count);
+    println!("transformed_motifs: {}", analysis.transformed_motif_count);
+    println!("longest_motif_run: {}", analysis.longest_motif_run);
+    for motif in &analysis.motifs {
+        println!(
+            "motif {}: count={}, total_duration_ticks={}, transforms={}",
+            motif.name,
+            motif.count,
+            motif.total_duration_ticks,
+            motif.transforms.join("+")
+        );
+    }
     for track in &analysis.tracks {
         if let (Some(low), Some(high)) = (&track.pitch_min, &track.pitch_max) {
             println!(
@@ -656,35 +797,147 @@ fn print_analysis(analysis: &ScoreAnalysis) {
 }
 
 fn print_analysis_json(analysis: &ScoreAnalysis) {
-    print!(
-        "{{\"title\":\"{}\",\"composer\":{},\"tempo_bpm\":{},\"meter\":{},\"key\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"bar_ticks\":{},\"duration_bars\":{},\"density_per_bar\":{},\"repeated_bar_count\":{},\"repeated_bar_ratio_percent\":{},\"longest_repeated_bar_run\":{},\"max_simultaneous_events\":{},\"texture\":\"{}\",\"pitch_min\":{},\"pitch_max\":{},\"pitch_classes\":{},\"roman_roots\":{},\"sonorities\":{},\"tracks\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
-        json_escape(&analysis.title),
-        json_option(analysis.composer.as_deref()),
-        analysis.tempo_bpm,
-        json_meter(analysis.meter),
-        json_key_signature(analysis.key),
-        analysis.track_count,
-        analysis.event_count,
-        analysis.duration_ticks,
-        analysis.bar_ticks,
-        analysis.duration_bars,
-        analysis.density_per_bar,
-        analysis.repeated_bar_count,
-        analysis.repeated_bar_ratio_percent,
-        analysis.longest_repeated_bar_run,
-        analysis.max_simultaneous_events,
-        json_escape(&analysis.texture),
-        json_option(analysis.pitch_min.as_deref()),
-        json_option(analysis.pitch_max.as_deref()),
-        json_string_array(&analysis.pitch_classes),
-        json_string_array(&analysis.roman_roots),
-        json_sonority_analysis(&analysis.sonorities),
-        json_track_analysis(&analysis.tracks),
-        analysis.override_count,
-        analysis.diagnostic_count,
-        analysis.warning_count,
+    println!(
+        "{}",
+        serde_json::json!({
+            "title": analysis.title,
+            "composer": analysis.composer,
+            "tempo_bpm": analysis.tempo_bpm,
+            "meter": analysis_json_meter(analysis.meter),
+            "key": analysis_json_key_signature(analysis.key),
+            "track_count": analysis.track_count,
+            "event_count": analysis.event_count,
+            "duration_ticks": analysis.duration_ticks,
+            "bar_ticks": analysis.bar_ticks,
+            "duration_bars": analysis.duration_bars,
+            "density_per_bar": analysis.density_per_bar,
+            "repeated_bar_count": analysis.repeated_bar_count,
+            "repeated_bar_ratio_percent": analysis.repeated_bar_ratio_percent,
+            "longest_repeated_bar_run": analysis.longest_repeated_bar_run,
+            "max_simultaneous_events": analysis.max_simultaneous_events,
+            "texture": analysis.texture,
+            "pitch_min": analysis.pitch_min,
+            "pitch_max": analysis.pitch_max,
+            "pitch_classes": analysis.pitch_classes,
+            "roman_roots": analysis.roman_roots,
+            "sonorities": analysis.sonorities.iter().map(analysis_json_sonority).collect::<Vec<_>>(),
+            "tracks": analysis.tracks.iter().map(analysis_json_track).collect::<Vec<_>>(),
+            "harmonic_event_count": analysis.harmonic_event_count,
+            "melodic_event_count": analysis.melodic_event_count,
+            "form_event_count": analysis.form_event_count,
+            "motif_event_count": analysis.motif_event_count,
+            "phrase_event_count": analysis.phrase_event_count,
+            "section_phrase_count": analysis.section_phrase_count,
+            "motif_phrase_count": analysis.motif_phrase_count,
+            "periodic_phrase_candidate": analysis.periodic_phrase_candidate,
+            "longest_phrase_duration_ticks": analysis.longest_phrase_duration_ticks,
+            "phrases": analysis.phrases.iter().map(analysis_json_phrase).collect::<Vec<_>>(),
+            "distinct_motif_count": analysis.distinct_motif_count,
+            "repeated_motif_count": analysis.repeated_motif_count,
+            "transformed_motif_count": analysis.transformed_motif_count,
+            "longest_motif_run": analysis.longest_motif_run,
+            "motifs": analysis.motifs.iter().map(analysis_json_motif).collect::<Vec<_>>(),
+            "override_count": analysis.override_count,
+            "diagnostic_count": analysis.diagnostic_count,
+            "warning_count": analysis.warning_count,
+        })
     );
-    println!();
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PhraseSummary {
+    section_count: usize,
+    motif_count: usize,
+    longest_duration_ticks: u32,
+    phrases: Vec<PhraseAnalysis>,
+}
+
+fn analyze_phrases(events: &[musiclang_core::PhraseEventIr]) -> PhraseSummary {
+    let phrases = events
+        .iter()
+        .map(|event| PhraseAnalysis {
+            kind: event.kind.clone(),
+            label: event.label.clone(),
+            start_tick: event.start_tick,
+            duration_ticks: event.duration_ticks,
+        })
+        .collect::<Vec<_>>();
+    PhraseSummary {
+        section_count: phrases
+            .iter()
+            .filter(|phrase| phrase.kind == "section")
+            .count(),
+        motif_count: phrases
+            .iter()
+            .filter(|phrase| phrase.kind == "motif_call")
+            .count(),
+        longest_duration_ticks: phrases
+            .iter()
+            .map(|phrase| phrase.duration_ticks)
+            .max()
+            .unwrap_or(0),
+        phrases,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MotifSummary {
+    distinct_count: usize,
+    repeated_count: usize,
+    transformed_count: usize,
+    longest_run: usize,
+    motifs: Vec<MotifAnalysis>,
+}
+
+fn analyze_motifs(events: &[musiclang_core::MotifEventIr]) -> MotifSummary {
+    let mut by_name = BTreeMap::<String, (usize, u32, BTreeSet<String>)>::new();
+    for event in events {
+        let entry = by_name.entry(event.name.clone()).or_default();
+        entry.0 += 1;
+        entry.1 += event.duration_ticks;
+        if let Some(transform) = &event.transform {
+            entry.2.insert(transform.clone());
+        }
+    }
+    let motifs = by_name
+        .into_iter()
+        .map(
+            |(name, (count, total_duration_ticks, transforms))| MotifAnalysis {
+                name,
+                count,
+                total_duration_ticks,
+                transforms: transforms.into_iter().collect(),
+            },
+        )
+        .collect::<Vec<_>>();
+    let repeated_count = motifs.iter().filter(|motif| motif.count > 1).count();
+    let transformed_count = events
+        .iter()
+        .filter(|event| event.transform.is_some())
+        .count();
+    MotifSummary {
+        distinct_count: motifs.len(),
+        repeated_count,
+        transformed_count,
+        longest_run: longest_motif_run(events),
+        motifs,
+    }
+}
+
+fn longest_motif_run(events: &[musiclang_core::MotifEventIr]) -> usize {
+    let mut longest = 0;
+    let mut current = 0;
+    let mut previous = None::<&str>;
+    for event in events {
+        if previous == Some(event.name.as_str()) {
+            current += 1;
+        } else {
+            current = 1;
+            previous = Some(&event.name);
+        }
+        longest = longest.max(current);
+    }
+    longest
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -708,11 +961,12 @@ fn analyze_repeated_bars(
             for event in &track.events {
                 if event.start_tick >= bar_start && event.start_tick < bar_end {
                     entries.push(format!(
-                        "{}:{}:{}:{}",
+                        "{}:{}:{}:{}:{}",
                         track.name,
                         event.start_tick - bar_start,
                         event.duration_ticks,
-                        event.pitch.midi_number().unwrap_or(0)
+                        event.pitch.octave(),
+                        event.pitch.class().semitone()
                     ));
                 }
             }
@@ -861,72 +1115,64 @@ fn classify_texture(track_count: usize, max_simultaneous_events: usize) -> &'sta
     }
 }
 
-fn json_meter(meter: Option<musiclang_core::Meter>) -> String {
+fn analysis_json_meter(meter: Option<musiclang_core::Meter>) -> serde_json::Value {
     meter
         .map(|meter| {
-            format!(
-                "{{\"numerator\":{},\"denominator\":{}}}",
-                meter.numerator, meter.denominator
-            )
+            serde_json::json!({
+                "numerator": meter.numerator,
+                "denominator": meter.denominator,
+            })
         })
-        .unwrap_or_else(|| "null".to_string())
+        .unwrap_or(serde_json::Value::Null)
 }
 
-fn json_key_signature(key: Option<musiclang_core::KeySignature>) -> String {
+fn analysis_json_key_signature(key: Option<musiclang_core::KeySignature>) -> serde_json::Value {
     key.map(|key| {
-        format!(
-            "{{\"tonic\":\"{}\",\"mode\":\"{}\",\"fifths\":{}}}",
-            key_signature_tonic(key),
-            key_signature_mode(key),
-            key.fifths
-        )
+        serde_json::json!({
+            "tonic": key_signature_tonic(key),
+            "mode": key_signature_mode(key),
+            "fifths": key.fifths,
+        })
     })
-    .unwrap_or_else(|| "null".to_string())
+    .unwrap_or(serde_json::Value::Null)
 }
 
-fn json_string_array(values: &[String]) -> String {
-    let values = values
-        .iter()
-        .map(|value| format!("\"{}\"", json_escape(value)))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{values}]")
+fn analysis_json_sonority(sonority: &SonorityAnalysis) -> serde_json::Value {
+    serde_json::json!({
+        "tick": sonority.tick,
+        "pitch_classes": sonority.pitch_classes,
+        "root": sonority.root,
+        "quality": sonority.quality,
+        "roman": sonority.roman,
+    })
 }
 
-fn json_sonority_analysis(sonorities: &[SonorityAnalysis]) -> String {
-    let sonorities = sonorities
-        .iter()
-        .map(|sonority| {
-            format!(
-                "{{\"tick\":{},\"pitch_classes\":{},\"root\":{},\"quality\":{},\"roman\":{}}}",
-                sonority.tick,
-                json_string_array(&sonority.pitch_classes),
-                json_option(sonority.root.as_deref()),
-                json_option(sonority.quality.as_deref()),
-                json_option(sonority.roman.as_deref())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{sonorities}]")
+fn analysis_json_track(track: &TrackAnalysis) -> serde_json::Value {
+    serde_json::json!({
+        "name": track.name,
+        "event_count": track.event_count,
+        "density_per_bar": track.density_per_bar,
+        "pitch_min": track.pitch_min,
+        "pitch_max": track.pitch_max,
+    })
 }
 
-fn json_track_analysis(tracks: &[TrackAnalysis]) -> String {
-    let tracks = tracks
-        .iter()
-        .map(|track| {
-            format!(
-                "{{\"name\":\"{}\",\"event_count\":{},\"density_per_bar\":{},\"pitch_min\":{},\"pitch_max\":{}}}",
-                json_escape(&track.name),
-                track.event_count,
-                track.density_per_bar,
-                json_option(track.pitch_min.as_deref()),
-                json_option(track.pitch_max.as_deref())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{tracks}]")
+fn analysis_json_motif(motif: &MotifAnalysis) -> serde_json::Value {
+    serde_json::json!({
+        "name": motif.name,
+        "count": motif.count,
+        "total_duration_ticks": motif.total_duration_ticks,
+        "transforms": motif.transforms,
+    })
+}
+
+fn analysis_json_phrase(phrase: &PhraseAnalysis) -> serde_json::Value {
+    serde_json::json!({
+        "kind": phrase.kind,
+        "label": phrase.label,
+        "start_tick": phrase.start_tick,
+        "duration_ticks": phrase.duration_ticks,
+    })
 }
 
 fn format_key_signature(key: musiclang_core::KeySignature) -> String {
@@ -1039,28 +1285,40 @@ fn roman_degree(
     }
 }
 
-fn theory(domain: Option<&str>, find: Option<&str>) -> Result<(), String> {
+fn theory(domain: Option<&str>, find: Option<&str>, json: bool) -> Result<(), String> {
     let catalog = musiclang_core::theory_catalog();
     if let Some(id) = find {
         let (domain, entry) = catalog
             .find(id)
             .ok_or_else(|| format!("unknown theory entry `{id}`"))?;
-        print_theory_entry(domain, entry);
+        if json {
+            print_theory_entry_json(domain, entry);
+        } else {
+            print_theory_entry(domain, entry);
+        }
         return Ok(());
     }
     if let Some(domain) = domain {
         let domain = domain
             .parse::<musiclang_core::TheoryDomain>()
             .map_err(|error| error.to_string())?;
-        for entry in catalog.entries(domain) {
-            print_theory_entry(domain, entry);
+        if json {
+            print_theory_domain_json(&catalog, domain);
+        } else {
+            for entry in catalog.entries(domain) {
+                print_theory_entry(domain, entry);
+            }
         }
         return Ok(());
     }
-    for domain in musiclang_core::TheoryCatalog::domains() {
-        println!("{domain}");
-        for entry in catalog.entries(*domain) {
-            println!("  {}: {}", entry.id, entry.name);
+    if json {
+        print_theory_catalog_json(&catalog);
+    } else {
+        for domain in musiclang_core::TheoryCatalog::domains() {
+            println!("{domain}");
+            for entry in catalog.entries(*domain) {
+                println!("  {}: {}", entry.id, entry.name);
+            }
         }
     }
     Ok(())
@@ -1073,17 +1331,178 @@ fn print_theory_entry(domain: musiclang_core::TheoryDomain, entry: &musiclang_co
     println!("  pattern: {}", entry.pattern.join(" "));
 }
 
-fn styles() -> Result<(), String> {
-    for style in musiclang_core::BUILT_IN_STYLES {
-        println!("{}: {}", style.id, style.name);
-        println!("  {}", style.description);
+fn theory_entry_json(
+    domain: musiclang_core::TheoryDomain,
+    entry: &musiclang_core::TheoryEntry,
+) -> serde_json::Value {
+    serde_json::json!({
+        "domain": domain.to_string(),
+        "id": entry.id,
+        "name": entry.name,
+        "description": entry.description,
+        "pattern": entry.pattern,
+    })
+}
+
+fn print_theory_entry_json(
+    domain: musiclang_core::TheoryDomain,
+    entry: &musiclang_core::TheoryEntry,
+) {
+    println!("{}", theory_entry_json(domain, entry));
+}
+
+fn print_theory_domain_json(
+    catalog: &musiclang_core::TheoryCatalog,
+    domain: musiclang_core::TheoryDomain,
+) {
+    println!(
+        "{}",
+        serde_json::json!({
+            "domain": domain.to_string(),
+            "entries": catalog.entries(domain)
+                .iter()
+                .map(|entry| theory_entry_json(domain, entry))
+                .collect::<Vec<_>>(),
+        })
+    );
+}
+
+fn print_theory_catalog_json(catalog: &musiclang_core::TheoryCatalog) {
+    println!(
+        "{}",
+        serde_json::json!({
+            "domains": musiclang_core::TheoryCatalog::domains()
+                .iter()
+                .map(|domain| serde_json::json!({
+                    "domain": domain.to_string(),
+                    "entries": catalog.entries(*domain)
+                        .iter()
+                        .map(|entry| theory_entry_json(*domain, entry))
+                        .collect::<Vec<_>>(),
+                }))
+                .collect::<Vec<_>>(),
+        })
+    );
+}
+
+fn styles(json: bool) -> Result<(), String> {
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "styles": musiclang_core::BUILT_IN_STYLES
+                    .iter()
+                    .map(|style| serde_json::json!({
+                        "id": style.id,
+                        "name": style.name,
+                        "description": style.description,
+                    }))
+                    .collect::<Vec<_>>(),
+            })
+        );
+    } else {
+        write_styles(&mut io::stdout()).map_err(|error| error.to_string())?;
     }
     Ok(())
 }
 
+fn write_styles(output: &mut impl Write) -> io::Result<()> {
+    for style in musiclang_core::BUILT_IN_STYLES {
+        writeln!(output, "{}: {}", style.id, style.name)?;
+        writeln!(output, "  {}", style.description)?;
+    }
+    Ok(())
+}
+
+fn export_formats() -> [(&'static str, &'static [&'static str], &'static str); 3] {
+    [
+        ("midi", &["mid"], "Standard MIDI file"),
+        ("musicxml", &["xml"], "MusicXML notation interchange"),
+        ("wav", &["audio"], "WAV audio render"),
+    ]
+}
+
+fn formats(json: bool) -> Result<(), String> {
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "formats": export_formats()
+                    .into_iter()
+                    .map(|(id, aliases, description)| serde_json::json!({
+                        "id": id,
+                        "aliases": aliases,
+                        "description": description,
+                    }))
+                    .collect::<Vec<_>>(),
+            })
+        );
+    } else {
+        write_formats(&mut io::stdout()).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn write_formats(output: &mut impl Write) -> io::Result<()> {
+    for (id, aliases, description) in export_formats() {
+        writeln!(output, "{id}: {description}")?;
+        if !aliases.is_empty() {
+            writeln!(output, "  aliases: {}", aliases.join(" "))?;
+        }
+    }
+    Ok(())
+}
+
+fn idioms(json: bool) -> Result<(), String> {
+    if json {
+        print_idioms_json();
+        Ok(())
+    } else {
+        write_idioms(&mut io::stdout()).map_err(|error| error.to_string())
+    }
+}
+
+fn idiom_entries() -> [(&'static str, &'static [&'static str]); 4] {
+    [
+        ("melodic_concept", &["blues_inflection"]),
+        (
+            "phrase_concept",
+            &["periodic_phrase", "motivic_development"],
+        ),
+        ("ensemble_concept", &["call_response"]),
+        ("bass_concept", &["walking_or_riff_bass"]),
+    ]
+}
+
+fn write_idioms(output: &mut impl Write) -> io::Result<()> {
+    for (rule, entries) in idiom_entries() {
+        writeln!(output, "{rule}")?;
+        for entry in entries {
+            writeln!(output, "  {entry}")?;
+        }
+    }
+    Ok(())
+}
+
+fn print_idioms_json() {
+    println!(
+        "{}",
+        serde_json::json!({
+            "rules": idiom_entries()
+                .into_iter()
+                .map(|(rule, entries)| serde_json::json!({
+                    "rule": rule,
+                    "entries": entries,
+                }))
+                .collect::<Vec<_>>()
+        })
+    );
+}
+
 fn repl() -> Result<(), String> {
-    println!("MusicLang REPL. Commands: :help, :load <path>, :reset, :diagnose, :export <path>, :show source, :show ir, :quit");
+    println!("MusicLang REPL. Commands: :help, :load <path>, :style <name>, :reset, :diagnose, :styles, :formats, :idioms, :theory [domain|entry], :play, :stop, :export <path>, :show source, :show ir, :quit");
     let mut buffer = String::new();
+    let mut playback: Option<Child> = None;
     loop {
         print!("> ");
         io::stdout().flush().map_err(|error| error.to_string())?;
@@ -1096,7 +1515,11 @@ fn repl() -> Result<(), String> {
         }
         let trimmed = line.trim();
         match trimmed {
-            ":help" => println!("Enter MusicLang source. Use :load path.music, :diagnose, :export path.mid, :show source, :show ir, :reset."),
+            ":help" => println!("Enter MusicLang source. Use :load path.music, :style StyleName, :diagnose, :styles, :formats, :idioms, :theory [domain|entry], :play, :stop, :export path.mid, :show source, :show ir, :reset."),
+            ":styles" => write_styles(&mut io::stdout()).map_err(|error| error.to_string())?,
+            ":formats" => write_formats(&mut io::stdout()).map_err(|error| error.to_string())?,
+            ":idioms" => write_idioms(&mut io::stdout()).map_err(|error| error.to_string())?,
+            ":theory" => theory(None, None, false)?,
             ":reset" => {
                 buffer.clear();
                 println!("reset");
@@ -1114,6 +1537,15 @@ fn repl() -> Result<(), String> {
                 let ir = musiclang_compiler::compile_source(&buffer).map_err(format_diagnostics)?;
                 println!("{ir:#?}");
             }
+            ":play" => {
+                stop_playback(&mut playback);
+                let path = render_repl_playback_file(&buffer)?;
+                playback = start_repl_playback(&path)?;
+            }
+            ":stop" => {
+                stop_playback(&mut playback);
+                println!("stopped");
+            }
             ":quit" | ":exit" => break,
             command if command.starts_with(":load ") => {
                 let path = command.trim_start_matches(":load ").trim();
@@ -1126,6 +1558,14 @@ fn repl() -> Result<(), String> {
                 buffer = format!("style {name}\n{buffer}");
                 println!("style {name}");
             }
+            command if command.starts_with(":theory ") => {
+                let query = command.trim_start_matches(":theory ").trim();
+                if query.parse::<musiclang_core::TheoryDomain>().is_ok() {
+                    theory(Some(query), None, false)?;
+                } else {
+                    theory(None, Some(query), false)?;
+                }
+            }
             command if command.starts_with(":export ") => {
                 let path = command.trim_start_matches(":export ").trim();
                 let ir = musiclang_compiler::compile_source(&buffer).map_err(format_diagnostics)?;
@@ -1137,7 +1577,45 @@ fn repl() -> Result<(), String> {
             _ => buffer.push_str(&line),
         }
     }
+    stop_playback(&mut playback);
     Ok(())
+}
+
+fn render_repl_playback_file(source: &str) -> Result<PathBuf, String> {
+    let ir = musiclang_compiler::compile_source(source).map_err(format_diagnostics)?;
+    let bytes = musiclang_midi::render_midi(&ir).map_err(|error| error.to_string())?;
+    let path = std::env::temp_dir().join(format!(
+        "musiclang-repl-{}-{}.mid",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+    ));
+    fs::write(&path, bytes)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    println!("rendered {}", path.display());
+    Ok(path)
+}
+
+fn start_repl_playback(path: &Path) -> Result<Option<Child>, String> {
+    let Some(player) = std::env::var_os("MUSICLANG_PLAYER") else {
+        println!("set MUSICLANG_PLAYER to play rendered MIDI asynchronously");
+        return Ok(None);
+    };
+    let child = ProcessCommand::new(&player)
+        .arg(path)
+        .spawn()
+        .map_err(|error| format!("failed to start {:?}: {error}", player))?;
+    println!("playing {}", path.display());
+    Ok(Some(child))
+}
+
+fn stop_playback(playback: &mut Option<Child>) {
+    if let Some(mut child) = playback.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 fn print_diagnostics(diagnostics: &[musiclang_core::Diagnostic]) {
@@ -1146,79 +1624,69 @@ fn print_diagnostics(diagnostics: &[musiclang_core::Diagnostic]) {
     }
 }
 
-fn print_diagnostics_json(diagnostics: &[musiclang_core::Diagnostic]) {
-    print!("[");
-    for (index, diagnostic) in diagnostics.iter().enumerate() {
-        if index > 0 {
-            print!(",");
-        }
-        print!(
-            "{{\"code\":\"{}\",\"severity\":\"{}\",\"message\":\"{}\",\"line\":{},\"column\":{},\"span\":{},\"labels\":{},\"related\":{},\"rule\":{},\"style\":{},\"help\":{}}}",
-            json_escape(&diagnostic.code),
-            diagnostic.severity,
-            json_escape(&diagnostic.message),
-            diagnostic.line,
-            diagnostic.column,
-            json_span(diagnostic.span),
-            json_labels(&diagnostic.labels),
-            json_related(&diagnostic.related),
-            json_option(diagnostic.rule.as_deref()),
-            json_option(diagnostic.style.as_deref()),
-            json_option(diagnostic.help.as_deref())
-        );
-    }
-    println!("]");
-}
-
-fn json_labels(labels: &[musiclang_core::DiagnosticLabel]) -> String {
-    let values = labels
+fn print_diagnostics_json(
+    diagnostics: &[musiclang_core::Diagnostic],
+    sources: Option<&musiclang_core::SourceMap>,
+) {
+    let values = diagnostics
         .iter()
-        .map(|label| {
-            format!(
-                "{{\"span\":{},\"message\":\"{}\"}}",
-                json_span(Some(label.span)),
-                json_escape(&label.message)
-            )
+        .map(|diagnostic| {
+            serde_json::json!({
+                "code": diagnostic.code,
+                "severity": diagnostic.severity.to_string(),
+                "message": diagnostic.message,
+                "line": diagnostic.line,
+                "column": diagnostic.column,
+                "span": diagnostic_json_span(diagnostic.span, sources),
+                "labels": diagnostic.labels.iter().map(|label| diagnostic_json_label(label, sources)).collect::<Vec<_>>(),
+                "related": diagnostic.related.iter().map(|related| diagnostic_json_related(related, sources)).collect::<Vec<_>>(),
+                "rule": diagnostic.rule,
+                "style": diagnostic.style,
+                "help": diagnostic.help,
+            })
         })
         .collect::<Vec<_>>();
-    format!("[{}]", values.join(","))
+    println!("{}", serde_json::Value::Array(values));
 }
 
-fn json_related(related: &[musiclang_core::DiagnosticRelated]) -> String {
-    let values = related
-        .iter()
-        .map(|related| {
-            format!(
-                "{{\"span\":{},\"message\":\"{}\"}}",
-                json_span(Some(related.span)),
-                json_escape(&related.message)
-            )
-        })
-        .collect::<Vec<_>>();
-    format!("[{}]", values.join(","))
-}
-
-fn json_span(span: Option<musiclang_core::Span>) -> String {
-    span.map(|span| {
-        format!(
-            "{{\"source_id\":{},\"start\":{},\"end\":{},\"line\":{},\"column\":{}}}",
-            span.source_id.0, span.start, span.end, span.line, span.column
-        )
+fn diagnostic_json_label(
+    label: &musiclang_core::DiagnosticLabel,
+    sources: Option<&musiclang_core::SourceMap>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "span": diagnostic_json_span(Some(label.span), sources),
+        "message": label.message,
     })
-    .unwrap_or_else(|| "null".to_string())
 }
 
-fn json_option(value: Option<&str>) -> String {
-    value
-        .map(|value| format!("\"{}\"", json_escape(value)))
-        .unwrap_or_else(|| "null".to_string())
+fn diagnostic_json_related(
+    related: &musiclang_core::DiagnosticRelated,
+    sources: Option<&musiclang_core::SourceMap>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "span": diagnostic_json_span(Some(related.span), sources),
+        "message": related.message,
+    })
 }
 
-fn json_escape(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
+fn diagnostic_json_span(
+    span: Option<musiclang_core::Span>,
+    sources: Option<&musiclang_core::SourceMap>,
+) -> serde_json::Value {
+    span.map(|span| {
+        let source_name = sources
+            .and_then(|sources| sources.get(span.source_id))
+            .map(|source| source.name.as_str());
+        serde_json::json!({
+            "source_id": span.source_id.0,
+            "source_name": source_name,
+            "start": span.start,
+            "end": span.end,
+            "line": span.line,
+            "column": span.column,
+        })
+    })
+    .unwrap_or(serde_json::Value::Null)
 }
 
 fn format_diagnostics(diagnostics: Vec<musiclang_core::Diagnostic>) -> String {

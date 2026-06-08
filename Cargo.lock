@@ -228,6 +228,7 @@ dependencies = [
  "musiclang-midi",
  "musiclang-parser",
  "musiclang-render",
+ "serde_json",
 ]
 
 [[package]]
@@ -283,9 +284,12 @@ dependencies = [
 name = "musiclang-workspace"
 version = "0.1.0"
 dependencies = [
+ "midly",
  "musiclang-compiler",
  "musiclang-core",
  "musiclang-midi",
+ "musiclang-parser",
+ "serde_json",
 ]
 
 [[package]]

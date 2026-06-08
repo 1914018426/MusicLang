@@ -1,4 +1,11 @@
-use musiclang_core::{Diagnostic, Span};
+use musiclang_core::{Diagnostic, SourceFile, SourceId, Span};
+
+mod lexer;
+mod token;
+
+pub use token::{Token, TokenKind};
+
+use lexer::Lexer;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
@@ -153,6 +160,12 @@ pub enum ExprKind {
     DurationLiteral(String),
     StringLiteral(String),
     List(Vec<Expr>),
+    ListComprehension {
+        item: Box<Expr>,
+        binding: String,
+        source: Box<Expr>,
+        condition: Option<Box<Expr>>,
+    },
     Tuple(Vec<Expr>),
     Dict(Vec<(String, Expr)>),
     Conditional {
@@ -177,11 +190,24 @@ pub enum ExprKind {
         callee: String,
         args: Vec<Expr>,
     },
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expr>,
+    },
+    Range {
+        start: Box<Expr>,
+        end: Box<Expr>,
+    },
     Binary {
         op: BinaryOp,
         left: Box<Expr>,
         right: Box<Expr>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    Not,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -617,249 +643,42 @@ pub struct WithStyleStmt {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Token {
-    kind: TokenKind,
-    text: String,
-    span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TokenKind {
-    Ident,
-    Number,
-    Pitch,
-    Interval,
-    Duration,
-    String,
-    LBrace,
-    RBrace,
-    LBracket,
-    RBracket,
-    LParen,
-    RParen,
-    Comma,
-    Colon,
-    Eq,
-    EqEq,
-    NotEq,
-    Lt,
-    LtEq,
-    Gt,
-    GtEq,
-    Dot,
-    DotDot,
-    Pipe,
-    Plus,
-    Minus,
-    Star,
-    Slash,
-    Eof,
-}
-
 pub fn parse_source(source: &str) -> Result<Program, Vec<Diagnostic>> {
-    let tokens = Lexer::new(source).tokenize()?;
+    parse_source_with_source_id(SourceId(0), source)
+}
+
+pub fn parse_source_with_source_id(
+    source_id: SourceId,
+    source: &str,
+) -> Result<Program, Vec<Diagnostic>> {
+    let tokens = Lexer::with_source_id(source_id, source).tokenize()?;
     Parser::new(tokens).parse_program()
+}
+
+pub fn parse_source_file(source_file: &SourceFile) -> Result<Program, Vec<Diagnostic>> {
+    parse_source_with_source_id(source_file.id, &source_file.text)
 }
 
 pub fn tokenize_source(source: &str) -> Result<Vec<Token>, Vec<Diagnostic>> {
     Lexer::new(source).tokenize()
 }
 
-struct Lexer {
-    chars: Vec<char>,
-    index: usize,
-    byte_index: usize,
-    line: usize,
-    column: usize,
+pub fn tokenize_source_with_source_id(
+    source_id: SourceId,
+    source: &str,
+) -> Result<Vec<Token>, Vec<Diagnostic>> {
+    Lexer::with_source_id(source_id, source).tokenize()
 }
 
-impl Lexer {
-    fn new(source: &str) -> Self {
-        Self {
-            chars: source.chars().collect(),
-            index: 0,
-            byte_index: 0,
-            line: 1,
-            column: 1,
-        }
-    }
+pub fn tokenize_source_file(source_file: &SourceFile) -> Result<Vec<Token>, Vec<Diagnostic>> {
+    tokenize_source_with_source_id(source_file.id, &source_file.text)
+}
 
-    fn tokenize(mut self) -> Result<Vec<Token>, Vec<Diagnostic>> {
-        let mut tokens = Vec::new();
-        let mut diagnostics = Vec::new();
-        while let Some(ch) = self.peek() {
-            match ch {
-                c if c.is_whitespace() => self.advance_whitespace(),
-                '/' if self.peek_next() == Some('/') => self.advance_comment(),
-                '{' => tokens.push(self.simple(TokenKind::LBrace)),
-                '}' => tokens.push(self.simple(TokenKind::RBrace)),
-                '[' => tokens.push(self.simple(TokenKind::LBracket)),
-                ']' => tokens.push(self.simple(TokenKind::RBracket)),
-                '(' => tokens.push(self.simple(TokenKind::LParen)),
-                ')' => tokens.push(self.simple(TokenKind::RParen)),
-                ',' => tokens.push(self.simple(TokenKind::Comma)),
-                ':' => tokens.push(self.simple(TokenKind::Colon)),
-                '+' => tokens.push(self.simple(TokenKind::Plus)),
-                '-' => tokens.push(self.simple(TokenKind::Minus)),
-                '*' => tokens.push(self.simple(TokenKind::Star)),
-                '/' => tokens.push(self.simple(TokenKind::Slash)),
-                '|' if self.peek_next() == Some('>') => tokens.push(self.double(TokenKind::Pipe)),
-                '=' if self.peek_next() == Some('=') => tokens.push(self.double(TokenKind::EqEq)),
-                '!' if self.peek_next() == Some('=') => tokens.push(self.double(TokenKind::NotEq)),
-                '<' if self.peek_next() == Some('=') => tokens.push(self.double(TokenKind::LtEq)),
-                '>' if self.peek_next() == Some('=') => tokens.push(self.double(TokenKind::GtEq)),
-                '<' => tokens.push(self.simple(TokenKind::Lt)),
-                '>' => tokens.push(self.simple(TokenKind::Gt)),
-                '=' => tokens.push(self.simple(TokenKind::Eq)),
-                '.' if self.peek_next() == Some('.') => tokens.push(self.double(TokenKind::DotDot)),
-                '.' => tokens.push(self.simple(TokenKind::Dot)),
-                '"' => {
-                    if let Some(token) = self.string(&mut diagnostics) {
-                        tokens.push(token);
-                    }
-                }
-                c if is_word_start(c) || c.is_ascii_digit() => tokens.push(self.word()),
-                _ => {
-                    let token = self.simple(TokenKind::Ident);
-                    diagnostics.push(
-                        Diagnostic::error(
-                            "ML_LEX_TOKEN",
-                            format!("unexpected character `{ch}`"),
-                            token.span.line,
-                            token.span.column,
-                        )
-                        .with_span(token.span),
-                    );
-                }
-            }
-        }
-        tokens.push(Token {
-            kind: TokenKind::Eof,
-            text: String::new(),
-            span: self.span_from(self.line, self.column, self.byte_index),
-        });
-        if diagnostics.is_empty() {
-            Ok(tokens)
-        } else {
-            Err(diagnostics)
-        }
-    }
-
-    fn simple(&mut self, kind: TokenKind) -> Token {
-        let line = self.line;
-        let column = self.column;
-        let start = self.byte_index;
-        let text = self.advance().unwrap().to_string();
-        let span = self.span(line, column, start, self.byte_index);
-        Token { kind, text, span }
-    }
-
-    fn double(&mut self, kind: TokenKind) -> Token {
-        let line = self.line;
-        let column = self.column;
-        let start = self.byte_index;
-        let first = self.advance().unwrap();
-        let second = self.advance().unwrap();
-        Token {
-            kind,
-            text: format!("{first}{second}"),
-            span: self.span(line, column, start, self.byte_index),
-        }
-    }
-
-    fn string(&mut self, diagnostics: &mut Vec<Diagnostic>) -> Option<Token> {
-        let line = self.line;
-        let column = self.column;
-        let start = self.byte_index;
-        self.advance();
-        let mut text = String::new();
-        while let Some(ch) = self.peek() {
-            if ch == '"' {
-                self.advance();
-                return Some(Token {
-                    kind: TokenKind::String,
-                    text,
-                    span: self.span(line, column, start, self.byte_index),
-                });
-            }
-            text.push(ch);
-            self.advance();
-        }
-        diagnostics.push(
-            Diagnostic::error("ML_LEX_STRING", "unterminated string literal", line, column)
-                .with_span(self.span(line, column, start, self.byte_index)),
-        );
-        None
-    }
-
-    fn word(&mut self) -> Token {
-        let line = self.line;
-        let column = self.column;
-        let start = self.byte_index;
-        let mut text = String::new();
-        while let Some(ch) = self.peek() {
-            if is_word_continue(ch) {
-                text.push(ch);
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        let kind = classify_word(&text);
-        let span = self.span(line, column, start, self.byte_index);
-        Token { kind, text, span }
-    }
-
-    fn advance_whitespace(&mut self) {
-        while self.peek().is_some_and(char::is_whitespace) {
-            self.advance();
-        }
-    }
-
-    fn advance_comment(&mut self) {
-        while let Some(ch) = self.peek() {
-            self.advance();
-            if ch == '\n' {
-                break;
-            }
-        }
-    }
-
-    fn peek(&self) -> Option<char> {
-        self.chars.get(self.index).copied()
-    }
-
-    fn peek_next(&self) -> Option<char> {
-        self.chars.get(self.index + 1).copied()
-    }
-
-    fn advance(&mut self) -> Option<char> {
-        let ch = self.peek()?;
-        self.index += 1;
-        self.byte_index += ch.len_utf8();
-        if ch == '\n' {
-            self.line += 1;
-            self.column = 1;
-        } else {
-            self.column += 1;
-        }
-        Some(ch)
-    }
-
-    fn span_from(&self, line: usize, column: usize, start: usize) -> Span {
-        self.span(line, column, start, start)
-    }
-
-    fn span(&self, line: usize, column: usize, start: usize, end: usize) -> Span {
-        Span {
-            source_id: musiclang_core::SourceId(0),
-            start,
-            end,
-            line,
-            column,
-        }
-    }
+fn is_name_like(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Ident | TokenKind::Pitch | TokenKind::Interval
+    ) || kind.keyword_text().is_some()
 }
 
 struct Parser {
@@ -2041,7 +1860,7 @@ impl Parser {
         let mut tokens = Vec::new();
         let mut depth = 0usize;
         while !self.check(TokenKind::Eof) {
-            if depth == 0 && stops.iter().any(|kind| self.check(kind.clone())) {
+            if depth == 0 && stops.iter().any(|kind| self.check(*kind)) {
                 break;
             }
             let token = self.advance().clone();
@@ -2282,7 +2101,7 @@ impl Parser {
     }
 
     fn current_starts_style_entry(&self) -> bool {
-        self.peek().kind == TokenKind::Ident
+        is_name_like(self.peek().kind)
             && self
                 .tokens
                 .get(self.index + 1)
@@ -2309,10 +2128,7 @@ impl Parser {
 
     fn expect_name_token(&mut self) -> Option<Token> {
         let token = self.peek().clone();
-        if matches!(
-            token.kind,
-            TokenKind::Ident | TokenKind::Pitch | TokenKind::Interval
-        ) {
+        if is_name_like(token.kind) {
             self.advance();
             Some(token)
         } else {
@@ -2356,7 +2172,7 @@ impl Parser {
 
     fn expect_ident_text(&mut self, text: &str) -> Option<Token> {
         let token = self.peek().clone();
-        if token.kind == TokenKind::Ident && token.text == text {
+        if token.text == text {
             self.advance();
             Some(token)
         } else {
@@ -2397,7 +2213,7 @@ impl Parser {
     }
 
     fn check_ident(&self, text: &str) -> bool {
-        self.peek().kind == TokenKind::Ident && self.peek().text == text
+        self.peek().text == text
     }
 
     fn check(&self, kind: TokenKind) -> bool {
@@ -2442,7 +2258,7 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
         return None;
     }
     let span = expr_span(tokens);
-    if tokens.first()?.kind == TokenKind::Ident && tokens.first()?.text == "if" {
+    if tokens.first()?.is_keyword_text("if") {
         if let Some(result) = parse_conditional(tokens) {
             return Some(result);
         }
@@ -2472,6 +2288,24 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
                 op: BinaryOp::And,
                 left: Box::new(parse_expr_tokens(&tokens[..index])?),
                 right: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
+            },
+            span,
+        ));
+    }
+    if tokens.len() > 1 && tokens.first()?.is_keyword_text("not") {
+        return Some(Expr::new(
+            ExprKind::Unary {
+                op: UnaryOp::Not,
+                expr: Box::new(parse_expr_tokens(&tokens[1..])?),
+            },
+            span,
+        ));
+    }
+    if let Some(index) = find_top_level_operator(tokens, TokenKind::DotDot) {
+        return Some(Expr::new(
+            ExprKind::Range {
+                start: Box::new(parse_expr_tokens(&tokens[..index])?),
+                end: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
             },
             span,
         ));
@@ -2540,7 +2374,7 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
         let target = Box::new(parse_expr_tokens(&tokens[..index])?);
         let suffix = &tokens[index + 1..];
         if suffix.len() >= 3
-            && suffix[0].kind == TokenKind::Ident
+            && is_name_like(suffix[0].kind)
             && suffix[1].kind == TokenKind::LParen
             && suffix.last()?.kind == TokenKind::RParen
         {
@@ -2567,7 +2401,11 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
         return Some(Expr::new(ExprKind::Access { target, key }, span));
     }
     if tokens.first()?.kind == TokenKind::LBracket && tokens.last()?.kind == TokenKind::RBracket {
-        return split_expr_list(&tokens[1..tokens.len() - 1])
+        let inner = &tokens[1..tokens.len() - 1];
+        if let Some(expr) = parse_list_comprehension(inner, span) {
+            return Some(expr);
+        }
+        return split_expr_list(inner)
             .into_iter()
             .map(parse_expr_tokens)
             .collect::<Option<Vec<_>>>()
@@ -2581,7 +2419,7 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
             .map(|entries| Expr::new(ExprKind::Dict(entries), span));
     }
     if tokens.len() >= 3
-        && tokens[0].kind == TokenKind::Ident
+        && is_name_like(tokens[0].kind)
         && tokens[1].kind == TokenKind::LParen
         && tokens.last()?.kind == TokenKind::RParen
     {
@@ -2635,6 +2473,36 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
     ))
 }
 
+fn parse_list_comprehension(tokens: &[Token], span: Span) -> Option<Expr> {
+    let for_index = find_top_level_ident(tokens, "for")?;
+    let in_index = find_top_level_ident_from(tokens, "in", for_index + 1)?;
+    if for_index == 0 || in_index != for_index + 2 || in_index + 1 >= tokens.len() {
+        return None;
+    }
+    let binding = tokens.get(for_index + 1)?;
+    if binding.kind != TokenKind::Ident {
+        return None;
+    }
+    let if_index = find_top_level_ident_from(tokens, "if", in_index + 1);
+    let source_end = if_index.unwrap_or(tokens.len());
+    if source_end <= in_index + 1 || if_index == Some(tokens.len() - 1) {
+        return None;
+    }
+    let condition = match if_index {
+        Some(index) => Some(Box::new(parse_expr_tokens(&tokens[index + 1..])?)),
+        None => None,
+    };
+    Some(Expr::new(
+        ExprKind::ListComprehension {
+            item: Box::new(parse_expr_tokens(&tokens[..for_index])?),
+            binding: binding.text.clone(),
+            source: Box::new(parse_expr_tokens(&tokens[in_index + 1..source_end])?),
+            condition,
+        },
+        span,
+    ))
+}
+
 fn parse_conditional(tokens: &[Token]) -> Option<Expr> {
     let span = expr_span(tokens);
     let then_index = find_conditional_then(tokens)?;
@@ -2660,7 +2528,7 @@ fn find_conditional_then(tokens: &[Token]) -> Option<usize> {
             TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
                 depth = depth.saturating_sub(1)
             }
-            TokenKind::Ident if depth == 0 && token.text == "then" => return Some(index),
+            _ if depth == 0 && token.is_keyword_text("then") => return Some(index),
             _ => {}
         }
     }
@@ -2676,11 +2544,30 @@ fn find_conditional_else(tokens: &[Token], then_index: usize) -> Option<usize> {
             TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
                 depth = depth.saturating_sub(1)
             }
-            TokenKind::Ident if depth == 0 && token.text == "if" => nested_if_count += 1,
-            TokenKind::Ident if depth == 0 && token.text == "else" && nested_if_count > 0 => {
+            _ if depth == 0 && token.is_keyword_text("if") => nested_if_count += 1,
+            _ if depth == 0 && token.is_keyword_text("else") && nested_if_count > 0 => {
                 nested_if_count -= 1
             }
-            TokenKind::Ident if depth == 0 && token.text == "else" => return Some(index),
+            _ if depth == 0 && token.is_keyword_text("else") => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_top_level_ident(tokens: &[Token], text: &str) -> Option<usize> {
+    find_top_level_ident_from(tokens, text, 0)
+}
+
+fn find_top_level_ident_from(tokens: &[Token], text: &str, start: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, token) in tokens.iter().enumerate() {
+        match token.kind {
+            TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+            TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
+                depth = depth.saturating_sub(1)
+            }
+            _ if index >= start && depth == 0 && token.is_keyword_text(text) => return Some(index),
             _ => {}
         }
     }
@@ -2696,7 +2583,7 @@ fn find_last_top_level_ident(tokens: &[Token], text: &str) -> Option<usize> {
             TokenKind::RBracket | TokenKind::RParen | TokenKind::RBrace => {
                 depth = depth.saturating_sub(1)
             }
-            TokenKind::Ident if depth == 0 && token.text == text => found = Some(index),
+            _ if depth == 0 && token.is_keyword_text(text) => found = Some(index),
             _ => {}
         }
     }
@@ -2839,6 +2726,22 @@ fn expr_to_source(expr: &Expr) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        ExprKind::ListComprehension {
+            item,
+            binding,
+            source,
+            condition,
+        } => {
+            let condition = condition
+                .as_ref()
+                .map(|condition| format!(" if {}", expr_to_source(condition)))
+                .unwrap_or_default();
+            format!(
+                "[{} for {binding} in {}{condition}]",
+                expr_to_source(item),
+                expr_to_source(source)
+            )
+        }
         ExprKind::Tuple(values) => format!(
             "({})",
             values
@@ -2890,6 +2793,15 @@ fn expr_to_source(expr: &Expr) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        ExprKind::Unary { op, expr } => {
+            let op = match op {
+                UnaryOp::Not => "not",
+            };
+            format!("{op} {}", expr_to_source(expr))
+        }
+        ExprKind::Range { start, end } => {
+            format!("{}..{}", expr_to_source(start), expr_to_source(end))
+        }
         ExprKind::Binary { op, left, right } => {
             let op = match op {
                 BinaryOp::Add => "+",
@@ -2910,40 +2822,6 @@ fn expr_to_source(expr: &Expr) -> String {
     }
 }
 
-fn classify_word(text: &str) -> TokenKind {
-    if text.parse::<i32>().is_ok() {
-        return TokenKind::Number;
-    }
-    if text.contains('/') && text.split_once('/').is_some() {
-        return TokenKind::Duration;
-    }
-    if matches!(
-        text,
-        "m2" | "M2" | "m3" | "M3" | "P4" | "TT" | "P5" | "m6" | "M6" | "m7" | "M7" | "P8"
-    ) {
-        return TokenKind::Interval;
-    }
-    if looks_like_pitch(text) {
-        return TokenKind::Pitch;
-    }
-    TokenKind::Ident
-}
-
-fn looks_like_pitch(text: &str) -> bool {
-    let Some(first) = text.chars().next() else {
-        return false;
-    };
-    matches!(first, 'A'..='G') && text.chars().any(|ch| ch.is_ascii_digit())
-}
-
-fn is_word_start(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '#' | '/')
-}
-
-fn is_word_continue(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '#' | '/' | 'b')
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2952,8 +2830,87 @@ mod tests {
     fn tokenizes_pitch_arithmetic() {
         let tokens = tokenize_source("note C4 + M3, 1/4").unwrap();
 
+        assert_eq!(tokens[0].kind, TokenKind::Note);
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Plus));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Interval));
+    }
+
+    #[test]
+    fn tokenizes_keywords_explicitly() {
+        let tokens = tokenize_source("style score voice title composer tempo meter key program instrument channel volume pan note chord drum rest glissando tremolo degree scale pedal ostinato sequence tuplet transpose arpeggio strum roman progression cadence modulate dynamic velocity articulation section ornament non_chord_tone tuning_system world_tradition historical_era harmonic_function let fn call for in if then else and or not override allow reason play with to steps repeats by").unwrap();
+        let kinds = tokens
+            .iter()
+            .filter(|token| token.kind != TokenKind::Eof)
+            .map(|token| token.kind)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Style,
+                TokenKind::Score,
+                TokenKind::Voice,
+                TokenKind::Title,
+                TokenKind::Composer,
+                TokenKind::Tempo,
+                TokenKind::Meter,
+                TokenKind::Key,
+                TokenKind::Program,
+                TokenKind::Instrument,
+                TokenKind::Channel,
+                TokenKind::Volume,
+                TokenKind::Pan,
+                TokenKind::Note,
+                TokenKind::Chord,
+                TokenKind::Drum,
+                TokenKind::Rest,
+                TokenKind::Glissando,
+                TokenKind::Tremolo,
+                TokenKind::Degree,
+                TokenKind::Scale,
+                TokenKind::Pedal,
+                TokenKind::Ostinato,
+                TokenKind::Sequence,
+                TokenKind::Tuplet,
+                TokenKind::Transpose,
+                TokenKind::Arpeggio,
+                TokenKind::Strum,
+                TokenKind::Roman,
+                TokenKind::Progression,
+                TokenKind::Cadence,
+                TokenKind::Modulate,
+                TokenKind::Dynamic,
+                TokenKind::Velocity,
+                TokenKind::Articulation,
+                TokenKind::Section,
+                TokenKind::Ornament,
+                TokenKind::NonChordTone,
+                TokenKind::TuningSystem,
+                TokenKind::WorldTradition,
+                TokenKind::HistoricalEra,
+                TokenKind::HarmonicFunction,
+                TokenKind::Let,
+                TokenKind::Fn,
+                TokenKind::Call,
+                TokenKind::For,
+                TokenKind::In,
+                TokenKind::If,
+                TokenKind::Then,
+                TokenKind::Else,
+                TokenKind::And,
+                TokenKind::Or,
+                TokenKind::Not,
+                TokenKind::Override,
+                TokenKind::Allow,
+                TokenKind::Reason,
+                TokenKind::Play,
+                TokenKind::With,
+                TokenKind::To,
+                TokenKind::Steps,
+                TokenKind::Repeats,
+                TokenKind::By,
+            ]
+        );
     }
 
     #[test]
@@ -2961,11 +2918,39 @@ mod tests {
         let tokens = tokenize_source("note C4 + M3, 1/4").unwrap();
 
         assert_eq!(tokens[0].text, "note");
+        assert_eq!(tokens[0].span.source_id, SourceId(0));
         assert_eq!(tokens[0].span.start, 0);
         assert_eq!(tokens[0].span.end, 4);
         assert_eq!(tokens[1].text, "C4");
         assert_eq!(tokens[1].span.start, 5);
         assert_eq!(tokens[1].span.end, 7);
+    }
+
+    #[test]
+    fn token_spans_preserve_custom_source_id() {
+        let tokens = tokenize_source_with_source_id(SourceId(7), "note C4, 1/4").unwrap();
+
+        assert_eq!(tokens[0].span.source_id, SourceId(7));
+        assert_eq!(tokens[1].span.source_id, SourceId(7));
+        assert_eq!(tokens.last().unwrap().span.source_id, SourceId(7));
+    }
+
+    #[test]
+    fn token_spans_preserve_source_file_id() {
+        let mut sources = musiclang_core::SourceMap::new();
+        let id = sources.add("demo.music", "note C4, 1/4");
+        let tokens = tokenize_source_file(sources.get(id).unwrap()).unwrap();
+
+        assert_eq!(tokens[0].span.source_id, id);
+        assert_eq!(tokens[1].span.source_id, id);
+        assert_eq!(tokens.last().unwrap().span.source_id, id);
+    }
+
+    #[test]
+    fn lexer_diagnostics_preserve_custom_source_id() {
+        let diagnostics = tokenize_source_with_source_id(SourceId(11), "note @").unwrap_err();
+
+        assert_eq!(diagnostics[0].span.unwrap().source_id, SourceId(11));
     }
 
     #[test]
@@ -2992,6 +2977,7 @@ score demo {
         let program = parse_source(source).unwrap();
 
         assert_eq!(program.score.name, "demo");
+        assert_eq!(program.score.span.source_id, SourceId(0));
         assert_eq!(program.score.statements.len(), 1);
         let Stmt::Voice(voice) = &program.score.statements[0] else {
             panic!("expected voice");
@@ -3002,6 +2988,60 @@ score demo {
         let expected_start = source.find("C4").unwrap();
         assert_eq!(note.pitch_expr.span.start, expected_start);
         assert_eq!(note.pitch_expr.span.end, expected_start + "C4".len());
+    }
+
+    #[test]
+    fn ast_spans_preserve_custom_source_id() {
+        let program = parse_source_with_source_id(
+            SourceId(13),
+            r#"
+score demo {
+  voice lead {
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(program.score.span.source_id, SourceId(13));
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        assert_eq!(voice.span.source_id, SourceId(13));
+        let Stmt::Note(note) = &voice.statements[0] else {
+            panic!("expected note");
+        };
+        assert_eq!(note.span.source_id, SourceId(13));
+        assert_eq!(note.pitch_expr.span.source_id, SourceId(13));
+    }
+
+    #[test]
+    fn ast_spans_preserve_source_file_id() {
+        let mut sources = musiclang_core::SourceMap::new();
+        sources.add("other.music", "score other { voice lead { note D4, 1/4 } }");
+        let id = sources.add(
+            "demo.music",
+            r#"
+score demo {
+  voice lead {
+    note C4, 1/4
+  }
+}
+"#,
+        );
+        let program = parse_source_file(sources.get(id).unwrap()).unwrap();
+
+        assert_eq!(program.score.span.source_id, id);
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        assert_eq!(voice.span.source_id, id);
+        let Stmt::Note(note) = &voice.statements[0] else {
+            panic!("expected note");
+        };
+        assert_eq!(note.span.source_id, id);
+        assert_eq!(note.pitch_expr.span.source_id, id);
     }
 
     #[test]
@@ -3831,6 +3871,84 @@ score demo {
     }
 
     #[test]
+    fn parses_range_expression_in_list_comprehension() {
+        let program = parse_source(
+            r#"
+fn steps() = [i for i in 0..4]
+score demo {
+  voice lead {
+    note C4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let Some(ExprKind::ListComprehension { source, .. }) =
+            program.functions[0].body_expr().map(|expr| &expr.kind)
+        else {
+            panic!("expected list comprehension expression");
+        };
+
+        assert!(matches!(source.kind, ExprKind::Range { .. }));
+    }
+
+    #[test]
+    fn parses_list_comprehension_expression() {
+        let program = parse_source(
+            r#"
+fn lift(events) = [event.with({d:1/2}) for event in events if not event.skip]
+score demo {
+  voice lead {
+    note C4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let Some(ExprKind::ListComprehension {
+            binding, condition, ..
+        }) = program.functions[0].body_expr().map(|expr| &expr.kind)
+        else {
+            panic!("expected list comprehension expression");
+        };
+
+        assert_eq!(binding, "event");
+        assert!(condition.is_some());
+    }
+
+    #[test]
+    fn parses_not_expression() {
+        let program = parse_source(
+            r#"
+fn keep(event) = not event.skip == true
+score demo {
+  voice lead {
+    note C4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let Some(ExprKind::Unary { op, expr }) =
+            program.functions[0].body_expr().map(|expr| &expr.kind)
+        else {
+            panic!("expected unary expression");
+        };
+
+        assert_eq!(*op, UnaryOp::Not);
+        assert!(matches!(
+            expr.kind,
+            ExprKind::Binary {
+                op: BinaryOp::Eq,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn parses_integer_arithmetic_expression() {
         let program = parse_source(
             r#"
@@ -4242,6 +4360,81 @@ score demo {
 
         assert_eq!(span.start, 13);
         assert_eq!(span.end, 14);
+    }
+
+    #[test]
+    fn reports_unknown_statement_with_span() {
+        let source = r#"
+score demo {
+  voice lead {
+    sparkle C4, 1/4
+  }
+}
+"#;
+        let diagnostics = parse_source(source).unwrap_err();
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "ML_PARSE_STMT")
+            .unwrap();
+        let span = diagnostic.span.unwrap();
+        let expected_start = source.find("sparkle").unwrap();
+
+        assert_eq!(span.start, expected_start);
+        assert_eq!(span.end, expected_start + "sparkle".len());
+    }
+
+    #[test]
+    fn reports_missing_override_allow_keyword() {
+        let diagnostics = parse_source(
+            r#"
+score demo {
+  voice lead {
+    override scale reason "missing allow" {
+      note F#4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_PARSE_KEYWORD" && diagnostic.message.contains("allow")
+        }));
+    }
+
+    #[test]
+    fn reports_empty_style_entry_value() {
+        let diagnostics = parse_source(
+            r#"
+style Broken {
+  scale:
+}
+score demo {}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_PARSE_STYLE_ENTRY"));
+    }
+
+    #[test]
+    fn reports_malformed_function_parameter_list() {
+        let diagnostics = parse_source(
+            r#"
+fn motif(a b) {
+  note C4, 1/4
+}
+score demo {}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ML_PARSE_TOKEN" && diagnostic.message.contains(")")
+        }));
     }
 
     #[test]
