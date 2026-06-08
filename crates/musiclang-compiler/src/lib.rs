@@ -8,7 +8,7 @@ use musiclang_core::{
 };
 use musiclang_parser::{
     parse_source, ArticulationStmt, BinaryOp, ChordStmt, DynamicStmt, Expr, FunctionDecl, NoteStmt,
-    OverrideStmt, Program, ScoreMeta, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
+    OverrideStmt, Program, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,147 +33,10 @@ pub fn diagnose_source(source: &str) -> Vec<Diagnostic> {
     }
 }
 
-mod context {
-    use super::*;
-
-    pub(super) fn style(program: &Program) -> (StyleContext, Vec<Diagnostic>) {
-        if let Some(active_style) = &program.score.style {
-            if let Some(style) = program
-                .styles
-                .iter()
-                .find(|style| &style.name == active_style)
-            {
-                return style_from_program(program, style);
-            }
-            if let Some(style) = StyleContext::built_in(active_style) {
-                return (style, Vec::new());
-            }
-            return (
-                StyleContext::core(),
-                vec![Diagnostic::error(
-                    "ML_STYLE_UNKNOWN_NAME",
-                    format!("unknown style `{active_style}`"),
-                    program.score.line,
-                    program.score.column,
-                )],
-            );
-        }
-        program
-            .style
-            .as_ref()
-            .map(|style| style_from_program(program, style))
-            .unwrap_or_else(|| (StyleContext::core(), Vec::new()))
-    }
-
-    pub(super) fn functions(program: &Program) -> HashMap<String, FunctionDecl> {
-        program
-            .functions
-            .iter()
-            .map(|function| (function.name.clone(), function.clone()))
-            .collect()
-    }
-}
-
-mod eval {
-    use super::*;
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub(super) enum Value {
-        Int(i32),
-        Bool(bool),
-        Pitch(Pitch),
-        Interval(Interval),
-        Duration(Duration),
-        String(String),
-        List(Vec<Value>),
-    }
-}
-
-mod lower {
-    use super::*;
-
-    pub(super) fn score_metadata(program: &Program) -> (u16, Option<Meter>, Option<KeySignature>) {
-        let mut tempo_bpm = 120;
-        let mut meter = None;
-        let mut key = None;
-        for meta in &program.score.metadata {
-            match meta {
-                ScoreMeta::Tempo(tempo) => tempo_bpm = tempo.bpm,
-                ScoreMeta::Meter(value) => {
-                    meter = Some(Meter {
-                        numerator: value.numerator,
-                        denominator: value.denominator,
-                    });
-                }
-                ScoreMeta::Key(value) => key = key_signature(&value.tonic, &value.mode),
-            }
-        }
-        (tempo_bpm, meter, key)
-    }
-
-    pub(super) fn score_ir(
-        program: Program,
-        tempo_bpm: u16,
-        meter: Option<Meter>,
-        key: Option<KeySignature>,
-        tracks: Vec<TrackIr>,
-        markers: Vec<MarkerIr>,
-        overrides: Vec<OverrideTrace>,
-    ) -> ScoreIr {
-        ScoreIr {
-            title: program.score.name,
-            ticks_per_quarter: DEFAULT_TICKS_PER_QUARTER,
-            tempo_bpm,
-            meter,
-            key,
-            tracks,
-            markers,
-            overrides,
-        }
-    }
-}
-
-mod stylecheck {
-    use super::*;
-
-    pub(super) fn interval_mod_12(upper: Pitch, lower: Pitch) -> Option<u8> {
-        let upper = upper.midi_number().ok()?;
-        let lower = lower.midi_number().ok()?;
-        Some(upper.wrapping_sub(lower) % 12)
-    }
-
-    pub(super) fn known_rule(rule: &str) -> bool {
-        matches!(
-            rule,
-            "scale"
-                | "chord_vocab"
-                | "chord_quality_vocab"
-                | "set_class_vocab"
-                | "meter"
-                | "meter_catalog"
-                | "tempo_range"
-                | "rhythm_vocab"
-                | "rhythm_concept"
-                | "dynamic_vocab"
-                | "articulation_vocab"
-                | "ornament"
-                | "non_chord_tone"
-                | "tuning_system"
-                | "world_tradition"
-                | "historical_era"
-                | "harmonic_function"
-                | "max_melodic_leap"
-                | "contrapuntal_motion"
-                | "cadence"
-                | "harmonic_progression"
-                | "texture"
-                | "form"
-                | "instrument_range"
-                | "parallel_fifths"
-                | "voice_crossing"
-        )
-    }
-}
+mod context;
+mod eval;
+mod lower;
+mod stylecheck;
 
 use eval::Value;
 
