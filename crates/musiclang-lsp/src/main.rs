@@ -4,9 +4,10 @@ use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse, Diagnostic,
     DiagnosticRelatedInformation, DiagnosticSeverity, DidChangeTextDocumentParams,
-    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
-    HoverParams, InitializeParams, Location, MarkedString, Position, PublishDiagnosticsParams,
-    Range, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
+    DidOpenTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    InitializeParams, Location, MarkedString, Position, PublishDiagnosticsParams, Range,
+    ServerCapabilities, SymbolKind, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
 };
 use musiclang_core::{Severity, BUILT_IN_STYLES};
 
@@ -17,6 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
         hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
         completion_provider: Some(lsp_types::CompletionOptions::default()),
         definition_provider: Some(lsp_types::OneOf::Left(true)),
+        document_symbol_provider: Some(lsp_types::OneOf::Left(true)),
         ..ServerCapabilities::default()
     })?;
     let params = connection.initialize(capabilities)?;
@@ -68,6 +70,13 @@ fn handle_request(
             connection
                 .sender
                 .send(Message::Response(Response::new_ok(request.id, definition)))?;
+        }
+        "textDocument/documentSymbol" => {
+            let params: DocumentSymbolParams = serde_json::from_value(request.params)?;
+            let symbols = document_symbols(documents, &params);
+            connection
+                .sender
+                .send(Message::Response(Response::new_ok(request.id, symbols)))?;
         }
         _ => connection.sender.send(Message::Response(Response::new_ok(
             request.id,
@@ -319,6 +328,67 @@ fn definition_at(
     }))
 }
 
+fn document_symbols(
+    documents: &HashMap<String, String>,
+    params: &DocumentSymbolParams,
+) -> Option<DocumentSymbolResponse> {
+    let uri = &params.text_document.uri;
+    let source = documents.get(&uri.to_string())?;
+    let symbols = source
+        .lines()
+        .enumerate()
+        .filter_map(|(line_index, line)| source_symbol(line_index, line))
+        .collect::<Vec<_>>();
+    Some(DocumentSymbolResponse::Nested(symbols))
+}
+
+#[allow(deprecated)]
+fn source_symbol(line_index: usize, line: &str) -> Option<DocumentSymbol> {
+    let trimmed = line.trim_start();
+    let indent = line.len() - trimmed.len();
+    let words = trimmed.split_whitespace().collect::<Vec<_>>();
+    let (kind, name_index, detail) = match words.as_slice() {
+        ["style", name, ..] => (SymbolKind::CLASS, Some(*name), Some("style".to_string())),
+        ["fn", name, ..] => (SymbolKind::FUNCTION, Some(*name), None),
+        ["score", name, ..] => (
+            SymbolKind::NAMESPACE,
+            Some(*name),
+            Some("score".to_string()),
+        ),
+        ["voice", name, ..] => (SymbolKind::OBJECT, Some(*name), Some("voice".to_string())),
+        ["section", name, ..] => (SymbolKind::MODULE, Some(*name), Some("section".to_string())),
+        _ => return None,
+    };
+    let raw_name = name_index?;
+    let name = raw_name.trim_end_matches('{').to_string();
+    let name_start = line.find(raw_name).unwrap_or(indent);
+    let line_len = line.chars().map(|ch| ch.len_utf16() as u32).sum::<u32>();
+    let selection_start = line[..name_start]
+        .chars()
+        .map(|ch| ch.len_utf16() as u32)
+        .sum::<u32>();
+    let selection_width = raw_name
+        .chars()
+        .map(|ch| ch.len_utf16() as u32)
+        .sum::<u32>();
+    Some(DocumentSymbol {
+        name,
+        detail,
+        kind,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position::new(line_index as u32, 0),
+            end: Position::new(line_index as u32, line_len.max(1)),
+        },
+        selection_range: Range {
+            start: Position::new(line_index as u32, selection_start),
+            end: Position::new(line_index as u32, selection_start + selection_width),
+        },
+        children: None,
+    })
+}
+
 fn find_definition(source: &str, word: &str) -> Option<Position> {
     for (line_index, line) in source.lines().enumerate() {
         for keyword in ["fn", "let", "style"] {
@@ -534,9 +604,7 @@ fn is_call_context(line_prefix: &str) -> bool {
 
 fn is_score_style_context(line_prefix: &str) -> bool {
     let words = line_prefix.split_whitespace().collect::<Vec<_>>();
-    words.first() == Some(&"score")
-        && words.iter().any(|word| *word == "style")
-        && !line_prefix.contains('{')
+    words.first() == Some(&"score") && words.contains(&"style") && !line_prefix.contains('{')
 }
 
 fn is_style_key_context(source: &str, position: Position, line_prefix: &str) -> bool {
@@ -659,6 +727,67 @@ mod tests {
             word_at(source, Position::new(2, 5)).as_deref(),
             Some("note")
         );
+    }
+
+    #[test]
+    fn document_symbols_include_major_declarations() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
+        let mut documents = HashMap::new();
+        documents.insert(
+            uri.to_string(),
+            "style Strict {\n  scale: C D E\n}\nfn motif {\n  note C4, 1/4\n}\nscore demo {\n  voice lead {\n    section A\n  }\n}".to_string(),
+        );
+        let Some(DocumentSymbolResponse::Nested(symbols)) = document_symbols(
+            &documents,
+            &DocumentSymbolParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            },
+        ) else {
+            panic!("expected nested document symbols");
+        };
+
+        assert!(symbols
+            .iter()
+            .any(|symbol| symbol.name == "Strict" && symbol.kind == SymbolKind::CLASS));
+        assert!(symbols
+            .iter()
+            .any(|symbol| symbol.name == "motif" && symbol.kind == SymbolKind::FUNCTION));
+        assert!(symbols
+            .iter()
+            .any(|symbol| symbol.name == "demo" && symbol.kind == SymbolKind::NAMESPACE));
+        assert!(symbols
+            .iter()
+            .any(|symbol| symbol.name == "lead" && symbol.kind == SymbolKind::OBJECT));
+        assert!(symbols
+            .iter()
+            .any(|symbol| symbol.name == "A" && symbol.kind == SymbolKind::MODULE));
+    }
+
+    #[test]
+    fn document_symbols_use_utf16_selection_ranges() {
+        let symbol = source_symbol(0, "style 室内乐 {").unwrap();
+
+        assert_eq!(symbol.name, "室内乐");
+        assert_eq!(symbol.selection_range.start, Position::new(0, 6));
+        assert_eq!(symbol.selection_range.end, Position::new(0, 9));
+    }
+
+    #[test]
+    fn document_symbols_return_none_for_unknown_document() {
+        let uri = Uri::from_str("file:///missing.music").unwrap();
+        let documents = HashMap::new();
+
+        assert!(document_symbols(
+            &documents,
+            &DocumentSymbolParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            },
+        )
+        .is_none());
     }
 
     #[test]

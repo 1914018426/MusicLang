@@ -170,7 +170,7 @@ fn music_export_midi_produces_valid_file() {
     ]);
 
     assert!(output.status.success());
-    assert!(output.stdout.iter().any(|&b| b == b'\n'));
+    assert!(output.stdout.contains(&b'\n'));
     let bytes = fs::read(&output_path).unwrap();
     assert!(bytes.starts_with(b"MThd"));
 }
