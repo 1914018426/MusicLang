@@ -52,6 +52,12 @@ enum Command {
     Ir {
         input: String,
     },
+    Analyze {
+        input: String,
+
+        #[arg(long)]
+        json: bool,
+    },
     Theory {
         #[arg(long)]
         domain: Option<String>,
@@ -85,6 +91,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Diagnose { input, json } => diagnose_file(&input, json),
         Command::Ast { input } => ast_file(&input),
         Command::Ir { input } => ir_file(&input),
+        Command::Analyze { input, json } => analyze_file(&input, json),
         Command::Theory { domain, find } => theory(domain.as_deref(), find.as_deref()),
         Command::Styles => styles(),
         Command::Repl => repl(),
@@ -261,6 +268,134 @@ fn ir_file(input: &str) -> Result<(), String> {
     let ir = musiclang_compiler::compile_source(&source).map_err(format_diagnostics)?;
     println!("{ir:#?}");
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScoreAnalysis {
+    title: String,
+    tempo_bpm: u16,
+    meter: Option<musiclang_core::Meter>,
+    track_count: usize,
+    event_count: usize,
+    duration_ticks: u32,
+    pitch_min: Option<String>,
+    pitch_max: Option<String>,
+    override_count: usize,
+    diagnostic_count: usize,
+    warning_count: usize,
+}
+
+fn analyze_file(input: &str, json: bool) -> Result<(), String> {
+    let source =
+        fs::read_to_string(input).map_err(|error| format!("failed to read {input}: {error}"))?;
+    let compilation =
+        musiclang_compiler::compile_source_with_diagnostics(&source).map_err(format_diagnostics)?;
+    let analysis = analyze_score(&compilation.ir, &compilation.diagnostics);
+    if json {
+        print_analysis_json(&analysis);
+    } else {
+        print_analysis(&analysis);
+    }
+    Ok(())
+}
+
+fn analyze_score(
+    ir: &musiclang_core::ScoreIr,
+    diagnostics: &[musiclang_core::Diagnostic],
+) -> ScoreAnalysis {
+    let events = ir
+        .tracks
+        .iter()
+        .flat_map(|track| track.events.iter())
+        .collect::<Vec<_>>();
+    let duration_ticks = events
+        .iter()
+        .map(|event| event.start_tick + event.duration_ticks)
+        .max()
+        .unwrap_or(0);
+    let pitch_min = events
+        .iter()
+        .filter_map(|event| event.pitch.midi_number().ok())
+        .min()
+        .and_then(|midi| {
+            events
+                .iter()
+                .find(|event| event.pitch.midi_number() == Ok(midi))
+                .map(|event| event.pitch.to_string())
+        });
+    let pitch_max = events
+        .iter()
+        .filter_map(|event| event.pitch.midi_number().ok())
+        .max()
+        .and_then(|midi| {
+            events
+                .iter()
+                .find(|event| event.pitch.midi_number() == Ok(midi))
+                .map(|event| event.pitch.to_string())
+        });
+    let warning_count = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == musiclang_core::Severity::Warning)
+        .count();
+    ScoreAnalysis {
+        title: ir.title.clone(),
+        tempo_bpm: ir.tempo_bpm,
+        meter: ir.meter,
+        track_count: ir.tracks.len(),
+        event_count: events.len(),
+        duration_ticks,
+        pitch_min,
+        pitch_max,
+        override_count: ir.overrides.len(),
+        diagnostic_count: diagnostics.len(),
+        warning_count,
+    }
+}
+
+fn print_analysis(analysis: &ScoreAnalysis) {
+    println!("title: {}", analysis.title);
+    println!("tempo: {} bpm", analysis.tempo_bpm);
+    if let Some(meter) = analysis.meter {
+        println!("meter: {}/{}", meter.numerator, meter.denominator);
+    }
+    println!("tracks: {}", analysis.track_count);
+    println!("events: {}", analysis.event_count);
+    println!("duration_ticks: {}", analysis.duration_ticks);
+    if let (Some(low), Some(high)) = (&analysis.pitch_min, &analysis.pitch_max) {
+        println!("pitch_range: {low}..{high}");
+    }
+    println!("overrides: {}", analysis.override_count);
+    println!("diagnostics: {}", analysis.diagnostic_count);
+    println!("warnings: {}", analysis.warning_count);
+}
+
+fn print_analysis_json(analysis: &ScoreAnalysis) {
+    print!(
+        "{{\"title\":\"{}\",\"tempo_bpm\":{},\"meter\":{},\"track_count\":{},\"event_count\":{},\"duration_ticks\":{},\"pitch_min\":{},\"pitch_max\":{},\"override_count\":{},\"diagnostic_count\":{},\"warning_count\":{}}}",
+        json_escape(&analysis.title),
+        analysis.tempo_bpm,
+        json_meter(analysis.meter),
+        analysis.track_count,
+        analysis.event_count,
+        analysis.duration_ticks,
+        json_option(analysis.pitch_min.as_deref()),
+        json_option(analysis.pitch_max.as_deref()),
+        analysis.override_count,
+        analysis.diagnostic_count,
+        analysis.warning_count,
+    );
+    println!();
+}
+
+fn json_meter(meter: Option<musiclang_core::Meter>) -> String {
+    meter
+        .map(|meter| {
+            format!(
+                "{{\"numerator\":{},\"denominator\":{}}}",
+                meter.numerator, meter.denominator
+            )
+        })
+        .unwrap_or_else(|| "null".to_string())
 }
 
 fn theory(domain: Option<&str>, find: Option<&str>) -> Result<(), String> {

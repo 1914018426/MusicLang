@@ -238,6 +238,34 @@ fn music_ir_prints_lowered_score() {
 }
 
 #[test]
+fn music_analyze_summarizes_score() {
+    let output = run_music(&["analyze", "examples/minimal.music"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("title: demo"));
+    assert!(stdout.contains("tempo: 120 bpm"));
+    assert!(stdout.contains("tracks: 1"));
+    assert!(stdout.contains("events: 5"));
+    assert!(stdout.contains("pitch_range: C4..G4"));
+}
+
+#[test]
+fn music_analyze_json_is_machine_readable() {
+    let output = run_music(&["analyze", "examples/minimal.music", "--json"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"title\":\"demo\""));
+    assert!(stdout.contains("\"tempo_bpm\":120"));
+    assert!(stdout.contains("\"meter\":null"));
+    assert!(stdout.contains("\"track_count\":1"));
+    assert!(stdout.contains("\"event_count\":5"));
+    assert!(stdout.contains("\"pitch_min\":\"C4\""));
+    assert!(stdout.contains("\"pitch_max\":\"G4\""));
+}
+
+#[test]
 fn music_export_rejects_unknown_format() {
     let output = run_music(&[
         "export",
