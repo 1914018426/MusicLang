@@ -3430,6 +3430,17 @@ impl Compiler {
         }
     }
 
+    fn eval_concat_values(&self, args: Vec<Value>) -> Value {
+        let mut values = Vec::new();
+        for arg in args {
+            match arg {
+                Value::List(items) => values.extend(items),
+                value => values.push(value),
+            }
+        }
+        Value::List(values)
+    }
+
     fn eval_call(
         &mut self,
         callee: &str,
@@ -3442,6 +3453,7 @@ impl Compiler {
             return value;
         }
         match (callee, args.as_slice()) {
+            ("cat" | "concat", _) => Some(self.eval_concat_values(args)),
             ("transpose", [value, Value::Interval(interval)]) => {
                 self.eval_transpose_value(value.clone(), *interval, line, column, span)
             }
@@ -6443,20 +6455,23 @@ score demo {
 fn riff(root) = [(root, 1/8), (root |> transpose(M3), 1/8), {p:root |> transpose(P5), d:1/4}]
 score demo {
   voice lead {
-    play riff(C4) |> transpose(M2) |> stretch(2) |> repeat(2)
+    play cat(riff(C4) |> transpose(M2) |> stretch(2) |> repeat(2), riff(G4))
   }
 }
 "#,
         )
         .unwrap();
 
-        assert_eq!(ir.tracks[0].events.len(), 6);
+        assert_eq!(ir.tracks[0].events.len(), 9);
         assert_eq!(ir.tracks[0].events[0].pitch.to_string(), "D4");
         assert_eq!(ir.tracks[0].events[1].pitch.to_string(), "F#4");
         assert_eq!(ir.tracks[0].events[2].pitch.to_string(), "A4");
         assert_eq!(ir.tracks[0].events[3].pitch.to_string(), "D4");
         assert_eq!(ir.tracks[0].events[4].pitch.to_string(), "F#4");
         assert_eq!(ir.tracks[0].events[5].pitch.to_string(), "A4");
+        assert_eq!(ir.tracks[0].events[6].pitch.to_string(), "G4");
+        assert_eq!(ir.tracks[0].events[7].pitch.to_string(), "B4");
+        assert_eq!(ir.tracks[0].events[8].pitch.to_string(), "D5");
         assert_eq!(ir.tracks[0].events[0].duration_ticks, 480);
         assert_eq!(ir.tracks[0].events[2].duration_ticks, 960);
     }
