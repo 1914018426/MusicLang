@@ -157,6 +157,7 @@ mod stylecheck {
                 | "dynamic_vocab"
                 | "articulation_vocab"
                 | "non_chord_tone"
+                | "world_tradition"
                 | "max_melodic_leap"
                 | "contrapuntal_motion"
                 | "cadence"
@@ -305,6 +306,14 @@ impl Compiler {
                     non_chord_tone.column,
                 );
                 self.compile_statements(&non_chord_tone.statements, track);
+            }
+            Stmt::WorldTradition(world_tradition) => {
+                self.check_world_tradition(
+                    &world_tradition.kind,
+                    world_tradition.line,
+                    world_tradition.column,
+                );
+                self.compile_statements(&world_tradition.statements, track);
             }
             Stmt::For(for_stmt) => {
                 for value in for_stmt.start..for_stmt.end {
@@ -519,6 +528,29 @@ impl Compiler {
                 "non_chord_tone",
                 "ML_STYLE_NON_CHORD_TONE",
                 format!("non-chord tone `{kind}` is outside active style vocabulary"),
+                line,
+                column,
+            );
+        }
+    }
+
+    fn check_world_tradition(&mut self, kind: &str, line: usize, column: usize) {
+        if self.style.world_traditions.is_empty()
+            || self.has_override("world_tradition")
+            || self.has_score_override("world_tradition")
+        {
+            return;
+        }
+        if !self
+            .style
+            .world_traditions
+            .iter()
+            .any(|allowed| allowed == kind)
+        {
+            self.push_style_diagnostic(
+                "world_tradition",
+                "ML_STYLE_WORLD_TRADITION",
+                format!("world tradition `{kind}` is outside active style vocabulary"),
                 line,
                 column,
             );
@@ -1534,6 +1566,19 @@ fn style_from_program_inner(
                     .map(ToString::to_string)
                     .collect();
                 validate_vocab_entries(style, entry, TheoryDomain::NonChordTones, &mut diagnostics);
+            }
+            "world_tradition" => {
+                context.world_traditions = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_vocab_entries(
+                    style,
+                    entry,
+                    TheoryDomain::WorldTraditions,
+                    &mut diagnostics,
+                );
             }
             "max_melodic_leap" => {
                 context.max_melodic_leap = entry.value.trim().parse::<Interval>().ok();
@@ -2836,6 +2881,49 @@ score demo style PostTonal {
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_SET_CLASS_VOCAB");
         assert_eq!(diagnostics[0].rule.as_deref(), Some("set_class_vocab"));
+    }
+
+    #[test]
+    fn world_tradition_accepts_catalog_entry() {
+        let ir = compile_source(
+            r#"
+style GlobalPractice {
+  world_tradition: maqam
+}
+score demo style GlobalPractice {
+  voice lead {
+    world_tradition maqam {
+      note D4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
+    }
+
+    #[test]
+    fn world_tradition_rejects_unlisted_entry() {
+        let diagnostics = compile_source(
+            r#"
+style GlobalPractice {
+  world_tradition: maqam
+}
+score demo style GlobalPractice {
+  voice lead {
+    world_tradition hindustani_raga {
+      note D4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_WORLD_TRADITION");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("world_tradition"));
     }
 
     #[test]

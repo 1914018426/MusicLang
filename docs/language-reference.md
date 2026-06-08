@@ -35,6 +35,7 @@ score demo style Classical {
 - `articulation mark` for catalog ornaments/articulations such as `staccato`, `tenuto`, `accent`, or `legato`
 - `section label { ... }` for explicit form markers such as `A`, `B`, `exposition`, or `recapitulation`
 - `non_chord_tone kind { ... }` for explicit non-chord tone annotations such as `passing_tone` or `neighbor_tone`
+- `world_tradition kind { ... }` for explicit world-tradition annotations such as `maqam` or `hindustani_raga`
 - `note pitch_expr, duration_expr`
 - `chord [pitch_expr, ...], duration_expr`
 - `let name = expr`
@@ -73,6 +74,7 @@ style Sparse {
   dynamic_vocab: p mp mf f
   articulation_vocab: staccato tenuto accent
   non_chord_tone: passing_tone neighbor_tone
+  world_tradition: maqam hindustani_raga
   max_melodic_leap: P5
   contrapuntal_motion: contrary oblique similar
   cadence: authentic
@@ -131,6 +133,7 @@ Stable diagnostic codes include:
 - `ML_STYLE_DYNAMIC_VOCAB`
 - `ML_STYLE_ARTICULATION_VOCAB`
 - `ML_STYLE_NON_CHORD_TONE`
+- `ML_STYLE_WORLD_TRADITION`
 - `ML_STYLE_MAX_MELODIC_LEAP`
 - `ML_STYLE_CONTRAPUNTAL_MOTION`
 - `ML_STYLE_INSTRUMENT_RANGE`

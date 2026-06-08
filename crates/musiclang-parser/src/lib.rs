@@ -61,6 +61,7 @@ pub enum Stmt {
     Articulation(ArticulationStmt),
     Section(SectionStmt),
     NonChordTone(NonChordToneStmt),
+    WorldTradition(WorldTraditionStmt),
     For(ForStmt),
     If(IfStmt),
     Let(LetStmt),
@@ -190,6 +191,15 @@ pub struct SectionStmt {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NonChordToneStmt {
+    pub kind: String,
+    pub statements: Vec<Stmt>,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldTraditionStmt {
     pub kind: String,
     pub statements: Vec<Stmt>,
     pub line: usize,
@@ -643,6 +653,9 @@ impl Parser {
         if self.check_ident("non_chord_tone") {
             return self.parse_non_chord_tone().map(Stmt::NonChordTone);
         }
+        if self.check_ident("world_tradition") {
+            return self.parse_world_tradition().map(Stmt::WorldTradition);
+        }
         if self.check_ident("for") {
             return self.parse_for().map(Stmt::For);
         }
@@ -846,6 +859,19 @@ impl Parser {
         })
     }
 
+    fn parse_world_tradition(&mut self) -> Option<WorldTraditionStmt> {
+        let start = self.expect_ident_text("world_tradition")?;
+        let kind = self.expect_name()?;
+        let statements = self.parse_required_block()?;
+        Some(WorldTraditionStmt {
+            kind,
+            statements,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
     fn parse_for(&mut self) -> Option<ForStmt> {
         let start = self.expect_ident_text("for")?;
         let variable = self.expect_name()?;
@@ -1019,6 +1045,7 @@ impl Parser {
                 | "articulation"
                 | "section"
                 | "non_chord_tone"
+                | "world_tradition"
                 | "for"
                 | "if"
                 | "let"
@@ -1553,6 +1580,29 @@ score demo {
 
         assert_eq!(non_chord_tone.kind, "passing_tone");
         assert_eq!(non_chord_tone.statements.len(), 1);
+    }
+
+    #[test]
+    fn parses_world_tradition_statement() {
+        let source = r#"
+score demo {
+  voice lead {
+    world_tradition maqam {
+      note D4, 1/8
+    }
+  }
+}
+"#;
+        let program = parse_source(source).unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::WorldTradition(world_tradition) = &voice.statements[0] else {
+            panic!("expected world tradition");
+        };
+
+        assert_eq!(world_tradition.kind, "maqam");
+        assert_eq!(world_tradition.statements.len(), 1);
     }
 
     #[test]
