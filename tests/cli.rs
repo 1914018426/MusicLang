@@ -176,6 +176,34 @@ fn music_export_midi_produces_valid_file() {
 }
 
 #[test]
+fn music_ir_expands_named_chord_quality() {
+    let workspace = env!("CARGO_MANIFEST_DIR");
+    let input_path = format!("{workspace}/target/named-chord.music");
+    fs::write(
+        &input_path,
+        r#"
+score demo {
+  voice lead {
+    chord D3 minor7, 1/2
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = run_music(&["ir", &input_path]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("class: D"));
+    assert!(stdout.contains("class: F"));
+    assert!(stdout.contains("class: A"));
+    assert!(stdout.contains("class: C"));
+    assert!(stdout.contains("octave: 4"));
+    assert!(stdout.contains("duration_ticks: 960"));
+}
+
+#[test]
 fn music_export_musicxml_produces_valid_file() {
     let workspace = env!("CARGO_MANIFEST_DIR");
     let input_path = write_analyze_metadata_fixture();

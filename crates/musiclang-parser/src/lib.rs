@@ -179,6 +179,8 @@ pub struct ChordStmt {
     pub pitches: Vec<String>,
     pub duration: String,
     pub pitch_exprs: Vec<Expr>,
+    pub root_expr: Option<Expr>,
+    pub quality: Option<String>,
     pub duration_expr: Expr,
     pub line: usize,
     pub column: usize,
@@ -900,21 +902,40 @@ impl Parser {
 
     fn parse_chord(&mut self) -> Option<ChordStmt> {
         let start = self.expect_ident_text("chord")?;
-        self.expect(TokenKind::LBracket, "expected `[` after chord")?;
-        let mut pitch_exprs = Vec::new();
-        while !self.check(TokenKind::RBracket) && !self.check(TokenKind::Eof) {
-            pitch_exprs.push(self.parse_expr_until(&[TokenKind::Comma, TokenKind::RBracket])?);
-            if self.check(TokenKind::Comma) {
-                self.advance();
+        if self.check(TokenKind::LBracket) {
+            self.advance();
+            let mut pitch_exprs = Vec::new();
+            while !self.check(TokenKind::RBracket) && !self.check(TokenKind::Eof) {
+                pitch_exprs.push(self.parse_expr_until(&[TokenKind::Comma, TokenKind::RBracket])?);
+                if self.check(TokenKind::Comma) {
+                    self.advance();
+                }
             }
+            self.expect(TokenKind::RBracket, "expected `]` after chord pitches")?;
+            self.expect(TokenKind::Comma, "expected `,` after chord pitches")?;
+            let duration_expr = self.parse_expr_until_stmt_end()?;
+            return Some(ChordStmt {
+                pitches: pitch_exprs.iter().map(expr_to_source).collect(),
+                duration: expr_to_source(&duration_expr),
+                pitch_exprs,
+                root_expr: None,
+                quality: None,
+                duration_expr,
+                line: start.span.line,
+                column: start.span.column,
+                span: start.span,
+            });
         }
-        self.expect(TokenKind::RBracket, "expected `]` after chord pitches")?;
-        self.expect(TokenKind::Comma, "expected `,` after chord pitches")?;
+
+        let (root_expr, quality) = self.parse_named_chord_head()?;
+        self.expect(TokenKind::Comma, "expected `,` after chord quality")?;
         let duration_expr = self.parse_expr_until_stmt_end()?;
         Some(ChordStmt {
-            pitches: pitch_exprs.iter().map(expr_to_source).collect(),
+            pitches: Vec::new(),
             duration: expr_to_source(&duration_expr),
-            pitch_exprs,
+            pitch_exprs: Vec::new(),
+            root_expr: Some(root_expr),
+            quality: Some(quality),
             duration_expr,
             line: start.span.line,
             column: start.span.column,
@@ -1173,6 +1194,53 @@ impl Parser {
             }
             None
         })
+    }
+
+    fn parse_named_chord_head(&mut self) -> Option<(Expr, String)> {
+        let mut tokens = Vec::new();
+        let mut depth = 0usize;
+        while !self.check(TokenKind::Eof) {
+            if depth == 0 && self.check(TokenKind::Comma) {
+                break;
+            }
+            let token = self.advance().clone();
+            match token.kind {
+                TokenKind::LBracket | TokenKind::LParen => depth += 1,
+                TokenKind::RBracket | TokenKind::RParen => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            tokens.push(token);
+        }
+        if tokens.len() < 2 {
+            if let Some(token) = tokens.first() {
+                self.push_token_diagnostic(
+                    "ML_PARSE_CHORD",
+                    "expected chord root and quality",
+                    token,
+                );
+            }
+            return None;
+        }
+        let quality = tokens.pop().unwrap();
+        if !matches!(
+            quality.kind,
+            TokenKind::Ident | TokenKind::Pitch | TokenKind::Interval
+        ) {
+            self.push_token_diagnostic("ML_PARSE_NAME", "expected chord quality", &quality);
+            return None;
+        }
+        parse_expr_tokens(&tokens)
+            .map(|root| (root, quality.text))
+            .or_else(|| {
+                if let Some(token) = tokens.first() {
+                    self.push_token_diagnostic(
+                        "ML_PARSE_EXPR",
+                        "expected chord root expression",
+                        token,
+                    );
+                }
+                None
+            })
     }
 
     fn parse_expr_until_stmt_end(&mut self) -> Option<Expr> {
@@ -1630,6 +1698,33 @@ score demo {
     }
 
     #[test]
+    fn parses_named_chord_quality() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    chord D3 minor7, 1/2
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Chord(chord) = &voice.statements[0] else {
+            panic!("expected chord");
+        };
+
+        assert_eq!(
+            chord.root_expr.as_ref().map(expr_to_source).as_deref(),
+            Some("D3")
+        );
+        assert_eq!(chord.quality.as_deref(), Some("minor7"));
+        assert!(chord.pitch_exprs.is_empty());
+    }
+
+    #[test]
     fn parses_score_title_and_composer_metadata() {
         let program = parse_source(
             r#"
@@ -2023,7 +2118,7 @@ score demo {
         let diagnostics = parse_source(source).unwrap_err();
         let diagnostic = diagnostics
             .iter()
-            .find(|diagnostic| diagnostic.code == "ML_PARSE_TOKEN")
+            .find(|diagnostic| diagnostic.code == "ML_PARSE_CHORD")
             .unwrap();
         let span = diagnostic.span.unwrap();
         let expected_start = source.find("C4").unwrap();

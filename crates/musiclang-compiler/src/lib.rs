@@ -338,6 +338,23 @@ impl Compiler {
 
     fn compile_chord(&mut self, chord: &ChordStmt, track: &mut TrackBuilder) {
         let mut pitches = Vec::new();
+        if let (Some(root_expr), Some(quality)) = (&chord.root_expr, &chord.quality) {
+            if let Some(root) = self.eval_pitch(root_expr, chord.line, chord.column) {
+                if let Some(expanded) = expand_chord_quality(root, quality) {
+                    pitches.extend(expanded);
+                } else {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "ML_THEORY_CHORD_QUALITY",
+                            format!("unknown chord quality `{quality}`"),
+                            chord.line,
+                            chord.column,
+                        )
+                        .with_span(chord.span),
+                    );
+                }
+            }
+        }
         for pitch_expr in &chord.pitch_exprs {
             match self.eval_expr(pitch_expr, chord.line, chord.column) {
                 Some(Value::Pitch(pitch)) => {
@@ -2364,6 +2381,23 @@ fn parse_chord_classes(value: &str) -> Option<Vec<PitchClass>> {
     (!classes.is_empty()).then_some(classes)
 }
 
+fn expand_chord_quality(root: Pitch, quality: &str) -> Option<Vec<Pitch>> {
+    let catalog = musiclang_core::theory_catalog();
+    let entry = catalog
+        .entries(TheoryDomain::ChordQualities)
+        .iter()
+        .find(|entry| entry.id == quality)?;
+    entry
+        .pattern
+        .iter()
+        .map(|step| {
+            step.parse::<i16>()
+                .ok()
+                .and_then(|semitones| root.transpose(Interval::new(semitones)).ok())
+        })
+        .collect()
+}
+
 fn chord_matches_quality(pitches: &[Pitch], quality: &str) -> bool {
     let Some(root) = pitches.first().map(|pitch| pitch.class().semitone()) else {
         return false;
@@ -2642,6 +2676,49 @@ score demo {
 
         assert_eq!(ir.title, "demo");
         assert_eq!(ir.tracks[0].events.len(), 4);
+    }
+
+    #[test]
+    fn expands_named_chord_quality_to_ir_events() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice lead {
+    chord D3 minor7, 1/2
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let pitches = ir.tracks[0]
+            .events
+            .iter()
+            .map(|event| event.pitch.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(pitches, vec!["D3", "F3", "A3", "C4"]);
+        assert!(ir.tracks[0]
+            .events
+            .iter()
+            .all(|event| event.start_tick == 0 && event.duration_ticks == 960));
+    }
+
+    #[test]
+    fn rejects_unknown_named_chord_quality() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice lead {
+    chord C4 quartal9, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_THEORY_CHORD_QUALITY"));
     }
 
     #[test]
