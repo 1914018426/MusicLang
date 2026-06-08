@@ -952,6 +952,10 @@ impl Compiler {
                     self.check_expression_name(arg, line, column, scopes);
                 }
             }
+            ExprKind::Pipe { value, call } => {
+                self.check_expression_name(value, line, column, scopes);
+                self.check_expression_name(call, line, column, scopes);
+            }
             ExprKind::Call { args, .. } => {
                 for arg in args {
                     self.check_expression_name(arg, line, column, scopes);
@@ -2945,6 +2949,10 @@ impl Compiler {
                 );
                 self.eval_call(method, values, line, column, expr.span)
             }
+            ExprKind::Pipe { value, call } => {
+                let value = self.eval_expr(value, line, column)?;
+                self.eval_pipe(value, call, line, column, expr.span)
+            }
             ExprKind::Call { callee, args } => {
                 let args = args
                     .iter()
@@ -3001,6 +3009,55 @@ impl Compiler {
                 self.diagnostics.push(
                     Diagnostic::error("ML_TYPE_MISMATCH", "expected tuple or dict", line, column)
                         .with_span(span),
+                );
+                None
+            }
+        }
+    }
+
+    fn eval_pipe(
+        &mut self,
+        value: Value,
+        call: &Expr,
+        line: usize,
+        column: usize,
+        span: Span,
+    ) -> Option<Value> {
+        match &call.kind {
+            ExprKind::Call { callee, args } => {
+                let mut values = Vec::with_capacity(args.len() + 1);
+                values.push(value);
+                values.extend(
+                    args.iter()
+                        .map(|arg| self.eval_expr(arg, line, column))
+                        .collect::<Option<Vec<_>>>()?,
+                );
+                self.eval_call(callee, values, line, column, span)
+            }
+            ExprKind::MethodCall {
+                target,
+                method,
+                args,
+            } => {
+                let mut values = Vec::with_capacity(args.len() + 2);
+                values.push(value);
+                values.push(self.eval_expr(target, line, column)?);
+                values.extend(
+                    args.iter()
+                        .map(|arg| self.eval_expr(arg, line, column))
+                        .collect::<Option<Vec<_>>>()?,
+                );
+                self.eval_call(method, values, line, column, span)
+            }
+            _ => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected function call after pipe",
+                        line,
+                        column,
+                    )
+                    .with_span(span),
                 );
                 None
             }
@@ -6006,7 +6063,7 @@ score demo {
         let ir = compile_source(
             r#"
 fn hit(cfg) {
-  note cfg.root.transpose(M3), cfg.dur
+  note cfg.root |> transpose(M3), cfg.dur
 }
 score demo {
   voice lead {

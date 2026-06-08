@@ -141,6 +141,10 @@ pub enum ExprKind {
         method: String,
         args: Vec<Expr>,
     },
+    Pipe {
+        value: Box<Expr>,
+        call: Box<Expr>,
+    },
     Call {
         callee: String,
         args: Vec<Expr>,
@@ -595,6 +599,7 @@ pub enum TokenKind {
     EqEq,
     Dot,
     DotDot,
+    Pipe,
     Plus,
     Minus,
     Eof,
@@ -645,6 +650,7 @@ impl Lexer {
                 ':' => tokens.push(self.simple(TokenKind::Colon)),
                 '+' => tokens.push(self.simple(TokenKind::Plus)),
                 '-' => tokens.push(self.simple(TokenKind::Minus)),
+                '|' if self.peek_next() == Some('>') => tokens.push(self.double(TokenKind::Pipe)),
                 '=' if self.peek_next() == Some('=') => tokens.push(self.double(TokenKind::EqEq)),
                 '=' => tokens.push(self.simple(TokenKind::Eq)),
                 '.' if self.peek_next() == Some('.') => tokens.push(self.double(TokenKind::DotDot)),
@@ -2332,6 +2338,15 @@ fn parse_expr_tokens(tokens: &[Token]) -> Option<Expr> {
         return None;
     }
     let span = expr_span(tokens);
+    if let Some(index) = find_top_level_operator(tokens, TokenKind::Pipe) {
+        return Some(Expr::new(
+            ExprKind::Pipe {
+                value: Box::new(parse_expr_tokens(&tokens[..index])?),
+                call: Box::new(parse_expr_tokens(&tokens[index + 1..])?),
+            },
+            span,
+        ));
+    }
     if let Some(index) = find_last_top_level_operator(tokens, TokenKind::Dot) {
         let target = Box::new(parse_expr_tokens(&tokens[..index])?);
         let suffix = &tokens[index + 1..];
@@ -2605,6 +2620,9 @@ fn expr_to_source(expr: &Expr) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        ExprKind::Pipe { value, call } => {
+            format!("{} |> {}", expr_to_source(value), expr_to_source(call))
+        }
         ExprKind::Call { callee, args } => format!(
             "{}({})",
             callee,
@@ -3433,7 +3451,7 @@ score demo {
         let program = parse_source(
             r#"
 fn motif(cfg, pair) {
-  note cfg.root.transpose(M3), pair.1
+  note cfg.root |> transpose(M3), pair.1
 }
 score demo {
   voice lead {
@@ -3447,17 +3465,11 @@ score demo {
         let Stmt::Note(note) = &program.functions[0].statements[0] else {
             panic!("expected note");
         };
-        let ExprKind::MethodCall {
-            target,
-            method,
-            args,
-        } = &note.pitch_expr.kind
-        else {
-            panic!("expected method call");
+        let ExprKind::Pipe { value, call } = &note.pitch_expr.kind else {
+            panic!("expected pipe");
         };
-        assert_eq!(method, "transpose");
-        assert_eq!(args.len(), 1);
-        assert!(matches!(target.kind, ExprKind::Access { .. }));
+        assert!(matches!(value.kind, ExprKind::Access { .. }));
+        assert!(matches!(call.kind, ExprKind::Call { .. }));
         let Stmt::Voice(voice) = &program.score.statements[0] else {
             panic!("expected voice");
         };
