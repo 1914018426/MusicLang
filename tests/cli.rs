@@ -737,6 +737,8 @@ fn music_ir_prints_lowered_score() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ScoreIr"));
     assert!(stdout.contains("tempo_bpm"));
+    assert!(stdout.contains("tempo_changes"));
+    assert!(stdout.contains("bpm: 144"));
 }
 
 fn write_analyze_metadata_fixture() -> String {

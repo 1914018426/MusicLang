@@ -1526,7 +1526,14 @@ pub struct ScoreIr {
     pub key: Option<KeySignature>,
     pub tracks: Vec<TrackIr>,
     pub markers: Vec<MarkerIr>,
+    pub tempo_changes: Vec<TempoChangeIr>,
     pub overrides: Vec<OverrideTrace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TempoChangeIr {
+    pub bpm: u16,
+    pub tick: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

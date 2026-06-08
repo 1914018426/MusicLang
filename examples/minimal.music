@@ -2,6 +2,7 @@ score demo {
   key C major
   voice lead {
     note C4, 1/4
+    tempo 144
     note E4, 1/4
     degree b3 4, 1/8
     scale C major 4, 1/16

@@ -40,6 +40,18 @@ pub fn write_midi<W: Write>(score: &ScoreIr, writer: &mut W) -> io::Result<()> {
             kind: TrackEventKind::Meta(MetaMessage::KeySignature(key.fifths, key.is_minor)),
         });
     }
+    let mut tempo_changes = score.tempo_changes.clone();
+    tempo_changes.sort_by_key(|change| change.tick);
+    let mut tempo_cursor = 0;
+    for change in tempo_changes {
+        tempo_track.push(TrackEvent {
+            delta: u28::new(change.tick - tempo_cursor),
+            kind: TrackEventKind::Meta(MetaMessage::Tempo(u24::new(
+                60_000_000 / u32::from(change.bpm.max(1)),
+            ))),
+        });
+        tempo_cursor = change.tick;
+    }
     tempo_track.push(TrackEvent {
         delta: u28::new(0),
         kind: TrackEventKind::Meta(MetaMessage::EndOfTrack),
@@ -152,7 +164,7 @@ mod tests {
     use super::*;
     use midly::TrackEventKind;
     use musiclang_core::{
-        KeySignature, Meter, NoteEventIr, Pitch, PitchClass, ScoreIr, TrackIr,
+        KeySignature, Meter, NoteEventIr, Pitch, PitchClass, ScoreIr, TempoChangeIr, TrackIr,
         DEFAULT_TICKS_PER_QUARTER,
     };
 
@@ -185,6 +197,10 @@ mod tests {
                 }],
             }],
             markers: Vec::new(),
+            tempo_changes: vec![TempoChangeIr {
+                bpm: 120,
+                tick: DEFAULT_TICKS_PER_QUARTER,
+            }],
             overrides: Vec::new(),
         };
         let bytes = render_midi(&score).unwrap();
@@ -207,6 +223,16 @@ mod tests {
             event.kind,
             TrackEventKind::Meta(MetaMessage::Tempo(value)) if value.as_int() == 666_666
         )));
+        assert!(smf.tracks[0].iter().any(|event| matches!(
+            event.kind,
+            TrackEventKind::Meta(MetaMessage::Tempo(value)) if value.as_int() == 500_000
+        )));
+        assert!(smf.tracks[0].iter().any(|event| {
+            matches!(
+                event.kind,
+                TrackEventKind::Meta(MetaMessage::Tempo(value)) if value.as_int() == 500_000
+            ) && event.delta.as_int() == DEFAULT_TICKS_PER_QUARTER
+        }));
         assert!(smf.tracks[0].iter().any(|event| matches!(
             event.kind,
             TrackEventKind::Meta(MetaMessage::TimeSignature(3, 2, 24, 8))

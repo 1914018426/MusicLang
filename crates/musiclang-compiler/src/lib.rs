@@ -3,8 +3,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use musiclang_core::{
     Chord, CustomStyleRule, CustomTheoryDomain, Diagnostic, Duration, InstrumentRange, Interval,
     KeySignature, MarkerIr, Meter, Note, NoteEventIr, OverrideTrace, Pitch, PitchClass,
-    RuleSeverity, ScoreIr, Severity, Span, StyleContext, TheoryDomain, TheoryReference, TrackIr,
-    DEFAULT_TICKS_PER_QUARTER,
+    RuleSeverity, ScoreIr, Severity, Span, StyleContext, TempoChangeIr, TheoryDomain,
+    TheoryReference, TrackIr, DEFAULT_TICKS_PER_QUARTER,
 };
 use musiclang_parser::{
     parse_source, ArpeggioStmt, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DegreeStmt,
@@ -55,6 +55,7 @@ struct Compiler {
     override_traces: Vec<OverrideTrace>,
     section_labels: Vec<String>,
     markers: Vec<MarkerIr>,
+    tempo_changes: Vec<TempoChangeIr>,
     pending_non_chord_tones: Vec<PendingNonChordTone>,
     score_key: Option<KeySignature>,
     pitch_transpose_semitones: i16,
@@ -94,6 +95,7 @@ impl Compiler {
             override_traces: Vec::new(),
             section_labels: Vec::new(),
             markers: Vec::new(),
+            tempo_changes: Vec::new(),
             pending_non_chord_tones: Vec::new(),
             score_key: None,
             pitch_transpose_semitones: 0,
@@ -158,6 +160,7 @@ impl Compiler {
                 },
                 tracks,
                 self.markers,
+                self.tempo_changes,
                 self.override_traces,
             ),
             diagnostics: self.diagnostics,
@@ -180,6 +183,10 @@ impl Compiler {
     fn compile_statement(&mut self, statement: &Stmt, track: &mut TrackBuilder) {
         match statement {
             Stmt::Voice(voice) => self.compile_voice(voice, track),
+            Stmt::Tempo(tempo) => self.tempo_changes.push(TempoChangeIr {
+                bpm: tempo.bpm,
+                tick: track.cursor_tick(),
+            }),
             Stmt::Note(note) => self.compile_note(note, track),
             Stmt::Rest(rest) => self.compile_rest(rest, track),
             Stmt::Glissando(glissando) => self.compile_glissando(glissando, track),
@@ -4968,6 +4975,28 @@ score demo {
         assert_eq!(ir.key.unwrap().fifths, -1);
         assert!(!ir.key.unwrap().is_minor);
         assert_eq!(ir.tracks[0].program, Some(40));
+    }
+
+    #[test]
+    fn lowers_tempo_changes_at_current_tick() {
+        let ir = compile_source(
+            r#"
+score demo {
+  tempo 96
+  voice lead {
+    note C4, 1/4
+    tempo 144
+    note E4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tempo_bpm, 96);
+        assert_eq!(ir.tempo_changes.len(), 1);
+        assert_eq!(ir.tempo_changes[0].bpm, 144);
+        assert_eq!(ir.tempo_changes[0].tick, 480);
     }
 
     #[test]

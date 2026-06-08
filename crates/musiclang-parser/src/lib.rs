@@ -67,6 +67,7 @@ pub struct TextMetaDecl {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
     Voice(VoiceDecl),
+    Tempo(TempoDecl),
     Note(NoteStmt),
     Rest(RestStmt),
     Glissando(GlissandoStmt),
@@ -938,6 +939,9 @@ impl Parser {
     fn parse_stmt(&mut self) -> Option<Stmt> {
         if self.check_ident("voice") {
             return self.parse_voice().map(Stmt::Voice);
+        }
+        if self.check_ident("tempo") {
+            return self.parse_tempo().map(Stmt::Tempo);
         }
         if self.check_ident("note") {
             return self.parse_note().map(Stmt::Note);
@@ -2462,6 +2466,29 @@ score demo {
         assert_eq!(pedal.pitch, "C3");
         assert_eq!(pedal.count, 4);
         assert_eq!(pedal.duration, "1/4");
+    }
+
+    #[test]
+    fn parses_tempo_statement_inside_voice() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice lead {
+    tempo 144
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Tempo(tempo) = &voice.statements[0] else {
+            panic!("expected tempo");
+        };
+
+        assert_eq!(tempo.bpm, 144);
     }
 
     #[test]
