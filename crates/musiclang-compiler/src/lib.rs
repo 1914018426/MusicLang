@@ -8,8 +8,8 @@ use musiclang_core::{
 };
 use musiclang_parser::{
     parse_source, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DynamicStmt, Expr, ExprKind,
-    FunctionDecl, ModulateStmt, NoteStmt, OverrideStmt, Program, ProgressionStmt, RomanStmt, Stmt,
-    StyleDecl, VoiceDecl, WithStyleStmt,
+    FunctionDecl, ModulateStmt, NoteStmt, OverrideStmt, PedalStmt, Program, ProgressionStmt,
+    RomanStmt, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +169,7 @@ impl Compiler {
         match statement {
             Stmt::Voice(voice) => self.compile_voice(voice, track),
             Stmt::Note(note) => self.compile_note(note, track),
+            Stmt::Pedal(pedal) => self.compile_pedal(pedal, track),
             Stmt::Chord(chord) => self.compile_chord(chord, track),
             Stmt::Roman(roman) => self.compile_roman(roman, track),
             Stmt::Progression(progression) => self.compile_progression(progression, track),
@@ -342,6 +343,62 @@ impl Compiler {
             Some(note.span),
         );
         track.push_note(Note::new(pitch, duration), Some(note.span));
+    }
+
+    fn compile_pedal(&mut self, pedal: &PedalStmt, track: &mut TrackBuilder) {
+        let Some(pitch) = self.eval_pitch(&pedal.pitch_expr, pedal.line, pedal.column) else {
+            return;
+        };
+        let Some(duration) = self.eval_duration(&pedal.duration_expr, pedal.line, pedal.column)
+        else {
+            return;
+        };
+        let Some(count) = self.eval_pedal_count(pedal) else {
+            return;
+        };
+        self.check_pitch_style(pitch, pedal.line, pedal.column, Some(pedal.span));
+        self.check_rhythm_vocab(duration, pedal.line, pedal.column, Some(pedal.span));
+        self.check_instrument_range(
+            track.program,
+            pitch,
+            pedal.line,
+            pedal.column,
+            Some(pedal.span),
+        );
+        for _ in 0..count {
+            track.push_note(Note::new(pitch, duration), Some(pedal.span));
+        }
+    }
+
+    fn eval_pedal_count(&mut self, pedal: &PedalStmt) -> Option<usize> {
+        match self.eval_expr(&pedal.count_expr, pedal.line, pedal.column) {
+            Some(Value::Int(value)) if value > 0 => Some(value as usize),
+            Some(Value::Int(_)) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_THEORY_PEDAL",
+                        "pedal count must be positive",
+                        pedal.line,
+                        pedal.column,
+                    )
+                    .with_span(pedal.span),
+                );
+                None
+            }
+            Some(_) => {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "ML_TYPE_MISMATCH",
+                        "expected integer pedal count",
+                        pedal.line,
+                        pedal.column,
+                    )
+                    .with_span(pedal.span),
+                );
+                None
+            }
+            None => None,
+        }
     }
 
     fn compile_chord(&mut self, chord: &ChordStmt, track: &mut TrackBuilder) {
@@ -2976,6 +3033,49 @@ score demo {
 
         assert_eq!(ir.title, "demo");
         assert_eq!(ir.tracks[0].events.len(), 4);
+    }
+
+    #[test]
+    fn expands_pedal_tone_to_repeated_events() {
+        let ir = compile_source(
+            r#"
+score demo {
+  voice bass {
+    pedal C3, 4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let track = &ir.tracks[0];
+        assert_eq!(track.events.len(), 4);
+        assert!(track
+            .events
+            .iter()
+            .all(|event| event.pitch.to_string() == "C3"));
+        assert_eq!(track.events[0].start_tick, 0);
+        assert_eq!(track.events[1].start_tick, 480);
+        assert_eq!(track.events[2].start_tick, 960);
+        assert_eq!(track.events[3].start_tick, 1440);
+    }
+
+    #[test]
+    fn rejects_non_positive_pedal_count() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  voice bass {
+    pedal C3, 0, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_THEORY_PEDAL"));
     }
 
     #[test]

@@ -68,6 +68,7 @@ pub struct TextMetaDecl {
 pub enum Stmt {
     Voice(VoiceDecl),
     Note(NoteStmt),
+    Pedal(PedalStmt),
     Chord(ChordStmt),
     Roman(RomanStmt),
     Progression(ProgressionStmt),
@@ -172,6 +173,19 @@ pub struct NoteStmt {
     pub pitch: String,
     pub duration: String,
     pub pitch_expr: Expr,
+    pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PedalStmt {
+    pub pitch: String,
+    pub count: i32,
+    pub duration: String,
+    pub pitch_expr: Expr,
+    pub count_expr: Expr,
     pub duration_expr: Expr,
     pub line: usize,
     pub column: usize,
@@ -780,6 +794,9 @@ impl Parser {
         if self.check_ident("note") {
             return self.parse_note().map(Stmt::Note);
         }
+        if self.check_ident("pedal") {
+            return self.parse_pedal().map(Stmt::Pedal);
+        }
         if self.check_ident("chord") {
             return self.parse_chord().map(Stmt::Chord);
         }
@@ -948,6 +965,30 @@ impl Parser {
             pitch: expr_to_source(&pitch_expr),
             duration: expr_to_source(&duration_expr),
             pitch_expr,
+            duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_pedal(&mut self) -> Option<PedalStmt> {
+        let start = self.expect_ident_text("pedal")?;
+        let pitch_expr = self.parse_expr_until(&[TokenKind::Comma])?;
+        self.expect(TokenKind::Comma, "expected `,` after pedal pitch")?;
+        let count_expr = self.parse_expr_until(&[TokenKind::Comma])?;
+        self.expect(TokenKind::Comma, "expected `,` after pedal count")?;
+        let duration_expr = self.parse_expr_until_stmt_end()?;
+        let count = match count_expr.kind {
+            ExprKind::Int(value) => value,
+            _ => 0,
+        };
+        Some(PedalStmt {
+            pitch: expr_to_source(&pitch_expr),
+            count,
+            duration: expr_to_source(&duration_expr),
+            pitch_expr,
+            count_expr,
             duration_expr,
             line: start.span.line,
             column: start.span.column,
@@ -1417,6 +1458,7 @@ impl Parser {
             self.peek().text.as_str(),
             "voice"
                 | "note"
+                | "pedal"
                 | "chord"
                 | "roman"
                 | "progression"
@@ -1872,6 +1914,30 @@ score demo {
         );
         assert_eq!(chord.quality.as_deref(), Some("minor7"));
         assert!(chord.pitch_exprs.is_empty());
+    }
+
+    #[test]
+    fn parses_pedal_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  voice bass {
+    pedal C3, 4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Pedal(pedal) = &voice.statements[0] else {
+            panic!("expected pedal");
+        };
+
+        assert_eq!(pedal.pitch, "C3");
+        assert_eq!(pedal.count, 4);
+        assert_eq!(pedal.duration, "1/4");
     }
 
     #[test]
