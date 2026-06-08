@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse, Diagnostic,
-    DiagnosticSeverity, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
-    InitializeParams, Location, MarkedString, Position, PublishDiagnosticsParams, Range,
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
+    DiagnosticRelatedInformation, DiagnosticSeverity, DidChangeTextDocumentParams,
+    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
+    HoverParams, InitializeParams, Location, MarkedString, Position, PublishDiagnosticsParams,
+    Range, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
 };
 use musiclang_core::{Severity, BUILT_IN_STYLES};
 
@@ -112,7 +112,7 @@ fn publish_diagnostics(
     };
     let diagnostics = musiclang_compiler::diagnose_source(source)
         .into_iter()
-        .map(|diagnostic| to_lsp_diagnostic(source, diagnostic))
+        .map(|diagnostic| to_lsp_diagnostic(source, &uri, diagnostic))
         .collect();
     connection
         .sender
@@ -127,8 +127,14 @@ fn publish_diagnostics(
     Ok(())
 }
 
-fn to_lsp_diagnostic(source: &str, diagnostic: musiclang_core::Diagnostic) -> Diagnostic {
+fn to_lsp_diagnostic(
+    source: &str,
+    uri: &Uri,
+    diagnostic: musiclang_core::Diagnostic,
+) -> Diagnostic {
     let range = diagnostic_range(source, &diagnostic);
+    let related_information = diagnostic_related_information(source, uri, &diagnostic);
+    let data = diagnostic_data(&diagnostic);
     Diagnostic {
         range,
         severity: Some(match diagnostic.severity {
@@ -138,8 +144,58 @@ fn to_lsp_diagnostic(source: &str, diagnostic: musiclang_core::Diagnostic) -> Di
         code: Some(lsp_types::NumberOrString::String(diagnostic.code)),
         source: Some("musiclang".to_string()),
         message: diagnostic.message,
+        related_information,
+        data,
         ..Diagnostic::default()
     }
+}
+
+fn diagnostic_related_information(
+    source: &str,
+    uri: &Uri,
+    diagnostic: &musiclang_core::Diagnostic,
+) -> Option<Vec<DiagnosticRelatedInformation>> {
+    let mut information = diagnostic
+        .labels
+        .iter()
+        .map(|label| DiagnosticRelatedInformation {
+            location: Location {
+                uri: uri.clone(),
+                range: span_range(source, label.span),
+            },
+            message: label.message.clone(),
+        })
+        .collect::<Vec<_>>();
+    information.extend(
+        diagnostic
+            .related
+            .iter()
+            .map(|related| DiagnosticRelatedInformation {
+                location: Location {
+                    uri: uri.clone(),
+                    range: span_range(source, related.span),
+                },
+                message: related.message.clone(),
+            }),
+    );
+    (!information.is_empty()).then_some(information)
+}
+
+fn diagnostic_data(diagnostic: &musiclang_core::Diagnostic) -> Option<serde_json::Value> {
+    let mut data = serde_json::Map::new();
+    if let Some(rule) = &diagnostic.rule {
+        data.insert("rule".to_string(), serde_json::Value::String(rule.clone()));
+    }
+    if let Some(style) = &diagnostic.style {
+        data.insert(
+            "style".to_string(),
+            serde_json::Value::String(style.clone()),
+        );
+    }
+    if let Some(help) = &diagnostic.help {
+        data.insert("help".to_string(), serde_json::Value::String(help.clone()));
+    }
+    (!data.is_empty()).then_some(serde_json::Value::Object(data))
 }
 
 fn diagnostic_range(source: &str, diagnostic: &musiclang_core::Diagnostic) -> Range {
@@ -152,6 +208,10 @@ fn diagnostic_range(source: &str, diagnostic: &musiclang_core::Diagnostic) -> Ra
         };
     };
 
+    span_range(source, span)
+}
+
+fn span_range(source: &str, span: musiclang_core::Span) -> Range {
     if span.start <= span.end && span.end <= source.len() {
         let start = byte_offset_to_position(source, span.start);
         let mut end = byte_offset_to_position(source, span.end);
@@ -622,6 +682,7 @@ mod tests {
 
     #[test]
     fn converts_compiler_diagnostic_to_lsp_range() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
         let source = "score demo {\n  note C4, 1/4\n}";
         let start = source.find("note").unwrap();
         let span = musiclang_core::Span {
@@ -633,6 +694,7 @@ mod tests {
         };
         let diagnostic = to_lsp_diagnostic(
             source,
+            &uri,
             musiclang_core::Diagnostic::error("ML_TEST", "example diagnostic", 1, 1)
                 .with_span(span),
         );
@@ -654,8 +716,10 @@ mod tests {
             line: 2,
             column: 3,
         };
+        let uri = Uri::from_str("file:///demo.music").unwrap();
         let diagnostic = to_lsp_diagnostic(
             source,
+            &uri,
             musiclang_core::Diagnostic::error("ML_TEST", "example diagnostic", 1, 1)
                 .with_span(span),
         );
@@ -676,8 +740,10 @@ mod tests {
             line: 2,
             column: 3,
         };
+        let uri = Uri::from_str("file:///demo.music").unwrap();
         let diagnostic = to_lsp_diagnostic(
             source,
+            &uri,
             musiclang_core::Diagnostic::error("ML_TEST", "example diagnostic", 1, 1)
                 .with_span(span),
         );
@@ -697,8 +763,10 @@ mod tests {
             line: 2,
             column: 1,
         };
+        let uri = Uri::from_str("file:///demo.music").unwrap();
         let diagnostic = to_lsp_diagnostic(
             source,
+            &uri,
             musiclang_core::Diagnostic::error("ML_TEST", "example diagnostic", 1, 1)
                 .with_span(span),
         );
@@ -709,13 +777,58 @@ mod tests {
 
     #[test]
     fn converts_missing_span_with_line_column_fallback() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
         let mut diagnostic =
             musiclang_core::Diagnostic::error("ML_TEST", "example diagnostic", 4, 2);
         diagnostic.span = None;
-        let diagnostic = to_lsp_diagnostic("", diagnostic);
+        let diagnostic = to_lsp_diagnostic("", &uri, diagnostic);
 
         assert_eq!(diagnostic.range.start, Position::new(3, 1));
         assert_eq!(diagnostic.range.end, Position::new(3, 2));
+    }
+
+    #[test]
+    fn maps_diagnostic_metadata_to_lsp() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
+        let source = "style Strict {\n  scale: C D E\n}\nscore demo {\n  note F4, 1/4\n}";
+        let label_start = source.find("scale").unwrap();
+        let related_start = source.find("note").unwrap();
+        let label_span = musiclang_core::Span {
+            source_id: musiclang_core::SourceId(0),
+            start: label_start,
+            end: label_start + "scale".len(),
+            line: 2,
+            column: 3,
+        };
+        let related_span = musiclang_core::Span {
+            source_id: musiclang_core::SourceId(0),
+            start: related_start,
+            end: related_start + "note".len(),
+            line: 5,
+            column: 3,
+        };
+        let diagnostic = to_lsp_diagnostic(
+            source,
+            &uri,
+            musiclang_core::Diagnostic::error("ML_STYLE_SCALE", "outside scale", 5, 3)
+                .with_label(label_span, "configured scale")
+                .with_related(related_span, "offending note")
+                .with_rule("scale")
+                .with_style("Strict")
+                .with_help("Use a pitch from the configured scale."),
+        );
+
+        let related = diagnostic.related_information.unwrap();
+        assert_eq!(related.len(), 2);
+        assert_eq!(related[0].location.uri, uri);
+        assert_eq!(related[0].location.range.start, Position::new(1, 2));
+        assert_eq!(related[0].message, "configured scale");
+        assert_eq!(related[1].location.range.start, Position::new(4, 2));
+        assert_eq!(related[1].message, "offending note");
+        let data = diagnostic.data.unwrap();
+        assert_eq!(data["rule"], "scale");
+        assert_eq!(data["style"], "Strict");
+        assert_eq!(data["help"], "Use a pitch from the configured scale.");
     }
 
     #[test]
