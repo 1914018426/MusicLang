@@ -157,6 +157,7 @@ mod stylecheck {
                 | "dynamic_vocab"
                 | "articulation_vocab"
                 | "non_chord_tone"
+                | "tuning_system"
                 | "world_tradition"
                 | "max_melodic_leap"
                 | "contrapuntal_motion"
@@ -306,6 +307,14 @@ impl Compiler {
                     non_chord_tone.column,
                 );
                 self.compile_statements(&non_chord_tone.statements, track);
+            }
+            Stmt::TuningSystem(tuning_system) => {
+                self.check_tuning_system(
+                    &tuning_system.kind,
+                    tuning_system.line,
+                    tuning_system.column,
+                );
+                self.compile_statements(&tuning_system.statements, track);
             }
             Stmt::WorldTradition(world_tradition) => {
                 self.check_world_tradition(
@@ -528,6 +537,29 @@ impl Compiler {
                 "non_chord_tone",
                 "ML_STYLE_NON_CHORD_TONE",
                 format!("non-chord tone `{kind}` is outside active style vocabulary"),
+                line,
+                column,
+            );
+        }
+    }
+
+    fn check_tuning_system(&mut self, kind: &str, line: usize, column: usize) {
+        if self.style.tuning_systems.is_empty()
+            || self.has_override("tuning_system")
+            || self.has_score_override("tuning_system")
+        {
+            return;
+        }
+        if !self
+            .style
+            .tuning_systems
+            .iter()
+            .any(|allowed| allowed == kind)
+        {
+            self.push_style_diagnostic(
+                "tuning_system",
+                "ML_STYLE_TUNING_SYSTEM",
+                format!("tuning system `{kind}` is outside active style vocabulary"),
                 line,
                 column,
             );
@@ -1566,6 +1598,14 @@ fn style_from_program_inner(
                     .map(ToString::to_string)
                     .collect();
                 validate_vocab_entries(style, entry, TheoryDomain::NonChordTones, &mut diagnostics);
+            }
+            "tuning_system" => {
+                context.tuning_systems = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_vocab_entries(style, entry, TheoryDomain::TuningSystems, &mut diagnostics);
             }
             "world_tradition" => {
                 context.world_traditions = entry
@@ -2881,6 +2921,49 @@ score demo style PostTonal {
 
         assert_eq!(diagnostics[0].code, "ML_STYLE_SET_CLASS_VOCAB");
         assert_eq!(diagnostics[0].rule.as_deref(), Some("set_class_vocab"));
+    }
+
+    #[test]
+    fn tuning_system_accepts_catalog_entry() {
+        let ir = compile_source(
+            r#"
+style IntonationPractice {
+  tuning_system: just_intonation
+}
+score demo style IntonationPractice {
+  voice lead {
+    tuning_system just_intonation {
+      note D4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 1);
+    }
+
+    #[test]
+    fn tuning_system_rejects_unlisted_entry() {
+        let diagnostics = compile_source(
+            r#"
+style IntonationPractice {
+  tuning_system: just_intonation
+}
+score demo style IntonationPractice {
+  voice lead {
+    tuning_system equal_temperament_12 {
+      note D4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_TUNING_SYSTEM");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("tuning_system"));
     }
 
     #[test]

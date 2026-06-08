@@ -26,6 +26,7 @@ style Chamber extends Classical {
   dynamic_vocab: p mp mf f
   articulation_vocab: staccato tenuto accent
   non_chord_tone: passing_tone neighbor_tone
+  tuning_system: equal_temperament_12 just_intonation
   world_tradition: maqam hindustani_raga
   max_melodic_leap: P5
   contrapuntal_motion: contrary oblique similar
@@ -53,6 +54,7 @@ style Chamber extends Classical {
 - `dynamic_vocab`: `dynamic` statements must use configured entries from the `dynamics` theory catalog.
 - `articulation_vocab`: `articulation` statements must use configured entries from the `ornaments` theory catalog.
 - `non_chord_tone`: `non_chord_tone` annotation blocks must use configured entries from the `non_chord_tones` theory catalog.
+- `tuning_system`: `tuning_system` annotation blocks must use configured entries from the `tuning_systems` theory catalog.
 - `world_tradition`: `world_tradition` annotation blocks must use configured entries from the `world_traditions` theory catalog.
 - `max_melodic_leap`: consecutive notes in a voice must not exceed the configured interval.
 - `contrapuntal_motion`: simultaneous voice pairs must move only through allowed motion types (`parallel`, `similar`, `contrary`, `oblique`).
@@ -151,6 +153,7 @@ Overrides suppress style rules only. They do not bypass parser, type, name-resol
 - `ML_STYLE_DYNAMIC_VOCAB`
 - `ML_STYLE_ARTICULATION_VOCAB`
 - `ML_STYLE_NON_CHORD_TONE`
+- `ML_STYLE_TUNING_SYSTEM`
 - `ML_STYLE_WORLD_TRADITION`
 - `ML_STYLE_MAX_MELODIC_LEAP`
 - `ML_STYLE_CONTRAPUNTAL_MOTION`
