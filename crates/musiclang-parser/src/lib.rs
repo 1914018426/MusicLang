@@ -72,6 +72,7 @@ pub enum Stmt {
     Roman(RomanStmt),
     Progression(ProgressionStmt),
     Cadence(CadenceStmt),
+    Modulate(ModulateStmt),
     Dynamic(DynamicStmt),
     Velocity(VelocityStmt),
     Articulation(ArticulationStmt),
@@ -215,6 +216,15 @@ pub struct CadenceStmt {
     pub kind: String,
     pub duration: String,
     pub duration_expr: Expr,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModulateStmt {
+    pub tonic: String,
+    pub mode: String,
     pub line: usize,
     pub column: usize,
     pub span: Span,
@@ -782,6 +792,9 @@ impl Parser {
         if self.check_ident("cadence") {
             return self.parse_cadence().map(Stmt::Cadence);
         }
+        if self.check_ident("modulate") {
+            return self.parse_modulate().map(Stmt::Modulate);
+        }
         if self.check_ident("dynamic") {
             return self.parse_dynamic().map(Stmt::Dynamic);
         }
@@ -1024,6 +1037,26 @@ impl Parser {
             kind,
             duration: expr_to_source(&duration_expr),
             duration_expr,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
+    fn parse_modulate(&mut self) -> Option<ModulateStmt> {
+        let start = self.expect_ident_text("modulate")?;
+        let tonic = self.expect_name()?;
+        let mode = if self.current_starts_statement()
+            || self.check(TokenKind::RBrace)
+            || self.check(TokenKind::Eof)
+        {
+            "major".to_string()
+        } else {
+            self.expect_name()?
+        };
+        Some(ModulateStmt {
+            tonic,
+            mode,
             line: start.span.line,
             column: start.span.column,
             span: start.span,
@@ -1388,6 +1421,7 @@ impl Parser {
                 | "roman"
                 | "progression"
                 | "cadence"
+                | "modulate"
                 | "dynamic"
                 | "velocity"
                 | "articulation"
@@ -1910,6 +1944,31 @@ score demo {
 
         assert_eq!(cadence.kind, "authentic");
         assert_eq!(cadence.duration, "1/2");
+    }
+
+    #[test]
+    fn parses_modulation_statement() {
+        let program = parse_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    modulate G major
+    roman I, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+        let Stmt::Voice(voice) = &program.score.statements[0] else {
+            panic!("expected voice");
+        };
+        let Stmt::Modulate(modulate) = &voice.statements[0] else {
+            panic!("expected modulation");
+        };
+
+        assert_eq!(modulate.tonic, "G");
+        assert_eq!(modulate.mode, "major");
     }
 
     #[test]

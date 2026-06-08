@@ -8,8 +8,8 @@ use musiclang_core::{
 };
 use musiclang_parser::{
     parse_source, ArticulationStmt, BinaryOp, CadenceStmt, ChordStmt, DynamicStmt, Expr, ExprKind,
-    FunctionDecl, NoteStmt, OverrideStmt, Program, ProgressionStmt, RomanStmt, Stmt, StyleDecl,
-    VoiceDecl, WithStyleStmt,
+    FunctionDecl, ModulateStmt, NoteStmt, OverrideStmt, Program, ProgressionStmt, RomanStmt, Stmt,
+    StyleDecl, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +173,7 @@ impl Compiler {
             Stmt::Roman(roman) => self.compile_roman(roman, track),
             Stmt::Progression(progression) => self.compile_progression(progression, track),
             Stmt::Cadence(cadence) => self.compile_cadence(cadence, track),
+            Stmt::Modulate(modulate) => self.compile_modulate(modulate),
             Stmt::Dynamic(dynamic) => {
                 self.check_dynamic_vocab(dynamic);
                 if let Some(velocity) = dynamic_velocity(&dynamic.mark) {
@@ -495,6 +496,25 @@ impl Compiler {
                 cadence.column,
                 cadence.span,
                 track,
+            );
+        }
+    }
+
+    fn compile_modulate(&mut self, modulate: &ModulateStmt) {
+        if let Some(key) = key_signature(&modulate.tonic, &modulate.mode) {
+            self.score_key = Some(key);
+        } else {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "ML_THEORY_KEY",
+                    format!(
+                        "unsupported modulation key `{} {}`",
+                        modulate.tonic, modulate.mode
+                    ),
+                    modulate.line,
+                    modulate.column,
+                )
+                .with_span(modulate.span),
             );
         }
     }
@@ -3116,6 +3136,54 @@ score demo {
         assert!(diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "ML_THEORY_CADENCE"));
+    }
+
+    #[test]
+    fn modulation_changes_active_roman_key() {
+        let ir = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    roman I, 1/4
+    modulate G major
+    roman I, 1/4
+    cadence authentic, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let pitches = ir.tracks[0]
+            .events
+            .iter()
+            .map(|event| event.pitch.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pitches,
+            vec!["C4", "E4", "G4", "G4", "B4", "D5", "D3", "F#3", "A3", "C4", "G4", "B4", "D5"]
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_modulation_key() {
+        let diagnostics = compile_source(
+            r#"
+score demo {
+  key C major
+  voice lead {
+    modulate H major
+    roman I, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ML_THEORY_KEY"));
     }
 
     #[test]

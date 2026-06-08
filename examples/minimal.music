@@ -7,6 +7,8 @@ score demo {
     chord D3 minor, 1/2
     progression I vi ii V7 I, 1/4
     cadence authentic, 1/2
+    modulate G major
+    roman I, 1/4
     roman V65/V, 1/2
     roman bVII, 1/4
     roman viidim/V, 1/4
