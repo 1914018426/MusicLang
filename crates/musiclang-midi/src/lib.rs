@@ -173,6 +173,7 @@ mod tests {
                     source_span: None,
                 }],
             }],
+            markers: Vec::new(),
             overrides: Vec::new(),
         };
         let bytes = render_midi(&score).unwrap();

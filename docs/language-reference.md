@@ -33,6 +33,7 @@ score demo style Classical {
 - `dynamic mark` for catalog dynamics such as `p`, `mf`, `f`, or `sfz`
 - `velocity 0..127` for explicit MIDI velocity
 - `articulation mark` for catalog ornaments/articulations such as `staccato`, `tenuto`, `accent`, or `legato`
+- `section label { ... }` for explicit form markers such as `A`, `B`, `exposition`, or `recapitulation`
 - `note pitch_expr, duration_expr`
 - `chord [pitch_expr, ...], duration_expr`
 - `let name = expr`
@@ -66,11 +67,15 @@ style Sparse {
   meter_catalog: 3/4 6/8
   tempo_range: 60..120
   rhythm_vocab: 1/4 1/8 1/16
+  rhythm_concept: ostinato
+  dynamic_vocab: p mp mf f
+  articulation_vocab: staccato tenuto accent
   max_melodic_leap: P5
   contrapuntal_motion: contrary oblique similar
   cadence: authentic
   harmonic_progression: tonic predominant dominant tonic
   texture: homophony
+  form: ternary
   instrument_range: 40 C3 C7
   severity_scale: warning
 }
@@ -118,6 +123,9 @@ Stable diagnostic codes include:
 - `ML_STYLE_METER_CATALOG`
 - `ML_STYLE_TEMPO_RANGE`
 - `ML_STYLE_RHYTHM_VOCAB`
+- `ML_STYLE_RHYTHM_CONCEPT`
+- `ML_STYLE_DYNAMIC_VOCAB`
+- `ML_STYLE_ARTICULATION_VOCAB`
 - `ML_STYLE_MAX_MELODIC_LEAP`
 - `ML_STYLE_CONTRAPUNTAL_MOTION`
 - `ML_STYLE_INSTRUMENT_RANGE`
@@ -126,6 +134,7 @@ Stable diagnostic codes include:
 - `ML_STYLE_CADENCE`
 - `ML_STYLE_HARMONIC_PROGRESSION`
 - `ML_STYLE_TEXTURE`
+- `ML_STYLE_FORM`
 - `ML_STYLE_UNKNOWN_RULE`
 - `ML_STYLE_UNKNOWN_KEY`
 - `ML_STYLE_UNKNOWN_THEORY_ENTRY`

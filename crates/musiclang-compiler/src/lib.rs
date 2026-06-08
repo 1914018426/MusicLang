@@ -2,13 +2,13 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use musiclang_core::{
     Chord, CustomStyleRule, CustomTheoryDomain, Diagnostic, Duration, InstrumentRange, Interval,
-    KeySignature, Meter, Note, NoteEventIr, OverrideTrace, Pitch, PitchClass, RuleSeverity,
-    ScoreIr, Severity, Span, StyleContext, TheoryDomain, TheoryReference, TrackIr,
+    KeySignature, MarkerIr, Meter, Note, NoteEventIr, OverrideTrace, Pitch, PitchClass,
+    RuleSeverity, ScoreIr, Severity, Span, StyleContext, TheoryDomain, TheoryReference, TrackIr,
     DEFAULT_TICKS_PER_QUARTER,
 };
 use musiclang_parser::{
-    parse_source, BinaryOp, ChordStmt, Expr, FunctionDecl, NoteStmt, OverrideStmt, Program,
-    ScoreMeta, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
+    parse_source, ArticulationStmt, BinaryOp, ChordStmt, DynamicStmt, Expr, FunctionDecl, NoteStmt,
+    OverrideStmt, Program, ScoreMeta, Stmt, StyleDecl, VoiceDecl, WithStyleStmt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +117,7 @@ mod lower {
         meter: Option<Meter>,
         key: Option<KeySignature>,
         tracks: Vec<TrackIr>,
+        markers: Vec<MarkerIr>,
         overrides: Vec<OverrideTrace>,
     ) -> ScoreIr {
         ScoreIr {
@@ -126,6 +127,7 @@ mod lower {
             meter,
             key,
             tracks,
+            markers,
             overrides,
         }
     }
@@ -150,11 +152,15 @@ mod stylecheck {
                 | "meter_catalog"
                 | "tempo_range"
                 | "rhythm_vocab"
+                | "rhythm_concept"
+                | "dynamic_vocab"
+                | "articulation_vocab"
                 | "max_melodic_leap"
                 | "contrapuntal_motion"
                 | "cadence"
                 | "harmonic_progression"
                 | "texture"
+                | "form"
                 | "instrument_range"
                 | "parallel_fifths"
                 | "voice_crossing"
@@ -173,6 +179,8 @@ struct Compiler {
     override_rules: Vec<String>,
     score_override_rules: HashSet<String>,
     override_traces: Vec<OverrideTrace>,
+    section_labels: Vec<String>,
+    markers: Vec<MarkerIr>,
 }
 
 impl Compiler {
@@ -188,6 +196,8 @@ impl Compiler {
             override_rules: Vec::new(),
             score_override_rules: HashSet::new(),
             override_traces: Vec::new(),
+            section_labels: Vec::new(),
+            markers: Vec::new(),
         }
     }
 
@@ -224,6 +234,8 @@ impl Compiler {
 
         self.check_counterpoint_rules(&tracks);
         self.check_texture(&tracks);
+        self.check_rhythm_concepts(&tracks);
+        self.check_form();
         self.check_harmonic_progression(&tracks);
         self.check_cadence(&tracks);
 
@@ -242,6 +254,7 @@ impl Compiler {
                 meter,
                 key,
                 tracks,
+                self.markers,
                 self.override_traces,
             ),
             diagnostics: self.diagnostics,
@@ -265,12 +278,24 @@ impl Compiler {
             Stmt::Note(note) => self.compile_note(note, track),
             Stmt::Chord(chord) => self.compile_chord(chord, track),
             Stmt::Dynamic(dynamic) => {
+                self.check_dynamic_vocab(dynamic);
                 if let Some(velocity) = dynamic_velocity(&dynamic.mark) {
                     track.set_velocity(velocity);
                 }
             }
             Stmt::Velocity(velocity) => track.set_velocity(velocity.velocity),
-            Stmt::Articulation(articulation) => track.set_articulation(&articulation.mark),
+            Stmt::Articulation(articulation) => {
+                self.check_articulation_vocab(articulation);
+                track.set_articulation(&articulation.mark);
+            }
+            Stmt::Section(section) => {
+                self.section_labels.push(section.label.clone());
+                self.markers.push(MarkerIr {
+                    label: section.label.clone(),
+                    tick: track.cursor_tick(),
+                });
+                self.compile_statements(&section.statements, track);
+            }
             Stmt::For(for_stmt) => {
                 for value in for_stmt.start..for_stmt.end {
                     self.push_scope();
@@ -411,6 +436,58 @@ impl Compiler {
                     .with_rule(rule)
                     .with_style(self.style.name.clone()),
             ),
+        }
+    }
+
+    fn check_dynamic_vocab(&mut self, dynamic: &DynamicStmt) {
+        if self.style.dynamic_vocab.is_empty()
+            || self.has_override("dynamic_vocab")
+            || self.has_score_override("dynamic_vocab")
+        {
+            return;
+        }
+        if !self
+            .style
+            .dynamic_vocab
+            .iter()
+            .any(|mark| mark == &dynamic.mark)
+        {
+            self.push_style_diagnostic(
+                "dynamic_vocab",
+                "ML_STYLE_DYNAMIC_VOCAB",
+                format!(
+                    "dynamic `{}` is outside active style dynamic vocabulary",
+                    dynamic.mark
+                ),
+                dynamic.line,
+                dynamic.column,
+            );
+        }
+    }
+
+    fn check_articulation_vocab(&mut self, articulation: &ArticulationStmt) {
+        if self.style.articulation_vocab.is_empty()
+            || self.has_override("articulation_vocab")
+            || self.has_score_override("articulation_vocab")
+        {
+            return;
+        }
+        if !self
+            .style
+            .articulation_vocab
+            .iter()
+            .any(|mark| mark == &articulation.mark)
+        {
+            self.push_style_diagnostic(
+                "articulation_vocab",
+                "ML_STYLE_ARTICULATION_VOCAB",
+                format!(
+                    "articulation `{}` is outside active style articulation vocabulary",
+                    articulation.mark
+                ),
+                articulation.line,
+                articulation.column,
+            );
         }
     }
 
@@ -601,6 +678,48 @@ impl Compiler {
                 "texture",
                 "ML_STYLE_TEXTURE",
                 format!("score texture does not satisfy `{texture}`"),
+                self.program.score.line,
+                self.program.score.column,
+            );
+        }
+    }
+
+    fn check_rhythm_concepts(&mut self, tracks: &[TrackIr]) {
+        if self.style.rhythm_concepts.is_empty()
+            || self.has_override("rhythm_concept")
+            || self.has_score_override("rhythm_concept")
+        {
+            return;
+        }
+        if self
+            .style
+            .rhythm_concepts
+            .iter()
+            .any(|concept| concept == "ostinato")
+            && !tracks.iter().any(track_has_repeated_duration_cell)
+        {
+            self.push_style_diagnostic(
+                "rhythm_concept",
+                "ML_STYLE_RHYTHM_CONCEPT",
+                "score rhythm does not satisfy required ostinato concept".to_string(),
+                self.program.score.line,
+                self.program.score.column,
+            );
+        }
+    }
+
+    fn check_form(&mut self) {
+        let Some(form) = self.style.form.clone() else {
+            return;
+        };
+        if self.has_override("form") || self.has_score_override("form") {
+            return;
+        }
+        if !form_labels_match_catalog(&self.section_labels, &form) {
+            self.push_style_diagnostic(
+                "form",
+                "ML_STYLE_FORM",
+                format!("score sections do not satisfy `{form}` form"),
                 self.program.score.line,
                 self.program.score.column,
             );
@@ -1323,6 +1442,29 @@ fn style_from_program_inner(
                     .filter_map(|value| value.parse::<Duration>().ok())
                     .collect();
             }
+            "rhythm_concept" => {
+                context.rhythm_concepts = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+            }
+            "dynamic_vocab" => {
+                context.dynamic_vocab = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_vocab_entries(style, entry, TheoryDomain::Dynamics, &mut diagnostics);
+            }
+            "articulation_vocab" => {
+                context.articulation_vocab = entry
+                    .value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                validate_vocab_entries(style, entry, TheoryDomain::Ornaments, &mut diagnostics);
+            }
             "max_melodic_leap" => {
                 context.max_melodic_leap = entry.value.trim().parse::<Interval>().ok();
             }
@@ -1345,6 +1487,9 @@ fn style_from_program_inner(
             }
             "texture" => {
                 context.texture = Some(entry.value.trim().to_string());
+            }
+            "form" => {
+                context.form = Some(entry.value.trim().to_string());
             }
             "meter" => {
                 if let Some((numerator, denominator)) = parse_meter(&entry.value) {
@@ -1400,6 +1545,28 @@ fn style_from_program_inner(
     }
     context.name = style.name.clone();
     (context, diagnostics)
+}
+
+fn validate_vocab_entries(
+    style: &StyleDecl,
+    entry: &musiclang_parser::StyleEntry,
+    domain: TheoryDomain,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for entry_id in entry.value.split_whitespace() {
+        if !theory_entry_exists(domain, entry_id) {
+            diagnostics.push(
+                Diagnostic::error(
+                    "ML_STYLE_UNKNOWN_THEORY_ENTRY",
+                    format!("unknown theory entry `{entry_id}` in domain `{domain}`"),
+                    style.line,
+                    style.column,
+                )
+                .with_rule(entry.key.clone())
+                .with_style(style.name.clone()),
+            );
+        }
+    }
 }
 
 fn validate_builtin_theory_references(
@@ -1497,6 +1664,22 @@ fn attack_grid(track: &TrackIr) -> Vec<u32> {
     ticks.sort_unstable();
     ticks.dedup();
     ticks
+}
+
+fn track_has_repeated_duration_cell(track: &TrackIr) -> bool {
+    let durations = track
+        .events
+        .iter()
+        .map(|event| event.duration_ticks)
+        .collect::<Vec<_>>();
+    durations.len() >= 4
+        && durations.windows(2).any(|cell| {
+            durations
+                .windows(2)
+                .filter(|candidate| *candidate == cell)
+                .count()
+                >= 2
+        })
 }
 
 fn harmonic_functions(tracks: &[TrackIr]) -> Vec<String> {
@@ -1692,6 +1875,20 @@ fn meter_matches_catalog(meter: Meter, entry_id: &str) -> bool {
         .any(|entry| entry.id == entry_id && entry.id == id)
 }
 
+fn form_labels_match_catalog(labels: &[String], entry_id: &str) -> bool {
+    let catalog = musiclang_core::theory_catalog();
+    catalog
+        .entries(TheoryDomain::Forms)
+        .iter()
+        .find(|entry| entry.id == entry_id)
+        .is_some_and(|entry| {
+            labels
+                .iter()
+                .map(String::as_str)
+                .eq(entry.pattern.iter().copied())
+        })
+}
+
 fn key_signature(tonic: &str, mode: &str) -> Option<KeySignature> {
     let tonic = tonic.trim();
     let is_minor = matches!(mode.trim(), "minor" | "min" | "aeolian");
@@ -1790,6 +1987,10 @@ impl TrackBuilder {
 
     fn events(&self) -> &[NoteEventIr] {
         &self.events
+    }
+
+    fn cursor_tick(&self) -> u32 {
+        self.cursor_tick
     }
 
     fn is_event_overridden(&self, rule: &str, start_tick: u32) -> bool {
@@ -2507,6 +2708,187 @@ score demo style Pulse {
         .unwrap();
 
         assert_eq!(ir.tracks[0].events.len(), 1);
+    }
+
+    #[test]
+    fn rhythm_concept_ostinato_accepts_repeated_duration_cell() {
+        let ir = compile_source(
+            r#"
+style Patterned {
+  rhythm_concept: ostinato
+}
+score demo style Patterned {
+  voice lead {
+    note C4, 1/4
+    note D4, 1/8
+    note E4, 1/4
+    note F4, 1/8
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 4);
+    }
+
+    #[test]
+    fn rhythm_concept_ostinato_rejects_non_repeating_rhythm() {
+        let diagnostics = compile_source(
+            r#"
+style Patterned {
+  rhythm_concept: ostinato
+}
+score demo style Patterned {
+  voice lead {
+    note C4, 1/4
+    note D4, 1/8
+    note E4, 1/16
+    note F4, 1/2
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_RHYTHM_CONCEPT");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("rhythm_concept"));
+    }
+
+    #[test]
+    fn dynamic_vocab_accepts_catalog_mark() {
+        let ir = compile_source(
+            r#"
+style Quiet {
+  dynamic_vocab: p mp
+}
+score demo style Quiet {
+  voice lead {
+    dynamic p
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events[0].velocity, 48);
+    }
+
+    #[test]
+    fn dynamic_vocab_rejects_unlisted_mark() {
+        let diagnostics = compile_source(
+            r#"
+style Quiet {
+  dynamic_vocab: p mp
+}
+score demo style Quiet {
+  voice lead {
+    dynamic ff
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_DYNAMIC_VOCAB");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("dynamic_vocab"));
+    }
+
+    #[test]
+    fn articulation_vocab_accepts_catalog_mark() {
+        let ir = compile_source(
+            r#"
+style ShortArticulations {
+  articulation_vocab: staccato accent
+}
+score demo style ShortArticulations {
+  voice lead {
+    articulation staccato
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ir.tracks[0].events[0].articulation.as_deref(),
+            Some("staccato")
+        );
+    }
+
+    #[test]
+    fn articulation_vocab_rejects_unlisted_mark() {
+        let diagnostics = compile_source(
+            r#"
+style ShortArticulations {
+  articulation_vocab: staccato accent
+}
+score demo style ShortArticulations {
+  voice lead {
+    articulation legato
+    note C4, 1/4
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_ARTICULATION_VOCAB");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("articulation_vocab"));
+    }
+
+    #[test]
+    fn form_rule_accepts_matching_sections() {
+        let ir = compile_source(
+            r#"
+style BinarySong {
+  form: binary
+}
+score demo style BinarySong {
+  voice lead {
+    section A {
+      note C4, 1/4
+    }
+    section B {
+      note D4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.markers.len(), 2);
+        assert_eq!(ir.markers[0].label, "A");
+        assert_eq!(ir.markers[1].label, "B");
+    }
+
+    #[test]
+    fn form_rule_rejects_wrong_section_pattern() {
+        let diagnostics = compile_source(
+            r#"
+style TernarySong {
+  form: ternary
+}
+score demo style TernarySong {
+  voice lead {
+    section A {
+      note C4, 1/4
+    }
+    section B {
+      note D4, 1/4
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_FORM");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("form"));
     }
 
     #[test]

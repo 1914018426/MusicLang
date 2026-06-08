@@ -199,6 +199,7 @@ mod tests {
                     source_span: None,
                 }],
             }],
+            markers: Vec::new(),
             overrides: Vec::new(),
         }
     }

@@ -1518,7 +1518,14 @@ pub struct ScoreIr {
     pub meter: Option<Meter>,
     pub key: Option<KeySignature>,
     pub tracks: Vec<TrackIr>,
+    pub markers: Vec<MarkerIr>,
     pub overrides: Vec<OverrideTrace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkerIr {
+    pub label: String,
+    pub tick: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1575,11 +1582,15 @@ pub struct StyleContext {
     pub chord_vocab: Vec<Vec<PitchClass>>,
     pub chord_quality_vocab: Vec<String>,
     pub rhythm_vocab: Vec<Duration>,
+    pub rhythm_concepts: Vec<String>,
+    pub dynamic_vocab: Vec<String>,
+    pub articulation_vocab: Vec<String>,
     pub max_melodic_leap: Option<Interval>,
     pub contrapuntal_motion: Vec<String>,
     pub cadence: Option<String>,
     pub harmonic_progression: Vec<String>,
     pub texture: Option<String>,
+    pub form: Option<String>,
     pub meter: Option<Meter>,
     pub meter_catalog: Vec<String>,
     pub tempo_range: Option<(u16, u16)>,
@@ -1653,11 +1664,15 @@ impl StyleContext {
             chord_vocab: Vec::new(),
             chord_quality_vocab: Vec::new(),
             rhythm_vocab: Vec::new(),
+            rhythm_concepts: Vec::new(),
+            dynamic_vocab: Vec::new(),
+            articulation_vocab: Vec::new(),
             max_melodic_leap: None,
             contrapuntal_motion: Vec::new(),
             cadence: None,
             harmonic_progression: Vec::new(),
             texture: None,
+            form: None,
             meter: None,
             meter_catalog: Vec::new(),
             tempo_range: None,

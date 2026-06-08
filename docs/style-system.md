@@ -21,11 +21,15 @@ style Chamber extends Classical {
   meter_catalog: 3/4 6/8
   tempo_range: 60..132
   rhythm_vocab: 1/4 1/8 1/16
+  rhythm_concept: ostinato
+  dynamic_vocab: p mp mf f
+  articulation_vocab: staccato tenuto accent
   max_melodic_leap: P5
   contrapuntal_motion: contrary oblique similar
   cadence: authentic
   harmonic_progression: tonic predominant dominant tonic
   texture: homophony
+  form: ternary
   instrument_range: 40 C3 C7
 }
 ```
@@ -41,6 +45,9 @@ style Chamber extends Classical {
 - `meter_catalog`: score `meter` metadata must match one configured meter from the `meters` theory catalog.
 - `tempo_range`: score `tempo` metadata must stay within the configured BPM range.
 - `rhythm_vocab`: note and chord durations must belong to the configured rhythmic vocabulary.
+- `rhythm_concept`: score rhythm pattern must satisfy configured concepts from the `rhythms` theory catalog (e.g., `ostinato` requires a repeating duration cell).
+- `dynamic_vocab`: `dynamic` statements must use configured entries from the `dynamics` theory catalog.
+- `articulation_vocab`: `articulation` statements must use configured entries from the `ornaments` theory catalog.
 - `max_melodic_leap`: consecutive notes in a voice must not exceed the configured interval.
 - `contrapuntal_motion`: simultaneous voice pairs must move only through allowed motion types (`parallel`, `similar`, `contrary`, `oblique`).
 - `instrument_range`: notes in a voice with `program` must fit the configured MIDI program range.
@@ -49,6 +56,7 @@ style Chamber extends Classical {
 - `cadence`: final sonorities must satisfy configured cadence patterns (`authentic`, `plagal`, `deceptive`).
 - `harmonic_progression`: sonorities must contain the configured functional progression (`tonic`, `predominant`, `dominant`, `submediant`).
 - `texture`: compiled tracks must satisfy configured texture (`monophony`, `polyphony`, `homophony`).
+- `form`: explicit `section` labels must match the configured entry from the `forms` theory catalog, such as `binary`, `ternary`, `sonata`, or `rondo`.
 
 Unknown override rules fail with `ML_STYLE_UNKNOWN_RULE`.
 
@@ -132,6 +140,9 @@ Overrides suppress style rules only. They do not bypass parser, type, name-resol
 - `ML_STYLE_METER_CATALOG`
 - `ML_STYLE_TEMPO_RANGE`
 - `ML_STYLE_RHYTHM_VOCAB`
+- `ML_STYLE_RHYTHM_CONCEPT`
+- `ML_STYLE_DYNAMIC_VOCAB`
+- `ML_STYLE_ARTICULATION_VOCAB`
 - `ML_STYLE_MAX_MELODIC_LEAP`
 - `ML_STYLE_CONTRAPUNTAL_MOTION`
 - `ML_STYLE_INSTRUMENT_RANGE`
@@ -140,4 +151,5 @@ Overrides suppress style rules only. They do not bypass parser, type, name-resol
 - `ML_STYLE_CADENCE`
 - `ML_STYLE_HARMONIC_PROGRESSION`
 - `ML_STYLE_TEXTURE`
+- `ML_STYLE_FORM`
 - `ML_STYLE_UNKNOWN_RULE`

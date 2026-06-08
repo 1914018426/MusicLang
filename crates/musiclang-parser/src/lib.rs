@@ -59,6 +59,7 @@ pub enum Stmt {
     Dynamic(DynamicStmt),
     Velocity(VelocityStmt),
     Articulation(ArticulationStmt),
+    Section(SectionStmt),
     For(ForStmt),
     If(IfStmt),
     Let(LetStmt),
@@ -172,6 +173,15 @@ pub struct VelocityStmt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArticulationStmt {
     pub mark: String,
+    pub line: usize,
+    pub column: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SectionStmt {
+    pub label: String,
+    pub statements: Vec<Stmt>,
     pub line: usize,
     pub column: usize,
     pub span: Span,
@@ -617,6 +627,9 @@ impl Parser {
         if self.check_ident("articulation") {
             return self.parse_articulation().map(Stmt::Articulation);
         }
+        if self.check_ident("section") {
+            return self.parse_section().map(Stmt::Section);
+        }
         if self.check_ident("for") {
             return self.parse_for().map(Stmt::For);
         }
@@ -794,6 +807,19 @@ impl Parser {
         })
     }
 
+    fn parse_section(&mut self) -> Option<SectionStmt> {
+        let start = self.expect_ident_text("section")?;
+        let label = self.expect_name()?;
+        let statements = self.parse_required_block()?;
+        Some(SectionStmt {
+            label,
+            statements,
+            line: start.span.line,
+            column: start.span.column,
+            span: start.span,
+        })
+    }
+
     fn parse_for(&mut self) -> Option<ForStmt> {
         let start = self.expect_ident_text("for")?;
         let variable = self.expect_name()?;
@@ -965,6 +991,7 @@ impl Parser {
                 | "dynamic"
                 | "velocity"
                 | "articulation"
+                | "section"
                 | "for"
                 | "if"
                 | "let"
@@ -1455,6 +1482,27 @@ score demo {
         assert!(matches!(voice.statements[0], Stmt::Dynamic(_)));
         assert!(matches!(voice.statements[1], Stmt::Articulation(_)));
         assert!(matches!(voice.statements[3], Stmt::Velocity(_)));
+    }
+
+    #[test]
+    fn parses_section_statement() {
+        let source = r#"
+score demo {
+  section A {
+    note C4, 1/4
+  }
+  section B {
+    note D4, 1/4
+  }
+}
+"#;
+        let program = parse_source(source).unwrap();
+
+        let Stmt::Section(section) = &program.score.statements[0] else {
+            panic!("expected section");
+        };
+        assert_eq!(section.label, "A");
+        assert_eq!(section.statements.len(), 1);
     }
 
     #[test]
