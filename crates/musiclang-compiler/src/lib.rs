@@ -582,11 +582,23 @@ impl Compiler {
         {
             return;
         }
-        if kind == "trill" && !events_form_trill(events) {
+        let message = match kind {
+            "trill" if !events_form_trill(events) => {
+                Some("trill ornament must alternate rapidly between two pitch classes")
+            }
+            "mordent" if !events_form_mordent(events) => {
+                Some("mordent ornament must move from a main pitch to a neighbor and back")
+            }
+            "turn" if !events_form_turn(events) => {
+                Some("turn ornament must outline upper neighbor, main pitch, lower neighbor, and main pitch")
+            }
+            _ => None,
+        };
+        if let Some(message) = message {
             self.push_style_diagnostic(
                 "ornament",
                 "ML_STYLE_ORNAMENT",
-                "trill ornament must alternate rapidly between two pitch classes".to_string(),
+                message.to_string(),
                 line,
                 column,
             );
@@ -2058,6 +2070,33 @@ fn events_form_trill(events: &[NoteEventIr]) -> bool {
         && events.iter().enumerate().all(|(index, event)| {
             event.pitch.class() == if index % 2 == 0 { first } else { second }
         })
+}
+
+fn events_form_mordent(events: &[NoteEventIr]) -> bool {
+    if events.len() != 3 {
+        return false;
+    }
+    let main = events[0].pitch.class();
+    let neighbor = events[1].pitch.class();
+    events[2].pitch.class() == main && pitch_classes_are_neighbors(main, neighbor)
+}
+
+fn events_form_turn(events: &[NoteEventIr]) -> bool {
+    if events.len() != 4 {
+        return false;
+    }
+    let main = events[1].pitch.class();
+    let upper = events[0].pitch.class();
+    let lower = events[2].pitch.class();
+    events[3].pitch.class() == main
+        && upper != lower
+        && pitch_classes_are_neighbors(main, upper)
+        && pitch_classes_are_neighbors(main, lower)
+}
+
+fn pitch_classes_are_neighbors(first: PitchClass, second: PitchClass) -> bool {
+    let distance = (first.semitone() - second.semitone()).abs();
+    distance == 1 || distance == 2 || distance == 10 || distance == 11
 }
 
 fn harmonic_functions(tracks: &[TrackIr]) -> Vec<String> {
@@ -3619,7 +3658,9 @@ style Ornamented {
 score demo style Ornamented {
   voice lead {
     ornament mordent {
-      note C4, 1/4
+      note C4, 1/16
+      note B3, 1/16
+      note C4, 1/16
     }
   }
 }
@@ -3627,7 +3668,7 @@ score demo style Ornamented {
         )
         .unwrap();
 
-        assert_eq!(ir.tracks[0].events.len(), 1);
+        assert_eq!(ir.tracks[0].events.len(), 3);
     }
 
     #[test]
@@ -3667,6 +3708,79 @@ score demo style Ornamented {
       note C4, 1/16
       note D4, 1/16
       note E4, 1/16
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_ORNAMENT");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("ornament"));
+    }
+
+    #[test]
+    fn ornament_mordent_rejects_non_returning_pattern() {
+        let diagnostics = compile_source(
+            r#"
+style Ornamented {
+  ornament: mordent
+}
+score demo style Ornamented {
+  voice lead {
+    ornament mordent {
+      note C4, 1/16
+      note B3, 1/16
+      note D4, 1/16
+    }
+  }
+}
+"#,
+        )
+        .unwrap_err();
+
+        assert_eq!(diagnostics[0].code, "ML_STYLE_ORNAMENT");
+        assert_eq!(diagnostics[0].rule.as_deref(), Some("ornament"));
+    }
+
+    #[test]
+    fn ornament_turn_accepts_neighbor_enclosure() {
+        let ir = compile_source(
+            r#"
+style Ornamented {
+  ornament: turn
+}
+score demo style Ornamented {
+  voice lead {
+    ornament turn {
+      note D4, 1/16
+      note C4, 1/16
+      note B3, 1/16
+      note C4, 1/16
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(ir.tracks[0].events.len(), 4);
+    }
+
+    #[test]
+    fn ornament_turn_rejects_missing_lower_neighbor() {
+        let diagnostics = compile_source(
+            r#"
+style Ornamented {
+  ornament: turn
+}
+score demo style Ornamented {
+  voice lead {
+    ornament turn {
+      note D4, 1/16
+      note C4, 1/16
+      note E4, 1/16
+      note C4, 1/16
     }
   }
 }

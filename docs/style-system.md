@@ -56,7 +56,7 @@ style Chamber extends Classical {
 - `rhythm_concept`: score rhythm pattern must satisfy configured concepts from the `rhythms` theory catalog (`ostinato` requires a repeating duration cell, `syncopation` requires an offbeat attack, `hemiola` requires a three-in-two duration pattern, and `swing` requires a long-short 2:1 duration pair).
 - `dynamic_vocab`: `dynamic` statements must use configured entries from the `dynamics` theory catalog.
 - `articulation_vocab`: `articulation` statements must use configured entries from the `ornaments` theory catalog.
-- `ornament`: `ornament` annotation blocks must use configured entries from the `ornaments` theory catalog; `trill` blocks must emit a rapid alternation between two pitch classes.
+- `ornament`: `ornament` annotation blocks must use configured entries from the `ornaments` theory catalog; `trill` blocks must emit rapid alternation between two pitch classes, `mordent` blocks must move main-neighbor-main, and `turn` blocks must outline upper-main-lower-main.
 - `non_chord_tone`: `non_chord_tone` annotation blocks must use configured entries from the `non_chord_tones` theory catalog.
 - `tuning_system`: `tuning_system` annotation blocks must use configured entries from the `tuning_systems` theory catalog.
 - `world_tradition`: `world_tradition` annotation blocks must use configured entries from the `world_traditions` theory catalog.
