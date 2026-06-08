@@ -1,7 +1,7 @@
 use std::f32::consts::TAU;
 use std::io;
 
-use musiclang_core::{PitchClass, ScoreIr};
+use musiclang_core::{NoteEventIr, PitchClass, ScoreIr};
 
 pub fn render_musicxml(score: &ScoreIr) -> String {
     let mut output = String::new();
@@ -58,41 +58,68 @@ pub fn render_musicxml(score: &ScoreIr) -> String {
             "      <direction><sound tempo=\"{}\"/></direction>\n",
             score.tempo_bpm
         ));
-        for event in &track.events {
-            output.push_str("      <note>\n");
-            output.push_str("        <pitch>\n");
-            output.push_str(&format!(
-                "          <step>{}</step>\n",
-                pitch_step(event.pitch.class())
-            ));
-            if let Some(alter) = pitch_alter(event.pitch.class()) {
-                output.push_str(&format!("          <alter>{alter}</alter>\n"));
+        let mut events: Vec<&NoteEventIr> = track.events.iter().collect();
+        events.sort_by_key(|event| (event.start_tick, event.pitch.midi_number().unwrap_or(0)));
+        let mut cursor_tick = 0;
+        let mut previous_start = None;
+        for event in events {
+            if Some(event.start_tick) != previous_start {
+                if event.start_tick > cursor_tick {
+                    output.push_str("      <note>\n");
+                    output.push_str("        <rest/>\n");
+                    output.push_str(&format!(
+                        "        <duration>{}</duration>\n",
+                        event.start_tick - cursor_tick
+                    ));
+                    output.push_str("      </note>\n");
+                }
+                cursor_tick = cursor_tick.max(event.start_tick + event.duration_ticks);
+                previous_start = Some(event.start_tick);
+                render_musicxml_note(&mut output, event, false);
+            } else {
+                cursor_tick = cursor_tick.max(event.start_tick + event.duration_ticks);
+                render_musicxml_note(&mut output, event, true);
             }
-            output.push_str(&format!(
-                "          <octave>{}</octave>\n",
-                event.pitch.octave()
-            ));
-            output.push_str("        </pitch>\n");
-            output.push_str(&format!(
-                "        <duration>{}</duration>\n",
-                event.duration_ticks
-            ));
-            if let Some(articulation) = event
-                .articulation
-                .as_deref()
-                .and_then(musicxml_articulation)
-            {
-                output.push_str("        <notations><articulations>");
-                output.push_str(&format!("<{articulation}/>"));
-                output.push_str("</articulations></notations>\n");
-            }
-            output.push_str("      </note>\n");
         }
         output.push_str("    </measure>\n");
         output.push_str("  </part>\n");
     }
     output.push_str("</score-partwise>\n");
     output
+}
+
+fn render_musicxml_note(output: &mut String, event: &NoteEventIr, chord: bool) {
+    output.push_str("      <note>\n");
+    if chord {
+        output.push_str("        <chord/>\n");
+    }
+    output.push_str("        <pitch>\n");
+    output.push_str(&format!(
+        "          <step>{}</step>\n",
+        pitch_step(event.pitch.class())
+    ));
+    if let Some(alter) = pitch_alter(event.pitch.class()) {
+        output.push_str(&format!("          <alter>{alter}</alter>\n"));
+    }
+    output.push_str(&format!(
+        "          <octave>{}</octave>\n",
+        event.pitch.octave()
+    ));
+    output.push_str("        </pitch>\n");
+    output.push_str(&format!(
+        "        <duration>{}</duration>\n",
+        event.duration_ticks
+    ));
+    if let Some(articulation) = event
+        .articulation
+        .as_deref()
+        .and_then(musicxml_articulation)
+    {
+        output.push_str("        <notations><articulations>");
+        output.push_str(&format!("<{articulation}/>"));
+        output.push_str("</articulations></notations>\n");
+    }
+    output.push_str("      </note>\n");
 }
 
 pub fn render_wav(score: &ScoreIr) -> io::Result<Vec<u8>> {
@@ -305,6 +332,38 @@ mod tests {
         assert!(xml.contains("<fifths>-1</fifths>"));
         assert!(xml.contains("<mode>major</mode>"));
         assert!(xml.contains("<staccato/>"));
+    }
+
+    #[test]
+    fn musicxml_renders_rests_for_gaps_and_chord_notes() {
+        let mut score = score();
+        score.tracks[0].events = vec![
+            NoteEventIr {
+                pitch: Pitch::new(PitchClass::C, 4).unwrap(),
+                start_tick: DEFAULT_TICKS_PER_QUARTER,
+                duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+                velocity: 80,
+                articulation: None,
+                source_span: None,
+            },
+            NoteEventIr {
+                pitch: Pitch::new(PitchClass::E, 4).unwrap(),
+                start_tick: DEFAULT_TICKS_PER_QUARTER,
+                duration_ticks: DEFAULT_TICKS_PER_QUARTER,
+                velocity: 80,
+                articulation: None,
+                source_span: None,
+            },
+        ];
+
+        let xml = render_musicxml(&score);
+
+        assert!(xml.contains("<rest/>"));
+        assert!(xml.contains(&format!(
+            "<duration>{}</duration>",
+            DEFAULT_TICKS_PER_QUARTER
+        )));
+        assert!(xml.contains("<chord/>"));
     }
 
     #[test]
