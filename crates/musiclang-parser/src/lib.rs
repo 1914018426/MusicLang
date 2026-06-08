@@ -392,13 +392,16 @@ impl Lexer {
                 }
                 c if is_word_start(c) || c.is_ascii_digit() => tokens.push(self.word()),
                 _ => {
-                    diagnostics.push(Diagnostic::error(
-                        "ML_LEX_TOKEN",
-                        format!("unexpected character `{ch}`"),
-                        self.line,
-                        self.column,
-                    ));
-                    self.advance();
+                    let token = self.simple(TokenKind::Ident);
+                    diagnostics.push(
+                        Diagnostic::error(
+                            "ML_LEX_TOKEN",
+                            format!("unexpected character `{ch}`"),
+                            token.span.line,
+                            token.span.column,
+                        )
+                        .with_span(token.span),
+                    );
                 }
             }
         }
@@ -454,12 +457,10 @@ impl Lexer {
             text.push(ch);
             self.advance();
         }
-        diagnostics.push(Diagnostic::error(
-            "ML_LEX_STRING",
-            "unterminated string literal",
-            line,
-            column,
-        ));
+        diagnostics.push(
+            Diagnostic::error("ML_LEX_STRING", "unterminated string literal", line, column)
+                .with_span(self.span(line, column, start, self.byte_index)),
+        );
         None
     }
 
@@ -564,12 +565,11 @@ impl Parser {
         let score = self.parse_score();
         if !self.check(TokenKind::Eof) {
             let token = self.peek().clone();
-            self.diagnostics.push(Diagnostic::error(
+            self.push_token_diagnostic(
                 "ML_PARSE_TRAILING_INPUT",
                 "unexpected input after score",
-                token.span.line,
-                token.span.column,
-            ));
+                &token,
+            );
         }
         if !self.diagnostics.is_empty() {
             return Err(self.diagnostics);
@@ -606,12 +606,12 @@ impl Parser {
                     value.push(self.advance().text.clone());
                 }
                 if value.is_empty() {
-                    self.diagnostics.push(Diagnostic::error(
+                    let token = self.peek().clone();
+                    self.push_token_diagnostic(
                         "ML_PARSE_STYLE_ENTRY",
                         "expected style entry value",
-                        self.peek().span.line,
-                        self.peek().span.column,
-                    ));
+                        &token,
+                    );
                 } else {
                     entries.push(StyleEntry {
                         key,
@@ -754,12 +754,11 @@ impl Parser {
             return self.parse_with_style().map(Stmt::WithStyle);
         }
         let token = self.peek().clone();
-        self.diagnostics.push(Diagnostic::error(
+        self.push_token_diagnostic(
             "ML_PARSE_STMT",
             format!("unrecognized statement `{}`", token.text),
-            token.span.line,
-            token.span.column,
-        ));
+            &token,
+        );
         None
     }
 
@@ -1126,12 +1125,7 @@ impl Parser {
         }
         parse_expr_tokens(&tokens).or_else(|| {
             if let Some(token) = tokens.first() {
-                self.diagnostics.push(Diagnostic::error(
-                    "ML_PARSE_EXPR",
-                    "expected expression",
-                    token.span.line,
-                    token.span.column,
-                ));
+                self.push_token_diagnostic("ML_PARSE_EXPR", "expected expression", token);
             }
             None
         })
@@ -1154,12 +1148,7 @@ impl Parser {
         }
         parse_expr_tokens(&tokens).or_else(|| {
             if let Some(token) = tokens.first() {
-                self.diagnostics.push(Diagnostic::error(
-                    "ML_PARSE_EXPR",
-                    "expected expression",
-                    token.span.line,
-                    token.span.column,
-                ));
+                self.push_token_diagnostic("ML_PARSE_EXPR", "expected expression", token);
             }
             None
         })
@@ -1211,12 +1200,7 @@ impl Parser {
             self.advance();
             Some(token.text)
         } else {
-            self.diagnostics.push(Diagnostic::error(
-                "ML_PARSE_NAME",
-                "expected name",
-                token.span.line,
-                token.span.column,
-            ));
+            self.push_token_diagnostic("ML_PARSE_NAME", "expected name", &token);
             None
         }
     }
@@ -1227,12 +1211,7 @@ impl Parser {
             self.advance();
             token.text.parse().ok()
         } else {
-            self.diagnostics.push(Diagnostic::error(
-                "ML_PARSE_NUMBER",
-                "expected number",
-                token.span.line,
-                token.span.column,
-            ));
+            self.push_token_diagnostic("ML_PARSE_NUMBER", "expected number", &token);
             None
         }
     }
@@ -1243,12 +1222,7 @@ impl Parser {
             self.advance();
             Some(token.text)
         } else {
-            self.diagnostics.push(Diagnostic::error(
-                "ML_PARSE_DURATION",
-                "expected duration literal",
-                token.span.line,
-                token.span.column,
-            ));
+            self.push_token_diagnostic("ML_PARSE_DURATION", "expected duration literal", &token);
             None
         }
     }
@@ -1259,12 +1233,7 @@ impl Parser {
             self.advance();
             Some(token.text)
         } else {
-            self.diagnostics.push(Diagnostic::error(
-                "ML_PARSE_STRING",
-                "expected string",
-                token.span.line,
-                token.span.column,
-            ));
+            self.push_token_diagnostic("ML_PARSE_STRING", "expected string", &token);
             None
         }
     }
@@ -1275,12 +1244,7 @@ impl Parser {
             self.advance();
             Some(token)
         } else {
-            self.diagnostics.push(Diagnostic::error(
-                "ML_PARSE_KEYWORD",
-                format!("expected `{text}`"),
-                token.span.line,
-                token.span.column,
-            ));
+            self.push_token_diagnostic("ML_PARSE_KEYWORD", format!("expected `{text}`"), &token);
             None
         }
     }
@@ -1291,14 +1255,21 @@ impl Parser {
             self.advance();
             Some(token)
         } else {
-            self.diagnostics.push(Diagnostic::error(
-                "ML_PARSE_TOKEN",
-                message,
-                token.span.line,
-                token.span.column,
-            ));
+            self.push_token_diagnostic("ML_PARSE_TOKEN", message, &token);
             None
         }
+    }
+
+    fn push_token_diagnostic(
+        &mut self,
+        code: impl Into<String>,
+        message: impl Into<String>,
+        token: &Token,
+    ) {
+        self.diagnostics.push(
+            Diagnostic::error(code, message, token.span.line, token.span.column)
+                .with_span(token.span),
+        );
     }
 
     fn consume(&mut self, kind: TokenKind) -> Option<Token> {
@@ -1916,6 +1887,42 @@ score demo {
         assert!(diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "ML_PARSE_TOKEN"));
+    }
+
+    #[test]
+    fn parse_token_diagnostics_include_token_span() {
+        let source = r#"
+score demo {
+  voice lead {
+    chord C4, 1/4
+  }
+}
+"#;
+        let diagnostics = parse_source(source).unwrap_err();
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "ML_PARSE_TOKEN")
+            .unwrap();
+        let span = diagnostic.span.unwrap();
+        let expected_start = source.find("C4").unwrap();
+
+        assert_eq!(span.start, expected_start);
+        assert_eq!(span.end, expected_start + "C4".len());
+        assert_eq!(diagnostic.line, span.line);
+        assert_eq!(diagnostic.column, span.column);
+    }
+
+    #[test]
+    fn lex_diagnostics_include_token_span() {
+        let diagnostics = parse_source("score demo { @ }").unwrap_err();
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "ML_LEX_TOKEN")
+            .unwrap();
+        let span = diagnostic.span.unwrap();
+
+        assert_eq!(span.start, 13);
+        assert_eq!(span.end, 14);
     }
 
     #[test]
