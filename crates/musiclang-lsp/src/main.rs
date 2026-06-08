@@ -56,10 +56,10 @@ fn handle_request(
                 .send(Message::Response(Response::new_ok(request.id, hover)))?;
         }
         "textDocument/completion" => {
-            let _params: CompletionParams = serde_json::from_value(request.params)?;
+            let params: CompletionParams = serde_json::from_value(request.params)?;
             connection.sender.send(Message::Response(Response::new_ok(
                 request.id,
-                completion_items(),
+                completion_items(documents, &params),
             )))?;
         }
         "textDocument/definition" => {
@@ -151,6 +151,15 @@ fn hover_at(documents: &HashMap<String, String>, params: &HoverParams) -> Option
     let source = documents.get(&uri.to_string())?;
     let position = params.text_document_position_params.position;
     let word = word_at(source, position)?;
+    if local_style_names(source).iter().any(|style| style == &word) {
+        return Some(Hover {
+            contents: HoverContents::Scalar(MarkedString::String(format!(
+                "style `{word}`: local MusicLang style declaration"
+            ))),
+            range: None,
+        });
+    }
+
     let text = match word.as_str() {
         "score" => "score block: top-level musical work",
         "voice" => "voice block: one MIDI track / musical line",
@@ -203,7 +212,10 @@ fn find_definition(source: &str, word: &str) -> Option<Position> {
     None
 }
 
-fn completion_items() -> CompletionResponse {
+fn completion_items(
+    documents: &HashMap<String, String>,
+    params: &CompletionParams,
+) -> CompletionResponse {
     let keywords = [
         "style",
         "score",
@@ -229,17 +241,44 @@ fn completion_items() -> CompletionResponse {
         "parallel_fifths",
         "voice_crossing",
     ];
-    CompletionResponse::Array(
-        keywords
-            .into_iter()
-            .map(|label| CompletionItem {
-                label: label.to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some(label.to_string()),
-                ..CompletionItem::default()
-            })
-            .collect(),
-    )
+    let mut items = keywords
+        .into_iter()
+        .map(|label| CompletionItem {
+            label: label.to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            insert_text: Some(label.to_string()),
+            ..CompletionItem::default()
+        })
+        .collect::<Vec<_>>();
+
+    let uri = &params.text_document_position.text_document.uri;
+    if let Some(source) = documents.get(&uri.to_string()) {
+        items.extend(
+            local_style_names(source)
+                .into_iter()
+                .map(|label| CompletionItem {
+                    label,
+                    kind: Some(CompletionItemKind::CLASS),
+                    detail: Some("MusicLang style".to_string()),
+                    ..CompletionItem::default()
+                }),
+        );
+    }
+
+    CompletionResponse::Array(items)
+}
+
+fn local_style_names(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            if words.next()? == "style" {
+                return Some(words.next()?.trim_end_matches('{').to_string());
+            }
+            None
+        })
+        .collect()
 }
 
 fn word_at(source: &str, position: Position) -> Option<String> {
@@ -278,12 +317,53 @@ mod tests {
 
     #[test]
     fn completion_includes_style_rules() {
-        let CompletionResponse::Array(items) = completion_items() else {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
+        let documents = HashMap::new();
+        let CompletionResponse::Array(items) = completion_items(
+            &documents,
+            &CompletionParams {
+                text_document_position: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: Position::new(0, 0),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            },
+        ) else {
             panic!("expected completion array");
         };
 
         assert!(items.iter().any(|item| item.label == "chord_vocab"));
         assert!(items.iter().any(|item| item.label == "instrument_range"));
+    }
+
+    #[test]
+    fn completion_includes_local_style_names() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
+        let mut documents = HashMap::new();
+        documents.insert(
+            uri.to_string(),
+            "style Chamber {\n  scale: C D E\n}\nscore demo style Chamber {\n}".to_string(),
+        );
+        let CompletionResponse::Array(items) = completion_items(
+            &documents,
+            &CompletionParams {
+                text_document_position: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: Position::new(3, 19),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            },
+        ) else {
+            panic!("expected completion array");
+        };
+
+        assert!(items
+            .iter()
+            .any(|item| item.label == "Chamber" && item.kind == Some(CompletionItemKind::CLASS)));
     }
 
     #[test]
@@ -309,6 +389,32 @@ mod tests {
         assert!(matches!(
             hover.contents,
             HoverContents::Scalar(MarkedString::String(value)) if value.contains("pitch classes")
+        ));
+    }
+
+    #[test]
+    fn hover_describes_local_style() {
+        let uri = Uri::from_str("file:///demo.music").unwrap();
+        let mut documents = HashMap::new();
+        documents.insert(
+            uri.to_string(),
+            "style Chamber {\n  scale: C D E\n}\nscore demo style Chamber {\n}".to_string(),
+        );
+        let hover = hover_at(
+            &documents,
+            &HoverParams {
+                text_document_position_params: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: Position::new(3, 18),
+                },
+                work_done_progress_params: Default::default(),
+            },
+        )
+        .unwrap();
+
+        assert!(matches!(
+            hover.contents,
+            HoverContents::Scalar(MarkedString::String(value)) if value.contains("local MusicLang style")
         ));
     }
 
